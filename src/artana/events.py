@@ -3,19 +3,22 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-EventType = Literal[
-    "model_requested",
-    "model_completed",
-    "tool_requested",
-    "tool_completed",
-    "pause_requested",
-    "workflow_step_requested",
-    "workflow_step_completed",
-]
+
+class EventType(StrEnum):
+    RUN_STARTED = "run_started"
+    RESUME_REQUESTED = "resume_requested"
+    MODEL_REQUESTED = "model_requested"
+    MODEL_COMPLETED = "model_completed"
+    TOOL_REQUESTED = "tool_requested"
+    TOOL_COMPLETED = "tool_completed"
+    PAUSE_REQUESTED = "pause_requested"
+    WORKFLOW_STEP_REQUESTED = "workflow_step_requested"
+    WORKFLOW_STEP_COMPLETED = "workflow_step_completed"
 
 
 def utc_now() -> datetime:
@@ -33,6 +36,7 @@ class ModelRequestedPayload(BaseModel):
     prompt: str
     messages: list[ChatMessage]
     allowed_tools: list[str] = Field(default_factory=list)
+    step_key: str | None = None
 
 
 class ToolCallRecord(BaseModel):
@@ -57,6 +61,7 @@ class ToolRequestedPayload(BaseModel):
     idempotency_key: str
     tool_version: str = "1.0.0"
     schema_version: str = "1"
+    step_key: str | None = None
 
 
 class ToolCompletedPayload(BaseModel):
@@ -78,6 +83,17 @@ class ToolCompletedPayload(BaseModel):
 class PauseRequestedPayload(BaseModel):
     kind: Literal["pause_requested"] = "pause_requested"
     reason: str
+    context_json: str | None = None
+    step_key: str | None = None
+
+
+class RunStartedPayload(BaseModel):
+    kind: Literal["run_started"] = "run_started"
+
+
+class ResumeRequestedPayload(BaseModel):
+    kind: Literal["resume_requested"] = "resume_requested"
+    human_input_json: str | None = None
 
 
 class WorkflowStepRequestedPayload(BaseModel):
@@ -94,6 +110,9 @@ class WorkflowStepCompletedPayload(BaseModel):
 
 
 EventPayload = (
+    RunStartedPayload
+    | ResumeRequestedPayload
+    |
     ModelRequestedPayload
     | ModelCompletedPayload
     | ToolRequestedPayload
@@ -119,9 +138,10 @@ class KernelEvent(BaseModel):
 
     @model_validator(mode="after")
     def payload_matches_event_type(self) -> "KernelEvent":
-        if self.event_type != self.payload.kind:
+        if self.event_type.value != self.payload.kind:
             raise ValueError(
-                f"event_type={self.event_type} does not match payload kind={self.payload.kind}"
+                "event_type="
+                f"{self.event_type.value} does not match payload kind={self.payload.kind}"
             )
         expected_hash = compute_event_hash(
             event_id=self.event_id,
@@ -162,7 +182,7 @@ def compute_event_hash(
             run_id,
             tenant_id,
             str(seq),
-            event_type,
+            event_type.value,
             prev_event_hash or "",
             timestamp.isoformat(),
             payload_to_canonical_json(payload),

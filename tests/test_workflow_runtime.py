@@ -120,7 +120,7 @@ async def test_run_workflow_pause_then_resume_continues_after_completed_steps(
             serde=json_step_serde(),
         )
         if not human_approved[0]:
-            await context.pause_for_human("manual approval required")
+            await context.pause("manual approval required")
         finalize_result = await context.step(
             name="finalize",
             action=finalize_step,
@@ -204,9 +204,6 @@ async def test_run_workflow_retries_pending_step_after_crash(
             workflow=workflow,
         )
     try:
-        pending_state = await first_kernel.resume(run_id="run_workflow_crash")
-        assert pending_state.status == "ready"
-
         first_events = await first_store.get_events_for_run("run_workflow_crash")
         assert [event.event_type for event in first_events] == [
             "workflow_step_requested",

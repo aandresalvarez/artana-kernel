@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 
 from artana._kernel.types import ReplayConsistencyError, ToolExecutionFailedError
-from artana.events import ToolCompletedPayload
+from artana.events import EventType, ToolCompletedPayload
 from artana.ports.tool import (
     ToolExecutionContext,
     ToolExecutionResult,
@@ -11,6 +12,12 @@ from artana.ports.tool import (
     ToolUnknownOutcomeError,
 )
 from artana.store.base import EventStore
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCompletionResult:
+    result_json: str
+    seq: int
 
 
 async def complete_pending_tool_request(
@@ -25,7 +32,7 @@ async def complete_pending_tool_request(
     request_event_id: str | None,
     tool_version: str,
     schema_version: str,
-) -> str:
+) -> ToolCompletionResult:
     try:
         tool_result = await tool_port.call(
             tool_name=tool_name,
@@ -58,7 +65,7 @@ async def complete_pending_tool_request(
             f"Tool {tool_name!r} ended with unknown outcome and requires reconciliation."
         ) from exc
 
-    await append_tool_completed_event(
+    completed_seq = await append_tool_completed_event(
         store=store,
         run_id=run_id,
         tenant_id=tenant_id,
@@ -70,7 +77,7 @@ async def complete_pending_tool_request(
         raise ToolExecutionFailedError(
             f"Tool {tool_name!r} failed with outcome={tool_result.outcome!r}."
         )
-    return tool_result.result_json
+    return ToolCompletionResult(result_json=tool_result.result_json, seq=completed_seq)
 
 
 async def append_tool_completed_event(
@@ -81,12 +88,12 @@ async def append_tool_completed_event(
     tool_name: str,
     result: ToolExecutionResult,
     request_event_id: str | None = None,
-) -> None:
+) -> int:
     request_id = result.request_id if result.request_id is not None else request_event_id
-    await store.append_event(
+    event = await store.append_event(
         run_id=run_id,
         tenant_id=tenant_id,
-        event_type="tool_completed",
+        event_type=EventType.TOOL_COMPLETED,
         payload=ToolCompletedPayload(
             tool_name=tool_name,
             result_json=result.result_json,
@@ -97,6 +104,7 @@ async def append_tool_completed_event(
             error_message=result.error_message,
         ),
     )
+    return event.seq
 
 
 async def mark_pending_request_unknown(
@@ -145,6 +153,6 @@ def resolve_completed_tool_result(
     return result_json
 
 
-def derive_idempotency_key(*, run_id: str, seq: int) -> str:
-    token = f"{run_id}:{seq}"
+def derive_idempotency_key(*, run_id: str, seq: int, step_key: str | None = None) -> str:
+    token = f"{run_id}:{step_key}" if step_key is not None else f"{run_id}:{seq}"
     return hashlib.sha256(token.encode("utf-8")).hexdigest()

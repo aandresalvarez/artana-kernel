@@ -1,24 +1,28 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
+from pydantic import BaseModel
+
 from artana._kernel.model_cycle import get_or_execute_model_step
 from artana._kernel.policies import apply_prepare_model_middleware, enforce_capability_scope
-from artana._kernel.replay import derive_run_resume_state, validate_tenant_for_run
+from artana._kernel.replay import validate_tenant_for_run
 from artana._kernel.tool_cycle import (
-    execute_or_replay_tools_for_model,
-    execute_tool_with_replay,
+    execute_tool_step_with_replay,
     reconcile_tool_with_replay,
 )
 from artana._kernel.types import (
-    ChatResponse,
     KernelPolicy,
+    ModelInput,
     OutputT,
     PauseTicket,
     RunHandle,
-    RunResumeState,
+    RunRef,
+    StepModelResult,
+    StepToolResult,
     ToolCallable,
 )
 from artana._kernel.workflow_runtime import (
@@ -26,7 +30,13 @@ from artana._kernel.workflow_runtime import (
     WorkflowRunResult,
     run_workflow,
 )
-from artana.events import ChatMessage, PauseRequestedPayload
+from artana.events import (
+    ChatMessage,
+    EventType,
+    PauseRequestedPayload,
+    ResumeRequestedPayload,
+    RunStartedPayload,
+)
 from artana.middleware import order_middleware
 from artana.middleware.base import KernelMiddleware, ModelInvocation
 from artana.middleware.capability_guard import CapabilityGuardMiddleware
@@ -87,20 +97,38 @@ class ArtanaKernel:
         *,
         tenant: TenantContext,
         run_id: str | None = None,
-    ) -> RunHandle:
-        if run_id is not None:
-            existing = await self._store.get_events_for_run(run_id)
+    ) -> RunRef:
+        run_id_value = run_id
+        if run_id_value is not None:
+            existing = await self._store.get_events_for_run(run_id_value)
             if existing:
                 raise ValueError(
-                    f"run_id={run_id!r} already exists; provide a different run_id."
+                    f"run_id={run_id_value!r} already exists; provide a different run_id."
                 )
-            return RunHandle(run_id=run_id, tenant_id=tenant.tenant_id)
+        else:
+            for _ in range(5):
+                generated = uuid4().hex
+                if not await self._store.get_events_for_run(generated):
+                    run_id_value = generated
+                    break
+            if run_id_value is None:
+                raise RuntimeError(
+                    "Failed to allocate a unique run_id after multiple attempts."
+                )
 
-        for _ in range(5):
-            generated = uuid4().hex
-            if not await self._store.get_events_for_run(generated):
-                return RunHandle(run_id=generated, tenant_id=tenant.tenant_id)
-        raise RuntimeError("Failed to allocate a unique run_id after multiple attempts.")
+        event = await self._store.append_event(
+            run_id=run_id_value,
+            tenant_id=tenant.tenant_id,
+            event_type=EventType.RUN_STARTED,
+            payload=RunStartedPayload(),
+        )
+        return RunHandle(run_id=event.run_id, tenant_id=event.tenant_id)
+
+    async def load_run(self, *, run_id: str) -> RunRef:
+        events = await self._store.get_events_for_run(run_id)
+        if not events:
+            raise ValueError(f"No events found for run_id={run_id!r}.")
+        return RunHandle(run_id=run_id, tenant_id=events[0].tenant_id)
 
     def tool(
         self, *, requires_capability: str | None = None
@@ -114,77 +142,31 @@ class ArtanaKernel:
 
         return decorator
 
-    async def chat(
+    async def pause(
         self,
         *,
-        run_id: str | None,
-        prompt: str,
-        model: str,
+        run_id: str,
         tenant: TenantContext,
-        output_schema: type[OutputT],
-    ) -> ChatResponse[OutputT]:
-        run_id_value = run_id if run_id is not None else uuid4().hex
-        initial_invocation = ModelInvocation(
-            run_id=run_id_value,
-            tenant=tenant,
-            model=model,
-            prompt=prompt,
-            messages=(ChatMessage(role="user", content=prompt),),
-            allowed_tools=tuple(self._tool_port.to_all_tool_definitions()),
-            tool_capability_by_name=self._tool_port.capability_map(),
-        )
-        prepared_invocation = await apply_prepare_model_middleware(
-            self._middleware,
-            initial_invocation,
-        )
-        scoped_invocation = enforce_capability_scope(prepared_invocation)
-        tool_definitions = scoped_invocation.allowed_tools
-        allowed_tool_names = [tool.name for tool in tool_definitions]
-
-        events = await self._store.get_events_for_run(run_id_value)
-        validate_tenant_for_run(events=events, tenant=tenant)
-        model_result = await get_or_execute_model_step(
-            store=self._store,
-            model_port=self._model_port,
-            middleware=self._middleware,
-            run_id=run_id_value,
-            prompt=scoped_invocation.prompt,
-            messages=scoped_invocation.messages,
-            model=scoped_invocation.model,
-            tenant=tenant,
-            output_schema=output_schema,
-            tool_definitions=tool_definitions,
-            allowed_tool_names=allowed_tool_names,
-            events=events,
-        )
-        await execute_or_replay_tools_for_model(
-            store=self._store,
-            tool_port=self._tool_port,
-            run_id=run_id_value,
-            tenant=tenant,
-            model_completed_seq=model_result.completed_seq,
-            expected_tool_calls=model_result.tool_calls,
-            allowed_tool_names=frozenset(allowed_tool_names),
-        )
-        return ChatResponse(
-            run_id=run_id_value,
-            output=model_result.output,
-            usage=model_result.usage,
-            replayed=model_result.replayed,
-        )
-
-    async def pause_for_human(self, *, run_id: str, reason: str) -> PauseTicket:
+        reason: str,
+        context: BaseModel | None = None,
+        step_key: str | None = None,
+    ) -> PauseTicket:
         events = await self._store.get_events_for_run(run_id)
         if not events:
             raise ValueError(
-                f"Cannot pause unknown run_id={run_id!r}; run must exist before pausing."
+                f"Cannot pause unknown run_id={run_id!r}; call start_run first."
             )
-        tenant_id = events[-1].tenant_id
+        validate_tenant_for_run(events=events, tenant=tenant)
+        context_json = context.model_dump_json() if context is not None else None
         event = await self._store.append_event(
             run_id=run_id,
-            tenant_id=tenant_id,
-            event_type="pause_requested",
-            payload=PauseRequestedPayload(reason=reason),
+            tenant_id=tenant.tenant_id,
+            event_type=EventType.PAUSE_REQUESTED,
+            payload=PauseRequestedPayload(
+                reason=reason,
+                context_json=context_json,
+                step_key=step_key,
+            ),
         )
         return PauseTicket(
             run_id=event.run_id,
@@ -193,21 +175,98 @@ class ArtanaKernel:
             reason=reason,
         )
 
-    async def execute_tool(
+    async def step_model(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        model: str,
+        input: ModelInput,
+        output_schema: type[OutputT],
+        step_key: str | None = None,
+    ) -> StepModelResult[OutputT]:
+        events = await self._store.get_events_for_run(run_id)
+        if not events:
+            raise ValueError(
+                f"No events found for run_id={run_id!r}; call start_run first."
+            )
+        validate_tenant_for_run(events=events, tenant=tenant)
+
+        prompt, messages = _normalize_model_input(input)
+        initial_invocation = ModelInvocation(
+            run_id=run_id,
+            tenant=tenant,
+            model=model,
+            prompt=prompt,
+            messages=messages,
+            allowed_tools=tuple(self._tool_port.to_all_tool_definitions()),
+            tool_capability_by_name=self._tool_port.capability_map(),
+        )
+        prepared_invocation = await apply_prepare_model_middleware(
+            self._middleware,
+            initial_invocation,
+        )
+        scoped_invocation = enforce_capability_scope(prepared_invocation)
+
+        model_result = await get_or_execute_model_step(
+            store=self._store,
+            model_port=self._model_port,
+            middleware=self._middleware,
+            run_id=run_id,
+            prompt=scoped_invocation.prompt,
+            messages=scoped_invocation.messages,
+            model=scoped_invocation.model,
+            tenant=tenant,
+            output_schema=output_schema,
+            tool_definitions=scoped_invocation.allowed_tools,
+            allowed_tool_names=[tool.name for tool in scoped_invocation.allowed_tools],
+            events=events,
+            step_key=step_key,
+        )
+        return StepModelResult(
+            run_id=run_id,
+            seq=model_result.completed_seq,
+            output=model_result.output,
+            usage=model_result.usage,
+            tool_calls=model_result.tool_calls,
+            replayed=model_result.replayed,
+        )
+
+    async def step_tool(
         self,
         *,
         run_id: str,
         tenant: TenantContext,
         tool_name: str,
-        arguments_json: str,
-    ) -> str:
-        return await execute_tool_with_replay(
+        arguments: BaseModel,
+        step_key: str | None = None,
+    ) -> StepToolResult:
+        events = await self._store.get_events_for_run(run_id)
+        if not events:
+            raise ValueError(
+                f"No events found for run_id={run_id!r}; call start_run first."
+            )
+        validate_tenant_for_run(events=events, tenant=tenant)
+        arguments_json = json.dumps(
+            arguments.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        result = await execute_tool_step_with_replay(
             store=self._store,
             tool_port=self._tool_port,
             run_id=run_id,
             tenant=tenant,
             tool_name=tool_name,
             arguments_json=arguments_json,
+            step_key=step_key,
+        )
+        return StepToolResult(
+            run_id=run_id,
+            seq=result.seq,
+            tool_name=tool_name,
+            result_json=result.result_json,
+            replayed=result.replayed,
         )
 
     async def reconcile_tool(
@@ -216,8 +275,14 @@ class ArtanaKernel:
         run_id: str,
         tenant: TenantContext,
         tool_name: str,
-        arguments_json: str,
+        arguments: BaseModel,
+        step_key: str | None = None,
     ) -> str:
+        arguments_json = json.dumps(
+            arguments.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         return await reconcile_tool_with_replay(
             store=self._store,
             tool_port=self._tool_port,
@@ -225,13 +290,28 @@ class ArtanaKernel:
             tenant=tenant,
             tool_name=tool_name,
             arguments_json=arguments_json,
+            step_key=step_key,
         )
 
-    async def resume(self, *, run_id: str) -> RunResumeState:
+    async def resume(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        human_input: BaseModel | None = None,
+    ) -> RunRef:
         events = await self._store.get_events_for_run(run_id)
         if not events:
             raise ValueError(f"No events found for run_id={run_id!r}.")
-        return derive_run_resume_state(events)
+        validate_tenant_for_run(events=events, tenant=tenant)
+        human_input_json = human_input.model_dump_json() if human_input is not None else None
+        event = await self._store.append_event(
+            run_id=run_id,
+            tenant_id=tenant.tenant_id,
+            event_type=EventType.RESUME_REQUESTED,
+            payload=ResumeRequestedPayload(human_input_json=human_input_json),
+        )
+        return RunHandle(run_id=event.run_id, tenant_id=event.tenant_id)
 
     async def close(self) -> None:
         await self._store.close()
@@ -269,3 +349,29 @@ class ArtanaKernel:
                     "KernelPolicy(mode='enforced') requires middleware "
                     f"{middleware_type.__name__}."
                 )
+
+
+def _normalize_model_input(model_input: ModelInput) -> tuple[str, tuple[ChatMessage, ...]]:
+    if model_input.kind == "prompt":
+        if model_input.prompt is None:
+            raise ValueError("ModelInput(kind='prompt') requires prompt.")
+        if model_input.messages is None:
+            return model_input.prompt, (ChatMessage(role="user", content=model_input.prompt),)
+        if len(model_input.messages) == 0:
+            raise ValueError("ModelInput(kind='prompt') messages cannot be empty.")
+        return model_input.prompt, model_input.messages
+
+    if model_input.messages is None or len(model_input.messages) == 0:
+        raise ValueError("ModelInput(kind='messages') requires non-empty messages.")
+
+    prompt = model_input.prompt
+    if prompt is None:
+        prompt = _derive_prompt_from_messages(model_input.messages)
+    return prompt, model_input.messages
+
+
+def _derive_prompt_from_messages(messages: tuple[ChatMessage, ...]) -> str:
+    for message in reversed(messages):
+        if message.role == "user":
+            return message.content
+    return "\n".join(f"{message.role}: {message.content}" for message in messages)

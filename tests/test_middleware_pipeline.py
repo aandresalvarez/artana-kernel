@@ -6,6 +6,7 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
+from artana import ChatClient
 from artana.events import ModelRequestedPayload
 from artana.kernel import ArtanaKernel
 from artana.middleware import (
@@ -89,7 +90,7 @@ async def test_pii_scrubber_redacts_prompt_before_model_request(tmp_path: Path) 
     raw_prompt = "Contact me at user@example.com or 415-555-9999."
 
     try:
-        await kernel.chat(
+        await ChatClient(kernel=kernel).chat(
             run_id="run_pii",
             prompt=raw_prompt,
             model="gpt-4o-mini",
@@ -104,7 +105,7 @@ async def test_pii_scrubber_redacts_prompt_before_model_request(tmp_path: Path) 
         assert "[REDACTED_PHONE]" in model_port.last_prompt
 
         events = await store.get_events_for_run("run_pii")
-        requested_payload = events[0].payload
+        requested_payload = events[1].payload
         assert isinstance(requested_payload, ModelRequestedPayload)
         assert "[REDACTED_EMAIL]" in requested_payload.prompt
         assert "[REDACTED_PHONE]" in requested_payload.prompt
@@ -133,7 +134,7 @@ async def test_kernel_enforces_middleware_order_for_known_middleware(tmp_path: P
     )
 
     try:
-        await kernel.chat(
+        await ChatClient(kernel=kernel).chat(
             run_id="run_order",
             prompt="order check",
             model="gpt-4o-mini",
@@ -170,7 +171,7 @@ async def test_capability_guard_filters_unauthorized_tools(tmp_path: Path) -> No
     )
 
     try:
-        await kernel.chat(
+        await ChatClient(kernel=kernel).chat(
             run_id="run_guard",
             prompt="Show tools",
             model="gpt-4o-mini",

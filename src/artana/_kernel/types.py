@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel
 
+from artana.events import ChatMessage
 from artana.ports.model import ModelUsage, ToolCall
 from artana.ports.tool import ToolReturnValue
 
@@ -39,6 +40,29 @@ class RunHandle:
     tenant_id: str
 
 
+type RunRef = RunHandle
+
+
+@dataclass(frozen=True, slots=True)
+class ModelInput:
+    kind: Literal["prompt", "messages"]
+    prompt: str | None = None
+    messages: tuple[ChatMessage, ...] | None = None
+
+    @classmethod
+    def from_prompt(cls, prompt: str) -> "ModelInput":
+        return cls(kind="prompt", prompt=prompt)
+
+    @classmethod
+    def from_messages(
+        cls,
+        messages: Sequence[ChatMessage],
+        *,
+        prompt: str | None = None,
+    ) -> "ModelInput":
+        return cls(kind="messages", messages=tuple(messages), prompt=prompt)
+
+
 @dataclass(frozen=True, slots=True)
 class KernelPolicy:
     mode: Literal["permissive", "enforced"] = "permissive"
@@ -49,17 +73,19 @@ class KernelPolicy:
 
 
 @dataclass(frozen=True, slots=True)
-class ChatResponse(Generic[OutputT]):
+class StepModelResult(Generic[OutputT]):
     run_id: str
+    seq: int
     output: OutputT
     usage: ModelUsage
+    tool_calls: tuple[ToolCall, ...]
     replayed: bool
 
 
 @dataclass(frozen=True, slots=True)
-class RunResumeState:
+class StepToolResult:
     run_id: str
-    status: Literal["paused", "pending_tool", "ready", "complete"]
-    last_seq: int
-    pause_reason: str | None
-    pending_tool: ToolCall | None
+    seq: int
+    tool_name: str
+    result_json: str
+    replayed: bool

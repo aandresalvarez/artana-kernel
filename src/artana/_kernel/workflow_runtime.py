@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from artana._kernel.replay import validate_tenant_for_run
 from artana._kernel.types import PauseTicket, ReplayConsistencyError
 from artana.events import (
+    EventType,
     KernelEvent,
     WorkflowStepCompletedPayload,
     WorkflowStepRequestedPayload,
@@ -89,7 +90,15 @@ class WorkflowPausedInterrupt(RuntimeError):
 
 
 class _PauseAPI(Protocol):
-    async def pause_for_human(self, *, run_id: str, reason: str) -> PauseTicket:
+    async def pause(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        reason: str,
+        context: BaseModel | None = None,
+        step_key: str | None = None,
+    ) -> PauseTicket:
         ...
 
 
@@ -143,7 +152,7 @@ class WorkflowContext:
             await self._store.append_event(
                 run_id=self.run_id,
                 tenant_id=self.tenant.tenant_id,
-                event_type="workflow_step_requested",
+                event_type=EventType.WORKFLOW_STEP_REQUESTED,
                 payload=WorkflowStepRequestedPayload(
                     step_index=step_index,
                     step_name=name,
@@ -155,7 +164,7 @@ class WorkflowContext:
         await self._store.append_event(
             run_id=self.run_id,
             tenant_id=self.tenant.tenant_id,
-            event_type="workflow_step_completed",
+            event_type=EventType.WORKFLOW_STEP_COMPLETED,
             payload=WorkflowStepCompletedPayload(
                 step_index=step_index,
                 step_name=name,
@@ -169,20 +178,32 @@ class WorkflowContext:
         )
         return result
 
-    async def pause_for_human(self, reason: str) -> PauseTicket:
-        ticket = await self._pause_api.pause_for_human(run_id=self.run_id, reason=reason)
+    async def pause(
+        self,
+        reason: str,
+        *,
+        context: BaseModel | None = None,
+        step_key: str | None = None,
+    ) -> PauseTicket:
+        ticket = await self._pause_api.pause(
+            run_id=self.run_id,
+            tenant=self.tenant,
+            reason=reason,
+            context=context,
+            step_key=step_key,
+        )
         raise WorkflowPausedInterrupt(ticket)
 
     def _load_step_cache(self, events: Sequence[KernelEvent]) -> None:
         for event in events:
-            if event.event_type == "workflow_step_requested":
+            if event.event_type == EventType.WORKFLOW_STEP_REQUESTED:
                 payload = event.payload
                 if not isinstance(payload, WorkflowStepRequestedPayload):
                     raise ReplayConsistencyError(
                         f"Invalid workflow_step_requested payload at seq={event.seq}."
                     )
                 self._requested_by_index[payload.step_index] = payload
-            if event.event_type == "workflow_step_completed":
+            if event.event_type == EventType.WORKFLOW_STEP_COMPLETED:
                 payload = event.payload
                 if not isinstance(payload, WorkflowStepCompletedPayload):
                     raise ReplayConsistencyError(
@@ -224,4 +245,3 @@ async def run_workflow(
         output=output,
         pause_ticket=None,
     )
-

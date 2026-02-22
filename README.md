@@ -75,12 +75,14 @@ Initial implementation aligned with the Artana Kernel PRD:
   - `LocalToolRegistry` (implements `ToolPort`)
 - Core kernel APIs:
   - `start_run` — kernel-issued run IDs for authoritative run lifecycle
-  - `chat` — single model call with structured output and tool execution
-  - `execute_tool` — execute or replay a tool for a run
+  - `load_run` — load an existing run reference
+  - `step_model` — deterministic model step execution
+  - `step_tool` — deterministic tool step execution
   - `reconcile_tool` — resolve `unknown_outcome` tool requests using original idempotency key
-  - `pause_for_human` — request human-in-the-loop pause
-  - `resume` — derive run state (paused, pending_tool, ready, complete)
+  - `pause` — request human-in-the-loop pause with optional context
+  - `resume` — append a resume boundary event with optional human input
   - `run_workflow` — durable workflow with `WorkflowContext`, step serde, replay
+  - `ChatClient.chat(...)` (agent layer) — convenience wrapper around `step_model`
   - `default_middleware_stack` — deterministic middleware ordering helper
   - `KernelPolicy.enforced()` — startup guard requiring governance middleware
 - Tool registration via `@kernel.tool(requires_capability="...")` decorator
@@ -147,14 +149,14 @@ Developers write normal Python:
 
 ```python
 run = await kernel.start_run(tenant=tenant)
-response = await kernel.chat(
+step = await kernel.step_model(
     run_id=run.run_id,
-    prompt="Should we transfer?",
-    model="gpt-4o-mini",
     tenant=tenant,
+    model="gpt-4o-mini",
+    input=ModelInput.from_prompt("Should we transfer?"),
     output_schema=Decision,
 )
-decision = response.output  # ChatResponse[OutputT]
+decision = step.output
 ```
 
 Artana ensures: durability, governance, side-effect safety, budget control, deterministic replay, auditability. You control orchestration. Artana controls execution integrity.
@@ -180,11 +182,11 @@ artana/
 ├── _kernel/
 │   ├── core.py          # ArtanaKernel
 │   ├── workflow_runtime.py  # run_workflow, WorkflowContext, StepSerde
-│   ├── replay.py        # derive_run_resume_state, validate_tenant_for_run
+│   ├── replay.py        # replay matching + tenant validation helpers
 │   ├── model_cycle.py   # get_or_execute_model_step
-│   ├── tool_cycle.py    # execute_or_replay_tools_for_model, execute_tool_with_replay
+│   ├── tool_cycle.py    # replay-aware tool step execution
 │   ├── policies.py     # apply_prepare_model_middleware, enforce_capability_scope
-│   └── types.py         # ChatResponse, PauseTicket, RunResumeState, KernelPolicy, RunHandle
+│   └── types.py         # ModelInput, StepModelResult, StepToolResult, KernelPolicy, RunHandle
 ├── middleware/          # PIIScrubberMiddleware, QuotaMiddleware, CapabilityGuardMiddleware
 ├── ports/
 │   ├── model.py        # LiteLLMAdapter, ModelPort
@@ -233,7 +235,7 @@ For side-effect tools, unknown outcomes are fail-closed: Artana halts replay and
 ```python
 from pydantic import BaseModel
 
-from artana import ArtanaKernel, KernelPolicy, TenantContext
+from artana import ArtanaKernel, KernelPolicy, ModelInput, TenantContext
 from artana.store import SQLiteStore
 from artana.ports.model import LiteLLMAdapter
 
@@ -254,14 +256,14 @@ tenant = TenantContext(
 )
 run = await kernel.start_run(tenant=tenant)
 
-response = await kernel.chat(
+step = await kernel.step_model(
     run_id=run.run_id,
-    prompt="Should we approve?",
-    model="gpt-4o-mini",
     tenant=tenant,
+    model="gpt-4o-mini",
+    input=ModelInput.from_prompt("Should we approve?"),
     output_schema=Decision,
 )
-decision = response.output
+decision = step.output
 ```
 
 ### Real OpenAI Usage
@@ -271,7 +273,7 @@ set -a; source .env; set +a
 uv run python examples/02_real_litellm_chat.py
 ```
 
-The script proves deterministic replay by calling `kernel.chat()` twice for the same `run_id` and asserting:
+The script proves deterministic replay by calling `ChatClient.chat()` twice for the same `run_id` and asserting:
 
 - second response has `replayed=True`
 - event count does not grow on replay

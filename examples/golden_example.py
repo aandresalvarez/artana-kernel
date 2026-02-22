@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+from decimal import Decimal
 from pathlib import Path
 
 from pydantic import BaseModel
 
-from artana import ArtanaKernel, KernelPolicy, TenantContext
-from artana.events import ToolCompletedPayload
+from artana import ArtanaKernel, ChatClient, KernelPolicy, TenantContext
+from artana.events import EventType, KernelEvent, ToolCompletedPayload, ToolRequestedPayload
 from artana.kernel import ToolExecutionFailedError
 from artana.ports.model import LiteLLMAdapter
 from artana.store import SQLiteStore
@@ -18,10 +19,66 @@ class Decision(BaseModel):
     reason: str
 
 
+class TransferArgs(BaseModel):
+    account_id: str
+    amount: Decimal
+
+
 def _print_feature(name: str, details: dict[str, object]) -> None:
     print(f"\n=== {name} ===")
     for key, value in details.items():
         print(f"{key}: {value}")
+
+
+def _count_tool_requests(
+    events: list[KernelEvent],
+    *,
+    tool_name: str,
+    step_key: str,
+) -> int:
+    count = 0
+    for event in events:
+        if event.event_type != EventType.TOOL_REQUESTED:
+            continue
+        payload = event.payload
+        if not isinstance(payload, ToolRequestedPayload):
+            continue
+        if payload.tool_name == tool_name and payload.step_key == step_key:
+            count += 1
+    return count
+
+
+def _latest_tool_completion_payload(
+    events: list[KernelEvent],
+    *,
+    tool_name: str,
+    step_key: str,
+) -> ToolCompletedPayload:
+    requested_by_id: dict[str, ToolRequestedPayload] = {}
+    for event in events:
+        if event.event_type != EventType.TOOL_REQUESTED:
+            continue
+        payload = event.payload
+        if isinstance(payload, ToolRequestedPayload):
+            requested_by_id[event.event_id] = payload
+
+    for event in reversed(events):
+        if event.event_type != EventType.TOOL_COMPLETED:
+            continue
+        payload = event.payload
+        if not isinstance(payload, ToolCompletedPayload):
+            continue
+        if payload.request_id is None:
+            continue
+        requested = requested_by_id.get(payload.request_id)
+        if requested is None:
+            continue
+        if requested.tool_name == tool_name and requested.step_key == step_key:
+            return payload
+
+    raise AssertionError(
+        "Could not find matching tool_completed payload for tool_name/step_key pair."
+    )
 
 
 async def main() -> None:
@@ -56,7 +113,7 @@ async def main() -> None:
     tool_attempts = [0]
 
     @kernel.tool(requires_capability="finance:write")
-    async def submit_transfer(account_id: str, amount: str) -> str:
+    async def submit_transfer(account_id: str, amount: Decimal) -> str:
         tool_attempts[0] += 1
         if tool_attempts[0] == 1:
             raise RuntimeError("simulated network drop after request submission")
@@ -64,7 +121,7 @@ async def main() -> None:
             '{"status":"submitted","account_id":"'
             + account_id
             + '","amount":"'
-            + amount
+            + str(amount)
             + '"}'
         )
 
@@ -73,7 +130,10 @@ async def main() -> None:
         capabilities=frozenset({"decision:approve", "finance:write"}),
         budget_usd_limit=0.20,
     )
-    tool_args_json = '{"account_id":"acc_1","amount":"10"}'
+    tool_args = TransferArgs(account_id="acc_1", amount=Decimal("10.00"))
+    model_step_key = "decision.v1"
+    tool_step_key = "transfer.acc_1.10.v1"
+    chat = ChatClient(kernel=kernel)
 
     try:
         run = await kernel.start_run(tenant=tenant)
@@ -91,12 +151,13 @@ async def main() -> None:
             "Approve this request and give a short reason."
         )
 
-        first = await kernel.chat(
+        first = await chat.chat(
             run_id=run_id,
             prompt=prompt,
             model="gpt-4o-mini",
             tenant=tenant,
             output_schema=Decision,
+            step_key=model_step_key,
         )
         events_after_first = await store.get_events_for_run(run_id)
         usage_first = {
@@ -110,16 +171,17 @@ async def main() -> None:
                 "replayed": first.replayed,
                 "output": first.output.model_dump(),
                 "usage": usage_first,
-                "event_types": [event.event_type for event in events_after_first],
+                "event_types": [event.event_type.value for event in events_after_first],
             },
         )
 
-        second = await kernel.chat(
+        second = await chat.chat(
             run_id=run_id,
             prompt=prompt,
             model="gpt-4o-mini",
             tenant=tenant,
             output_schema=Decision,
+            step_key=model_step_key,
         )
         events_after_second = await store.get_events_for_run(run_id)
         usage_second = {
@@ -134,7 +196,7 @@ async def main() -> None:
                 "output_matches_live": first.output == second.output,
                 "event_count_unchanged": len(events_after_first) == len(events_after_second),
                 "usage": usage_second,
-                "event_types": [event.event_type for event in events_after_second],
+                "event_types": [event.event_type.value for event in events_after_second],
             },
         )
 
@@ -147,22 +209,34 @@ async def main() -> None:
 
         unknown_error_message = ""
         try:
-            await kernel.execute_tool(
+            await kernel.step_tool(
                 run_id=run_id,
                 tenant=tenant,
                 tool_name="submit_transfer",
-                arguments_json=tool_args_json,
+                arguments=tool_args,
+                step_key=tool_step_key,
             )
             raise AssertionError("Expected first tool execution to fail with unknown outcome.")
         except ToolExecutionFailedError as exc:
             unknown_error_message = str(exc)
 
         events_after_unknown = await store.get_events_for_run(run_id)
-        unknown_payload_obj = events_after_unknown[-1].payload
-        if not isinstance(unknown_payload_obj, ToolCompletedPayload):
-            raise AssertionError("Expected latest event payload to be ToolCompletedPayload.")
+        unknown_payload_obj = _latest_tool_completion_payload(
+            events_after_unknown,
+            tool_name="submit_transfer",
+            step_key=tool_step_key,
+        )
         if unknown_payload_obj.outcome != "unknown_outcome":
             raise AssertionError("Expected unknown_outcome after first tool execution failure.")
+        requested_before_halt = _count_tool_requests(
+            events_after_unknown,
+            tool_name="submit_transfer",
+            step_key=tool_step_key,
+        )
+        if requested_before_halt < 1:
+            raise AssertionError("Expected at least one tool_requested event for tool step.")
+        if unknown_payload_obj.request_id is None:
+            raise AssertionError("tool_completed for unknown outcome must reference request_id.")
         _print_feature(
             "Feature 5 - Unknown Tool Outcome Recorded",
             {
@@ -170,40 +244,55 @@ async def main() -> None:
                 "tool_attempts": tool_attempts[0],
                 "latest_tool_outcome": unknown_payload_obj.outcome,
                 "latest_request_id": unknown_payload_obj.request_id,
+                "tool_requested_count": requested_before_halt,
             },
         )
 
         halt_error_message = ""
         try:
-            await kernel.execute_tool(
+            await kernel.step_tool(
                 run_id=run_id,
                 tenant=tenant,
                 tool_name="submit_transfer",
-                arguments_json=tool_args_json,
+                arguments=tool_args,
+                step_key=tool_step_key,
             )
             raise AssertionError("Expected replay halt before reconciliation.")
         except ToolExecutionFailedError as exc:
             halt_error_message = str(exc)
         events_before_reconcile = await store.get_events_for_run(run_id)
+        requested_after_halt = _count_tool_requests(
+            events_before_reconcile,
+            tool_name="submit_transfer",
+            step_key=tool_step_key,
+        )
         _print_feature(
             "Feature 6 - Replay Halt Before Reconciliation",
             {
                 "error": halt_error_message,
                 "tool_attempts": tool_attempts[0],
                 "event_count": len(events_before_reconcile),
+                "tool_requested_unchanged": requested_before_halt == requested_after_halt,
             },
         )
+        if requested_before_halt != requested_after_halt:
+            raise AssertionError("Replay halt must not append a new tool_requested event.")
+        if tool_attempts[0] != 1:
+            raise AssertionError("Replay halt must not re-execute the tool function.")
 
         reconciled_result = await kernel.reconcile_tool(
             run_id=run_id,
             tenant=tenant,
             tool_name="submit_transfer",
-            arguments_json=tool_args_json,
+            arguments=tool_args,
+            step_key=tool_step_key,
         )
         events_after_reconcile = await store.get_events_for_run(run_id)
-        reconciled_payload_obj = events_after_reconcile[-1].payload
-        if not isinstance(reconciled_payload_obj, ToolCompletedPayload):
-            raise AssertionError("Expected reconcile to append ToolCompletedPayload.")
+        reconciled_payload_obj = _latest_tool_completion_payload(
+            events_after_reconcile,
+            tool_name="submit_transfer",
+            step_key=tool_step_key,
+        )
         if reconciled_payload_obj.outcome != "success":
             raise AssertionError("Expected reconcile to append success completion.")
         _print_feature(
@@ -218,24 +307,28 @@ async def main() -> None:
             },
         )
 
-        replayed_tool_result = await kernel.execute_tool(
+        replayed_tool_result = await kernel.step_tool(
             run_id=run_id,
             tenant=tenant,
             tool_name="submit_transfer",
-            arguments_json=tool_args_json,
+            arguments=tool_args,
+            step_key=tool_step_key,
         )
         events_after_tool_replay = await store.get_events_for_run(run_id)
         _print_feature(
             "Feature 8 - Post-Reconcile Tool Replay",
             {
-                "result_matches_reconcile": replayed_tool_result == reconciled_result,
+                "result_matches_reconcile": replayed_tool_result.result_json
+                == reconciled_result,
                 "tool_attempts": tool_attempts[0],
+                "replayed": replayed_tool_result.replayed,
+                "seq": replayed_tool_result.seq,
                 "event_count_unchanged": len(events_after_tool_replay)
                 == len(events_after_reconcile),
             },
         )
 
-        if replayed_tool_result != reconciled_result:
+        if replayed_tool_result.result_json != reconciled_result:
             raise AssertionError("Replayed tool result must match reconciled success result.")
         if len(events_after_tool_replay) != len(events_after_reconcile):
             raise AssertionError("Tool replay should not append duplicate completion events.")

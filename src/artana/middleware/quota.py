@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from artana.events import EventType
 from artana.middleware.base import BudgetExceededError, ModelInvocation
 from artana.models import TenantContext
 from artana.ports.model import ModelUsage
@@ -54,7 +55,7 @@ class QuotaMiddleware:
         events = await self._store.get_events_for_run(run_id)
         spent = 0.0
         for event in events:
-            if event.event_type != "model_completed":
+            if event.event_type != EventType.MODEL_COMPLETED:
                 continue
             payload = event.payload
             if payload.kind != "model_completed":

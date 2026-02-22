@@ -10,6 +10,7 @@ from artana._kernel.replay import (
 from artana._kernel.types import OutputT
 from artana.events import (
     ChatMessage,
+    EventType,
     KernelEvent,
     ModelCompletedPayload,
     ModelRequestedPayload,
@@ -35,12 +36,15 @@ async def get_or_execute_model_step(
     tool_definitions: Sequence[ToolDefinition],
     allowed_tool_names: list[str],
     events: Sequence[KernelEvent],
+    step_key: str | None = None,
 ) -> ModelStepResult[OutputT]:
     request_event, completed_event = find_matching_model_cycle(
         events=events,
         prompt=prompt,
+        messages=messages,
         model=model,
         allowed_tool_names=allowed_tool_names,
+        step_key=step_key,
     )
     if completed_event is not None:
         return deserialize_model_completed(
@@ -53,12 +57,13 @@ async def get_or_execute_model_step(
         await store.append_event(
             run_id=run_id,
             tenant_id=tenant.tenant_id,
-            event_type="model_requested",
+            event_type=EventType.MODEL_REQUESTED,
             payload=ModelRequestedPayload(
                 model=model,
                 prompt=prompt,
                 messages=list(messages),
                 allowed_tools=allowed_tool_names,
+                step_key=step_key,
             ),
         )
 
@@ -77,7 +82,7 @@ async def get_or_execute_model_step(
     completed_event = await store.append_event(
         run_id=run_id,
         tenant_id=tenant.tenant_id,
-        event_type="model_completed",
+        event_type=EventType.MODEL_COMPLETED,
         payload=ModelCompletedPayload(
             model=model,
             output_json=result.output.model_dump_json(),

@@ -6,6 +6,7 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
+from artana import ChatClient
 from artana.kernel import ArtanaKernel
 from artana.middleware import BudgetExceededError, QuotaMiddleware
 from artana.models import TenantContext
@@ -60,7 +61,7 @@ async def test_quota_persists_from_event_log_across_kernel_restarts(tmp_path: Pa
     )
 
     try:
-        await first_kernel.chat(
+        await ChatClient(kernel=first_kernel).chat(
             run_id="run_budget",
             prompt="first decision",
             model="gpt-4o-mini",
@@ -69,7 +70,7 @@ async def test_quota_persists_from_event_log_across_kernel_restarts(tmp_path: Pa
         )
 
         with pytest.raises(BudgetExceededError):
-            await second_kernel.chat(
+            await ChatClient(kernel=second_kernel).chat(
                 run_id="run_budget",
                 prompt="second decision",
                 model="gpt-4o-mini",
@@ -82,6 +83,7 @@ async def test_quota_persists_from_event_log_across_kernel_restarts(tmp_path: Pa
 
         events = await store.get_events_for_run("run_budget")
         assert [event.event_type for event in events] == [
+            "run_started",
             "model_requested",
             "model_completed",
             "model_requested",
@@ -110,7 +112,7 @@ async def test_quota_blocks_before_model_when_budget_already_exhausted(tmp_path:
 
     try:
         with pytest.raises(BudgetExceededError):
-            await first_kernel.chat(
+            await ChatClient(kernel=first_kernel).chat(
                 run_id="run_budget_2",
                 prompt="expensive call",
                 model="gpt-4o-mini",
@@ -128,7 +130,7 @@ async def test_quota_blocks_before_model_when_budget_already_exhausted(tmp_path:
     )
     try:
         with pytest.raises(BudgetExceededError):
-            await second_kernel.chat(
+            await ChatClient(kernel=second_kernel).chat(
                 run_id="run_budget_2",
                 prompt="retry call",
                 model="gpt-4o-mini",
@@ -138,4 +140,3 @@ async def test_quota_blocks_before_model_when_budget_already_exhausted(tmp_path:
         assert retry_model.calls == 0
     finally:
         await second_kernel.close()
-

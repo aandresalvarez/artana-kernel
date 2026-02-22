@@ -6,6 +6,7 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
+from artana import ChatClient
 from artana.events import EventPayload, EventType, KernelEvent
 from artana.kernel import ArtanaKernel, CapabilityDeniedError
 from artana.models import TenantContext
@@ -19,6 +20,11 @@ OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 class Decision(BaseModel):
     approved: bool
     reason: str
+
+
+class TransferArgs(BaseModel):
+    account_id: str
+    amount: str
 
 
 class ToolCallingModelPort:
@@ -75,7 +81,7 @@ class FailingStore(EventStore):
 
 
 @pytest.mark.asyncio
-async def test_chat_raises_capability_denied_for_unauthorized_tool_call(
+async def test_chat_does_not_execute_unauthorized_tool_call_implicitly(
     tmp_path: Path,
 ) -> None:
     model_port = ToolCallingModelPort()
@@ -92,14 +98,15 @@ async def test_chat_raises_capability_denied_for_unauthorized_tool_call(
         budget_usd_limit=1.0,
     )
     try:
-        with pytest.raises(CapabilityDeniedError):
-            await kernel.chat(
-                run_id="run_denied",
-                prompt="Transfer money",
-                model="gpt-4o-mini",
-                tenant=tenant,
-                output_schema=Decision,
-            )
+        response = await ChatClient(kernel=kernel).chat(
+            run_id="run_denied",
+            prompt="Transfer money",
+            model="gpt-4o-mini",
+            tenant=tenant,
+            output_schema=Decision,
+        )
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].tool_name == "submit_transfer"
     finally:
         await kernel.close()
 
@@ -120,12 +127,13 @@ async def test_execute_tool_denies_missing_capability(tmp_path: Path) -> None:
         budget_usd_limit=1.0,
     )
     try:
+        await kernel.start_run(tenant=tenant, run_id="run_exec_denied")
         with pytest.raises(CapabilityDeniedError):
-            await kernel.execute_tool(
+            await kernel.step_tool(
                 run_id="run_exec_denied",
                 tenant=tenant,
                 tool_name="submit_transfer",
-                arguments_json='{"account_id":"acc_1","amount":"10"}',
+                arguments=TransferArgs(account_id="acc_1", amount="10"),
             )
     finally:
         await kernel.close()
@@ -144,7 +152,7 @@ async def test_store_failure_prevents_model_execution() -> None:
 
     try:
         with pytest.raises(RuntimeError, match="simulated store write failure"):
-            await kernel.chat(
+            await ChatClient(kernel=kernel).chat(
                 run_id="run_store_fail",
                 prompt="hello",
                 model="gpt-4o-mini",

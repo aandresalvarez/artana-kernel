@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from artana import ArtanaKernel, KernelPolicy, TenantContext
+from artana import ArtanaKernel, ChatClient, KernelPolicy, TenantContext
 from artana.ports.model import LiteLLMAdapter
 from artana.store import SQLiteStore
 
@@ -49,7 +49,7 @@ async def main() -> None:
             "Approve this request and give a short reason."
         )
 
-        first = await kernel.chat(
+        first = await ChatClient(kernel=kernel).chat(
             run_id=run.run_id,
             prompt=prompt,
             model="gpt-4o-mini",
@@ -58,7 +58,7 @@ async def main() -> None:
         )
         events_after_first = await store.get_events_for_run(run.run_id)
 
-        second = await kernel.chat(
+        second = await ChatClient(kernel=kernel).chat(
             run_id=run.run_id,
             prompt=prompt,
             model="gpt-4o-mini",

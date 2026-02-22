@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from artana.events import ChatMessage, ModelRequestedPayload, ToolRequestedPayload
+from artana.events import (
+    ChatMessage,
+    EventType,
+    ModelRequestedPayload,
+    ToolRequestedPayload,
+)
 from artana.store import SQLiteStore
 
 
@@ -16,7 +21,7 @@ async def test_append_and_get_events_for_run(tmp_path: Path) -> None:
         first = await store.append_event(
             run_id="run_a",
             tenant_id="tenant_a",
-            event_type="model_requested",
+            event_type=EventType.MODEL_REQUESTED,
             payload=ModelRequestedPayload(
                 model="gpt-4o-mini",
                 prompt="hello",
@@ -26,7 +31,7 @@ async def test_append_and_get_events_for_run(tmp_path: Path) -> None:
         second = await store.append_event(
             run_id="run_a",
             tenant_id="tenant_a",
-            event_type="tool_requested",
+            event_type=EventType.TOOL_REQUESTED,
             payload=ToolRequestedPayload(
                 tool_name="lookup_balance",
                 arguments_json='{"account_id":"abc"}',
@@ -50,7 +55,7 @@ async def test_append_is_sequential_under_concurrency(tmp_path: Path) -> None:
         await store.append_event(
             run_id="run_concurrent",
             tenant_id="tenant_concurrent",
-            event_type="tool_requested",
+            event_type=EventType.TOOL_REQUESTED,
             payload=ToolRequestedPayload(
                 tool_name="noop",
                 arguments_json=f'{{"index":"{index}"}}',

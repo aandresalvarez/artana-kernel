@@ -4,7 +4,6 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
 from uuid import uuid4
 
 import aiosqlite
@@ -14,15 +13,6 @@ from artana.events import EventPayload, EventType, KernelEvent, compute_event_ha
 from artana.store.base import EventStore
 
 _PAYLOAD_ADAPTER: TypeAdapter[EventPayload] = TypeAdapter(EventPayload)
-_EVENT_TYPES: set[str] = {
-    "model_requested",
-    "model_completed",
-    "tool_requested",
-    "tool_completed",
-    "pause_requested",
-    "workflow_step_requested",
-    "workflow_step_completed",
-}
 
 
 class SQLiteStore(EventStore):
@@ -82,7 +72,7 @@ class SQLiteStore(EventStore):
                         event.seq,
                         event.event_id,
                         event.tenant_id,
-                        event.event_type,
+                        event.event_type.value,
                         event.prev_event_hash,
                         event.event_hash,
                         event.timestamp.isoformat(),
@@ -150,14 +140,17 @@ class SQLiteStore(EventStore):
                 raise TypeError(
                     f"Invalid payload_json row type: {type(payload_json_raw)!r}"
                 )
-            if event_type_raw not in _EVENT_TYPES:
-                raise ValueError(f"Unknown event_type in store: {event_type_raw!r}")
+            try:
+                event_type = EventType(event_type_raw)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Unknown event_type in store: {event_type_raw!r}"
+                ) from exc
 
             payload_dict_raw = json.loads(payload_json_raw)
             if not isinstance(payload_dict_raw, dict):
                 raise TypeError("Stored payload_json did not decode to an object.")
             payload = _PAYLOAD_ADAPTER.validate_python(payload_dict_raw)
-            event_type = cast(EventType, event_type_raw)
 
             events.append(
                 KernelEvent(

@@ -1,12 +1,14 @@
 from artana._kernel.core import ArtanaKernel
 from artana._kernel.types import (
     CapabilityDeniedError,
-    ChatResponse,
     KernelPolicy,
+    ModelInput,
     PauseTicket,
     ReplayConsistencyError,
     RunHandle,
-    RunResumeState,
+    RunRef,
+    StepModelResult,
+    StepToolResult,
     ToolExecutionFailedError,
 )
 from artana._kernel.workflow_runtime import (
@@ -21,12 +23,14 @@ from artana._kernel.workflow_runtime import (
 __all__ = [
     "ArtanaKernel",
     "CapabilityDeniedError",
-    "ChatResponse",
     "KernelPolicy",
+    "ModelInput",
     "PauseTicket",
     "ReplayConsistencyError",
     "RunHandle",
-    "RunResumeState",
+    "RunRef",
+    "StepModelResult",
+    "StepToolResult",
     "ToolExecutionFailedError",
     "JsonValue",
     "StepSerde",

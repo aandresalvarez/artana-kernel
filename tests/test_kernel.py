@@ -6,6 +6,8 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
+from artana import ChatClient
+from artana.events import EventType
 from artana.kernel import ArtanaKernel
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage, ToolCall
@@ -69,14 +71,14 @@ async def test_chat_replays_completed_model_response(tmp_path: Path) -> None:
     )
 
     try:
-        first = await kernel.chat(
+        first = await ChatClient(kernel=kernel).chat(
             run_id="run_1",
             prompt="Should we transfer?",
             model="gpt-4o-mini",
             tenant=tenant,
             output_schema=Decision,
         )
-        second = await kernel.chat(
+        second = await ChatClient(kernel=kernel).chat(
             run_id="run_1",
             prompt="Should we transfer?",
             model="gpt-4o-mini",
@@ -90,6 +92,7 @@ async def test_chat_replays_completed_model_response(tmp_path: Path) -> None:
 
         events = await store.get_events_for_run("run_1")
         assert [event.event_type for event in events] == [
+            "run_started",
             "model_requested",
             "model_completed",
         ]
@@ -118,7 +121,7 @@ async def test_chat_filters_tools_by_capability(tmp_path: Path) -> None:
     )
 
     try:
-        await kernel.chat(
+        await ChatClient(kernel=kernel).chat(
             run_id="run_2",
             prompt="Get account summary",
             model="gpt-4o-mini",
@@ -131,7 +134,7 @@ async def test_chat_filters_tools_by_capability(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_pause_for_human_persists_pause_event(tmp_path: Path) -> None:
+async def test_pause_persists_pause_event(tmp_path: Path) -> None:
     store = SQLiteStore(str(tmp_path / "state.db"))
     model_port = FakeModelPort()
     kernel = ArtanaKernel(store=store, model_port=model_port)
@@ -142,7 +145,7 @@ async def test_pause_for_human_persists_pause_event(tmp_path: Path) -> None:
     )
 
     try:
-        await kernel.chat(
+        await ChatClient(kernel=kernel).chat(
             run_id="run_3",
             prompt="Approve transfer?",
             model="gpt-4o-mini",
@@ -150,10 +153,14 @@ async def test_pause_for_human_persists_pause_event(tmp_path: Path) -> None:
             output_schema=Decision,
         )
 
-        ticket = await kernel.pause_for_human(run_id="run_3", reason="Need manager sign-off")
+        ticket = await kernel.pause(
+            run_id="run_3",
+            tenant=tenant,
+            reason="Need manager sign-off",
+        )
         assert ticket.run_id == "run_3"
         events = await store.get_events_for_run("run_3")
-        assert events[-1].event_type == "pause_requested"
+        assert events[-1].event_type == EventType.PAUSE_REQUESTED
     finally:
         await kernel.close()
 
@@ -178,14 +185,14 @@ async def test_chat_replays_tools_without_reexecuting_completed_tool(tmp_path: P
     )
 
     try:
-        first = await kernel.chat(
+        first = await ChatClient(kernel=kernel).chat(
             run_id="run_4",
             prompt="Execute transfer",
             model="gpt-4o-mini",
             tenant=tenant,
             output_schema=Decision,
         )
-        second = await kernel.chat(
+        second = await ChatClient(kernel=kernel).chat(
             run_id="run_4",
             prompt="Execute transfer",
             model="gpt-4o-mini",
@@ -196,14 +203,15 @@ async def test_chat_replays_tools_without_reexecuting_completed_tool(tmp_path: P
         assert first.replayed is False
         assert second.replayed is True
         assert model_port.calls == 1
-        assert tool_invocations == 1
+        assert len(first.tool_calls) == 1
+        assert first.tool_calls[0].tool_name == "submit_transfer"
+        assert tool_invocations == 0
 
         events = await store.get_events_for_run("run_4")
         assert [event.event_type for event in events] == [
+            "run_started",
             "model_requested",
             "model_completed",
-            "tool_requested",
-            "tool_completed",
         ]
     finally:
         await kernel.close()
