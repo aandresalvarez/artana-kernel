@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.26.3"]
+build-backend = "hatchling.build"
+
+[project]
+name = "artana-kernel"
+version = "0.1.0"
+description = "Policy-enforced, event-sourced execution kernel for autonomous AI agents."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "aiosqlite>=0.20.0",
+  "litellm>=1.61.0",
+  "pydantic>=2.10.6",
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.15.0",
+  "pytest>=8.3.4",
+  "pytest-asyncio>=0.25.3",
+  "ruff>=0.11.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+packages = ["artana"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/artana"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
