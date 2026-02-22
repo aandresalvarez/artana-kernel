@@ -1,27 +1,43 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import Protocol, runtime_checkable
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
 from artana._kernel.model_cycle import get_or_execute_model_step
 from artana._kernel.policies import apply_prepare_model_middleware, enforce_capability_scope
 from artana._kernel.replay import derive_run_resume_state, validate_tenant_for_run
-from artana._kernel.tool_cycle import execute_or_replay_tools_for_model, execute_tool_with_replay
+from artana._kernel.tool_cycle import (
+    execute_or_replay_tools_for_model,
+    execute_tool_with_replay,
+    reconcile_tool_with_replay,
+)
 from artana._kernel.types import (
     ChatResponse,
+    KernelPolicy,
     OutputT,
     PauseTicket,
+    RunHandle,
     RunResumeState,
     ToolCallable,
+)
+from artana._kernel.workflow_runtime import (
+    WorkflowContext,
+    WorkflowRunResult,
+    run_workflow,
 )
 from artana.events import ChatMessage, PauseRequestedPayload
 from artana.middleware import order_middleware
 from artana.middleware.base import KernelMiddleware, ModelInvocation
+from artana.middleware.capability_guard import CapabilityGuardMiddleware
+from artana.middleware.pii_scrubber import PIIScrubberMiddleware
+from artana.middleware.quota import QuotaMiddleware
 from artana.models import TenantContext
 from artana.ports.model import ModelPort
 from artana.ports.tool import LocalToolRegistry, ToolPort
 from artana.store.base import EventStore
+
+WorkflowOutputT = TypeVar("WorkflowOutputT")
 
 
 @runtime_checkable
@@ -38,14 +54,53 @@ class ArtanaKernel:
         model_port: ModelPort,
         tool_port: ToolPort | None = None,
         middleware: Sequence[KernelMiddleware] | None = None,
+        policy: KernelPolicy | None = None,
     ) -> None:
         self._store = store
         self._model_port = model_port
         self._tool_port = tool_port if tool_port is not None else LocalToolRegistry()
+        self._policy = policy if policy is not None else KernelPolicy()
         self._middleware = order_middleware(tuple(middleware or ()))
+        self._validate_policy_requirements()
         for middleware_item in self._middleware:
             if isinstance(middleware_item, _StoreBindableMiddleware):
                 middleware_item.bind_store(store)
+
+    @staticmethod
+    def default_middleware_stack(
+        *,
+        pii: bool = True,
+        quota: bool = True,
+        capabilities: bool = True,
+    ) -> tuple[KernelMiddleware, ...]:
+        stack: list[KernelMiddleware] = []
+        if pii:
+            stack.append(PIIScrubberMiddleware())
+        if quota:
+            stack.append(QuotaMiddleware())
+        if capabilities:
+            stack.append(CapabilityGuardMiddleware())
+        return order_middleware(tuple(stack))
+
+    async def start_run(
+        self,
+        *,
+        tenant: TenantContext,
+        run_id: str | None = None,
+    ) -> RunHandle:
+        if run_id is not None:
+            existing = await self._store.get_events_for_run(run_id)
+            if existing:
+                raise ValueError(
+                    f"run_id={run_id!r} already exists; provide a different run_id."
+                )
+            return RunHandle(run_id=run_id, tenant_id=tenant.tenant_id)
+
+        for _ in range(5):
+            generated = uuid4().hex
+            if not await self._store.get_events_for_run(generated):
+                return RunHandle(run_id=generated, tenant_id=tenant.tenant_id)
+        raise RuntimeError("Failed to allocate a unique run_id after multiple attempts.")
 
     def tool(
         self, *, requires_capability: str | None = None
@@ -155,6 +210,23 @@ class ArtanaKernel:
             arguments_json=arguments_json,
         )
 
+    async def reconcile_tool(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        arguments_json: str,
+    ) -> str:
+        return await reconcile_tool_with_replay(
+            store=self._store,
+            tool_port=self._tool_port,
+            run_id=run_id,
+            tenant=tenant,
+            tool_name=tool_name,
+            arguments_json=arguments_json,
+        )
+
     async def resume(self, *, run_id: str) -> RunResumeState:
         events = await self._store.get_events_for_run(run_id)
         if not events:
@@ -164,3 +236,36 @@ class ArtanaKernel:
     async def close(self) -> None:
         await self._store.close()
 
+    async def run_workflow(
+        self,
+        *,
+        run_id: str | None,
+        tenant: TenantContext,
+        workflow: Callable[[WorkflowContext], Awaitable[WorkflowOutputT]],
+    ) -> WorkflowRunResult[WorkflowOutputT]:
+        return await run_workflow(
+            store=self._store,
+            pause_api=self,
+            run_id=run_id,
+            tenant=tenant,
+            workflow=workflow,
+        )
+
+    def _validate_policy_requirements(self) -> None:
+        if self._policy.mode != "enforced":
+            return
+
+        required: tuple[type[KernelMiddleware], ...] = (
+            PIIScrubberMiddleware,
+            QuotaMiddleware,
+            CapabilityGuardMiddleware,
+        )
+        for middleware_type in required:
+            if not any(
+                isinstance(middleware_item, middleware_type)
+                for middleware_item in self._middleware
+            ):
+                raise ValueError(
+                    "KernelPolicy(mode='enforced') requires middleware "
+                    f"{middleware_type.__name__}."
+                )

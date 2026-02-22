@@ -31,6 +31,7 @@ class LiteLLMAdapter:
         max_retries: int = 2,
         initial_backoff_seconds: float = 0.25,
         max_backoff_seconds: float = 2.0,
+        fail_on_unknown_cost: bool = False,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be > 0")
@@ -45,6 +46,7 @@ class LiteLLMAdapter:
         self._max_retries = max_retries
         self._initial_backoff_seconds = initial_backoff_seconds
         self._max_backoff_seconds = max_backoff_seconds
+        self._fail_on_unknown_cost = fail_on_unknown_cost
 
         if completion_fn is not None:
             self._completion_fn = completion_fn
@@ -66,6 +68,11 @@ class LiteLLMAdapter:
         raw_output = _extract_output_json(response_dict)
         output = request.output_schema.model_validate_json(raw_output)
         usage = _extract_usage(response_dict)
+        if self._fail_on_unknown_cost and _has_tokens(usage) and usage.cost_usd <= 0.0:
+            raise ModelPermanentError(
+                "LiteLLM response cost is unknown for a tokenized response. "
+                "Configure model pricing or disable fail_on_unknown_cost."
+            )
         tool_calls = _extract_tool_calls(response_dict)
 
         return ModelResult(
@@ -187,6 +194,10 @@ def _extract_usage(response: Mapping[str, object]) -> ModelUsage:
 
     if cost_usd == 0.0:
         cost_usd = _as_float(response.get("response_cost"))
+    if cost_usd == 0.0:
+        computed_cost = _compute_litellm_cost(response)
+        if computed_cost is not None:
+            cost_usd = computed_cost
 
     return ModelUsage(
         prompt_tokens=prompt_tokens,
@@ -270,3 +281,24 @@ def _status_code_from_exception(exc: Exception) -> int | None:
         return response_status
     return None
 
+
+def _compute_litellm_cost(response: Mapping[str, object]) -> float | None:
+    try:
+        from litellm import completion_cost
+    except Exception:
+        return None
+
+    try:
+        computed = completion_cost(completion_response=dict(response))
+    except Exception:
+        return None
+
+    if isinstance(computed, int):
+        return float(computed)
+    if isinstance(computed, float):
+        return computed
+    return None
+
+
+def _has_tokens(usage: ModelUsage) -> bool:
+    return usage.prompt_tokens > 0 or usage.completion_tokens > 0

@@ -13,6 +13,8 @@ EventType = Literal[
     "tool_requested",
     "tool_completed",
     "pause_requested",
+    "workflow_step_requested",
+    "workflow_step_completed",
 ]
 
 
@@ -78,12 +80,27 @@ class PauseRequestedPayload(BaseModel):
     reason: str
 
 
+class WorkflowStepRequestedPayload(BaseModel):
+    kind: Literal["workflow_step_requested"] = "workflow_step_requested"
+    step_index: int = Field(ge=0)
+    step_name: str
+
+
+class WorkflowStepCompletedPayload(BaseModel):
+    kind: Literal["workflow_step_completed"] = "workflow_step_completed"
+    step_index: int = Field(ge=0)
+    step_name: str
+    result_json: str
+
+
 EventPayload = (
     ModelRequestedPayload
     | ModelCompletedPayload
     | ToolRequestedPayload
     | ToolCompletedPayload
     | PauseRequestedPayload
+    | WorkflowStepRequestedPayload
+    | WorkflowStepCompletedPayload
 )
 
 

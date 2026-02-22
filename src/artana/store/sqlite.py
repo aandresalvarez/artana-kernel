@@ -20,6 +20,8 @@ _EVENT_TYPES: set[str] = {
     "tool_requested",
     "tool_completed",
     "pause_requested",
+    "workflow_step_requested",
+    "workflow_step_completed",
 }
 
 

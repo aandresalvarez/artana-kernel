@@ -6,8 +6,8 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
-from artana.events import ChatMessage, ModelRequestedPayload
-from artana.kernel import ArtanaKernel
+from artana.events import ChatMessage, ModelRequestedPayload, ToolCompletedPayload
+from artana.kernel import ArtanaKernel, ToolExecutionFailedError
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage, ToolCall
 from artana.store import SQLiteStore
@@ -101,7 +101,7 @@ async def test_execute_tool_replays_completed_call_without_reexecution(
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_resumes_pending_request_after_failure(tmp_path: Path) -> None:
+async def test_execute_tool_records_unknown_outcome_and_halts_replay(tmp_path: Path) -> None:
     database_path = tmp_path / "state.db"
     tenant = TenantContext(
         tenant_id="org_exec_pending",
@@ -114,7 +114,7 @@ async def test_execute_tool_resumes_pending_request_after_failure(tmp_path: Path
     first_kernel = ArtanaKernel(store=first_store, model_port=PlainModelPort())
     register_flaky_submit_tool(first_kernel, attempts)
 
-    with pytest.raises(RuntimeError, match="simulated tool failure"):
+    with pytest.raises(ToolExecutionFailedError, match="unknown outcome"):
         await first_kernel.execute_tool(
             run_id="run_exec_pending",
             tenant=tenant,
@@ -128,20 +128,23 @@ async def test_execute_tool_resumes_pending_request_after_failure(tmp_path: Path
     register_flaky_submit_tool(second_kernel, attempts)
 
     try:
-        result = await second_kernel.execute_tool(
-            run_id="run_exec_pending",
-            tenant=tenant,
-            tool_name="submit_transfer",
-            arguments_json='{"account_id":"acc_2","amount":"20"}',
-        )
-        assert '"status":"submitted"' in result
-        assert attempts[0] == 2
+        with pytest.raises(ToolExecutionFailedError, match="outcome='unknown_outcome'"):
+            await second_kernel.execute_tool(
+                run_id="run_exec_pending",
+                tenant=tenant,
+                tool_name="submit_transfer",
+                arguments_json='{"account_id":"acc_2","amount":"20"}',
+            )
+        assert attempts[0] == 1
 
         events = await second_store.get_events_for_run("run_exec_pending")
         assert [event.event_type for event in events] == [
             "tool_requested",
             "tool_completed",
         ]
+        payload = events[-1].payload
+        assert isinstance(payload, ToolCompletedPayload)
+        assert payload.outcome == "unknown_outcome"
     finally:
         await second_kernel.close()
 
@@ -193,7 +196,7 @@ async def test_resume_reports_run_statuses(tmp_path: Path) -> None:
     async def submit_transfer(account_id: str, amount: str) -> str:
         raise RuntimeError("simulated crash")
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ToolExecutionFailedError, match="unknown outcome"):
         await kernel_pending.chat(
             run_id="run_pending",
             prompt="needs tool",
@@ -203,9 +206,8 @@ async def test_resume_reports_run_statuses(tmp_path: Path) -> None:
         )
     pending_state = await kernel_pending.resume(run_id="run_pending")
     try:
-        assert pending_state.status == "pending_tool"
-        assert pending_state.pending_tool is not None
-        assert pending_state.pending_tool.tool_name == "submit_transfer"
+        assert pending_state.status == "complete"
+        assert pending_state.pending_tool is None
     finally:
         await kernel_pending.close()
 

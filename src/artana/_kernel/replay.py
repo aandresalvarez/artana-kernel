@@ -12,6 +12,8 @@ from artana.events import (
     PauseRequestedPayload,
     ToolCompletedPayload,
     ToolRequestedPayload,
+    WorkflowStepCompletedPayload,
+    WorkflowStepRequestedPayload,
 )
 from artana.models import TenantContext
 from artana.ports.model import ModelUsage, ToolCall
@@ -141,6 +143,8 @@ def derive_run_resume_state(events: Sequence[KernelEvent]) -> RunResumeState:
         status = "paused"
     elif pending_tool is not None:
         status = "pending_tool"
+    elif _has_pending_workflow_step(events):
+        status = "ready"
     elif last_event.event_type == "model_requested":
         status = "ready"
     elif _latest_model_completed_has_unrequested_tools(events):
@@ -201,3 +205,26 @@ def _latest_model_completed_event(events: Sequence[KernelEvent]) -> KernelEvent 
         if event.event_type == "model_completed":
             return event
     return None
+
+
+def _has_pending_workflow_step(events: Sequence[KernelEvent]) -> bool:
+    requested_indices: set[int] = set()
+    completed_indices: set[int] = set()
+
+    for event in events:
+        if event.event_type == "workflow_step_requested":
+            payload = event.payload
+            if not isinstance(payload, WorkflowStepRequestedPayload):
+                raise ReplayConsistencyError(
+                    f"Expected WorkflowStepRequestedPayload at seq={event.seq}."
+                )
+            requested_indices.add(payload.step_index)
+        if event.event_type == "workflow_step_completed":
+            payload = event.payload
+            if not isinstance(payload, WorkflowStepCompletedPayload):
+                raise ReplayConsistencyError(
+                    f"Expected WorkflowStepCompletedPayload at seq={event.seq}."
+                )
+            completed_indices.add(payload.step_index)
+
+    return any(index not in completed_indices for index in requested_indices)

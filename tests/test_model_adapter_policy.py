@@ -148,3 +148,34 @@ async def test_litellm_adapter_raises_permanent_error_without_retry() -> None:
         await adapter.complete(request)
     assert calls == 1
 
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_fails_when_cost_unknown_in_strict_mode() -> None:
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        return {
+            "choices": [{"message": {"content": '{"approved": true, "reason": "ok"}'}}],
+            "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+        }
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+        fail_on_unknown_cost=True,
+    )
+    request = ModelRequest(
+        run_id="run_model_cost_unknown",
+        model="gpt-4o-mini",
+        prompt="hello",
+        output_schema=Decision,
+        allowed_tools=(),
+    )
+
+    with pytest.raises(ModelPermanentError, match="cost is unknown"):
+        await adapter.complete(request)

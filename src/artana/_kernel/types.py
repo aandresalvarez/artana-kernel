@@ -34,6 +34,21 @@ class PauseTicket:
 
 
 @dataclass(frozen=True, slots=True)
+class RunHandle:
+    run_id: str
+    tenant_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class KernelPolicy:
+    mode: Literal["permissive", "enforced"] = "permissive"
+
+    @classmethod
+    def enforced(cls) -> "KernelPolicy":
+        return cls(mode="enforced")
+
+
+@dataclass(frozen=True, slots=True)
 class ChatResponse(Generic[OutputT]):
     run_id: str
     output: OutputT
@@ -48,4 +63,3 @@ class RunResumeState:
     last_seq: int
     pause_reason: str | None
     pending_tool: ToolCall | None
-
