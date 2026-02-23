@@ -70,10 +70,12 @@ Initial implementation aligned with the Artana Kernel PRD:
 - **The Agent Runtime:**
   - `AutonomousAgent` — An out-of-the-box `Model -> Tool -> Model` loop that automatically executes tools and manages conversation memory on top of the Kernel.
   - `CompactionStrategy` — proactive context compaction (message-count and token-threshold triggers) with replay-safe summaries.
-  - `ContextBuilder` — pluggable prompt assembly pipeline (identity + long-term memory + progressive skills + short-term history).
-  - Progressive skill disclosure via built-in `load_skill(...)` meta-tool.
+  - `ContextBuilder` — pluggable prompt assembly pipeline (identity + long-term memory + inter-run experience learnings + progressive skills + short-term history).
+  - `SQLiteExperienceStore` — tenant/task-scoped inter-run learning store for reusable `WIN_PATTERN`, `ANTI_PATTERN`, and `FACT` rules.
+  - Optional post-run reflection (`auto_reflect=True`) to extract and persist reusable rules with deterministic replay-safe step keys.
+  - Progressive skill disclosure via built-in `load_skill(...)` meta-tool, capability-scoped so tenants only see/load authorized skills.
   - Built-in long-term memory tools: `core_memory_append`, `core_memory_replace`, `core_memory_search`.
-  - `SubAgentFactory` — sub-agent delegation with run lineage (`parent::sub_agent::idempotency_key`) and shared tenant governance.
+  - `SubAgentFactory` — sub-agent delegation with run lineage (`parent::sub_agent::idempotency_key`) and parent tenant inheritance (capabilities + budget).
 - **The Workflow Runtime:**
   - `run_workflow` — Durable workflow with `WorkflowContext`, deterministic Python logic execution (`ctx.step`), and `ctx.pause`.
 - Tool registration via `@kernel.tool(requires_capability="...")`
@@ -141,13 +143,17 @@ from artana import (
     AutonomousAgent,
     CompactionStrategy,
     ContextBuilder,
+    SQLiteExperienceStore,
     SQLiteMemoryStore,
 )
 
 memory_store = SQLiteMemoryStore("agent_memory.db")
+experience_store = SQLiteExperienceStore("tenant_experience.db")
 context_builder = ContextBuilder(
     identity="You are a senior data analyst.",
     memory_store=memory_store,
+    experience_store=experience_store,
+    task_category="Financial_Reporting",
     progressive_skills=True,
 )
 agent = AutonomousAgent(
@@ -158,6 +164,8 @@ agent = AutonomousAgent(
         keep_recent_messages=10,
         summarize_with_model="gpt-4o-mini",
     ),
+    auto_reflect=True,
+    reflection_model="gpt-4o-mini",
 )
 ```
 
@@ -236,18 +244,31 @@ async def transfer_funds(account_id: str, amount: str) -> str:
 
 ### Autonomous Agent API
 A runtime wrapper over the kernel that manages conversation history, automatic tool execution,
-context compaction, long-term memory, and progressive skill disclosure.
+context compaction, long-term memory, inter-run experience learning, and progressive skill disclosure.
 ```python
-from artana.agent import AutonomousAgent, CompactionStrategy, ContextBuilder
+from artana.agent import (
+    AutonomousAgent,
+    CompactionStrategy,
+    ContextBuilder,
+    SQLiteExperienceStore,
+)
 from artana.agent.memory import SQLiteMemoryStore
 
 memory_store = SQLiteMemoryStore("agent_memory.db")
-context_builder = ContextBuilder(memory_store=memory_store, progressive_skills=True)
+experience_store = SQLiteExperienceStore("tenant_experience.db")
+context_builder = ContextBuilder(
+    memory_store=memory_store,
+    experience_store=experience_store,
+    task_category="Financial_Reporting",
+    progressive_skills=True,
+)
 
 agent = AutonomousAgent(
     kernel=kernel,
     context_builder=context_builder,
     compaction=CompactionStrategy(trigger_at_messages=40, keep_recent_messages=10),
+    auto_reflect=True,
+    reflection_model="gpt-4o-mini",
 )
 result = await agent.run(
     run_id="run_123",
@@ -260,12 +281,28 @@ result = await agent.run(
 )
 ```
 
+Experience models are strict and reusable in both autonomous and workflow code:
+`RuleType`, `ExperienceRule`, and `ReflectionResult`.
+
+When `progressive_skills=True`:
+- The initial prompt includes a lightweight capability-filtered skills panel.
+- `load_skill(skill_name=...)` returns full schema/instructions only for authorized tools.
+- Unauthorized skill loads return a deterministic error payload (`"error": "forbidden_skill"`).
+
+When `experience_store` and `task_category` are configured:
+- The system prompt includes:
+  - `[PAST LEARNINGS FOR THIS TASK]`
+  - prioritized historical rules for that exact `tenant_id` + task category
+- With `auto_reflect=True`, the agent runs a deterministic reflection step
+  (`turn_{iteration}_reflection`) at the end of successful runs and persists extracted rules.
+
 ### Sub-Agent Delegation API
 Create tools that run specialized child agents with inherited governance and durable lineage.
 ```python
 from artana.agent import SubAgentFactory
 
-factory = SubAgentFactory(kernel=kernel, tenant=tenant)
+# Parent tenant context is inherited from ToolExecutionContext automatically.
+factory = SubAgentFactory(kernel=kernel)
 
 factory.create(
     name="run_researcher",
@@ -275,6 +312,8 @@ factory.create(
     requires_capability="spawn_researcher",
 )
 ```
+
+`SubAgentFactory(tenant=...)` is still supported as a fallback for contexts where parent tenant budget metadata is unavailable.
 
 ### Workflow Context API
 For deterministic, step-by-step processes using pure Python.
@@ -321,11 +360,12 @@ Run examples from the repository root:
 - **`04_autonomous_agent_research.py`**: Demonstrates the `AutonomousAgent` loop dynamically selecting tools to accomplish a goal.
 - **`05_hard_triplets_workflow.py`**: Demonstrates the strict `run_workflow` pattern interleaving LLM calls, deterministic Python math, and a durable Human-In-The-Loop pause.
 - **`06_triplets_swarm.py`**: Demonstrates multi-agent orchestration (lead agent + extractor/adjudicator sub-agents + deterministic graph math tool) on the shared Kernel ledger.
+- **`07_adaptive_agent_learning.py`**: Demonstrates inter-run experience learning where Run 1 discovers a durable rule and Run 2 succeeds immediately using injected past learnings.
 - **`golden_example.py`**: Canonical production-leaning example testing unknown tool outcomes and reconciliation.
 
 ## Growth Path
 
-- **Phase 1 (MVP - Current):** SQLite, single worker, strict replay semantics, Autonomous Agent runtime (compaction/memory/progressive skills/sub-agents), Workflow contexts.
+- **Phase 1 (MVP - Current):** SQLite, single worker, strict replay semantics, Autonomous Agent runtime (compaction/memory/progressive skills/sub-agents), inter-run Experience Engine (tenant/task rule memory + reflection), Workflow contexts.
 - **Phase 2:** Postgres backend (for multi-worker concurrency), Snapshotting, Advanced Observability (Logfire tracing decorators).
 - **Phase 3:** Optional integration with Temporal, distributed execution model, enterprise policy engines (OPA).
  

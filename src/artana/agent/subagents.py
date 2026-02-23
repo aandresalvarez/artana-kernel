@@ -22,7 +22,7 @@ class SubAgentFactory:
         self,
         *,
         kernel: ArtanaKernel,
-        tenant: TenantContext,
+        tenant: TenantContext | None = None,
         context_builder: ContextBuilder | None = None,
         compaction: CompactionStrategy | None = None,
         memory_store: MemoryStore | None = None,
@@ -54,9 +54,10 @@ class SubAgentFactory:
                 memory_store=self._memory_store,
             )
             child_run_id = f"{artana_context.run_id}::sub_agent::{artana_context.idempotency_key}"
+            child_tenant = self._resolve_child_tenant(artana_context=artana_context)
             result = await child_agent.run(
                 run_id=child_run_id,
-                tenant=self._tenant,
+                tenant=child_tenant,
                 model=model,
                 system_prompt=system_prompt,
                 prompt=task,
@@ -75,6 +76,25 @@ class SubAgentFactory:
         if requires_capability is not None:
             return self._kernel.tool(requires_capability=requires_capability)(_sub_agent)
         return self._kernel.tool()(_sub_agent)
+
+    def _resolve_child_tenant(self, *, artana_context: ToolExecutionContext) -> TenantContext:
+        if artana_context.tenant_budget_usd_limit is not None:
+            return TenantContext(
+                tenant_id=artana_context.tenant_id,
+                capabilities=artana_context.tenant_capabilities,
+                budget_usd_limit=artana_context.tenant_budget_usd_limit,
+            )
+        if self._tenant is None:
+            raise RuntimeError(
+                "SubAgentFactory requires tenant=... when parent tool context does not "
+                "include tenant budget metadata."
+            )
+        if self._tenant.tenant_id != artana_context.tenant_id:
+            raise RuntimeError(
+                "SubAgentFactory tenant mismatch: factory tenant_id does not match "
+                "the parent tool context tenant_id."
+            )
+        return self._tenant
 
 
 __all__ = ["SubAgentFactory"]

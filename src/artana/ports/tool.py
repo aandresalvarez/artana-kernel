@@ -37,6 +37,8 @@ class ToolExecutionContext:
     request_event_id: str | None
     tool_version: str
     schema_version: str
+    tenant_capabilities: frozenset[str] = frozenset()
+    tenant_budget_usd_limit: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

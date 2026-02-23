@@ -95,3 +95,17 @@ Run:
 set -a; source .env; set +a
 uv run python examples/06_triplets_swarm.py
 ```
+
+## 07 - Adaptive Agent Learning (Inter-Run Experience)
+
+Demonstrates Experience Engine behavior:
+- tenant/task-scoped `SQLiteExperienceStore` rule persistence
+- `ContextBuilder` injection of `[PAST LEARNINGS FOR THIS TASK]`
+- `AutonomousAgent(auto_reflect=True)` post-run reflection that writes reusable rules
+- second run succeeding with fewer tool retries due to injected learnings
+
+Run:
+
+```bash
+uv run python examples/07_adaptive_agent_learning.py
+```

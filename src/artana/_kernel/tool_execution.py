@@ -32,6 +32,8 @@ async def complete_pending_tool_request(
     request_event_id: str | None,
     tool_version: str,
     schema_version: str,
+    tenant_capabilities: frozenset[str] = frozenset(),
+    tenant_budget_usd_limit: float | None = None,
 ) -> ToolCompletionResult:
     try:
         tool_result = await tool_port.call(
@@ -44,6 +46,8 @@ async def complete_pending_tool_request(
                 request_event_id=request_event_id,
                 tool_version=tool_version,
                 schema_version=schema_version,
+                tenant_capabilities=tenant_capabilities,
+                tenant_budget_usd_limit=tenant_budget_usd_limit,
             ),
         )
     except ToolUnknownOutcomeError as exc:

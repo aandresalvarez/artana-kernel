@@ -34,8 +34,11 @@ class RuntimeToolManager:
         self._registered = True
 
         @self._kernel.tool()
-        async def load_skill(skill_name: str) -> str:
-            return self._tool_description(skill_name)
+        async def load_skill(skill_name: str, artana_context: ToolExecutionContext) -> str:
+            return self._tool_description(
+                skill_name=skill_name,
+                tenant_capabilities=artana_context.tenant_capabilities,
+            )
 
         @self._kernel.tool()
         async def core_memory_append(content: str, artana_context: ToolExecutionContext) -> str:
@@ -56,38 +59,58 @@ class RuntimeToolManager:
         core_memory_replace.__name__ = self._core_memory_replace
         core_memory_search.__name__ = self._core_memory_search
 
-    def visible_tool_names(self, *, loaded_skills: set[str]) -> set[str] | None:
+    def visible_tool_names(
+        self,
+        *,
+        loaded_skills: set[str],
+        tenant_capabilities: frozenset[str],
+    ) -> set[str] | None:
         if not self._progressive_skills:
             return None
-        core_tools = {
-            self._load_skill_name,
-            self._core_memory_append,
-            self._core_memory_replace,
-            self._core_memory_search,
+        runtime_tools = self._runtime_tool_names()
+        allowed_loaded_skills = {
+            tool_name
+            for tool_name in loaded_skills
+            if self._is_tool_allowed_for_capabilities(
+                tool_name=tool_name,
+                tenant_capabilities=tenant_capabilities,
+            )
         }
-        core_tools.update(loaded_skills)
+        runtime_tools.update(allowed_loaded_skills)
         return {
             tool.name
             for tool in self._kernel._tool_port.to_all_tool_definitions()
-            if tool.name in core_tools or tool.name in loaded_skills
+            if tool.name in runtime_tools
         }
 
-    def available_skill_summaries(self) -> dict[str, str]:
+    def available_skill_summaries(
+        self, *, tenant_capabilities: frozenset[str]
+    ) -> dict[str, str]:
         summaries: dict[str, str] = {}
-        runtime = {
-            self._load_skill_name,
-            self._core_memory_append,
-            self._core_memory_replace,
-            self._core_memory_search,
-        }
+        runtime = self._runtime_tool_names()
         for tool in self._kernel._tool_port.to_all_tool_definitions():
             if tool.name in runtime:
+                continue
+            if not self._is_tool_allowed_for_capabilities(
+                tool_name=tool.name,
+                tenant_capabilities=tenant_capabilities,
+            ):
                 continue
             summaries[tool.name] = tool.description or "no description"
         return summaries
 
-    def _tool_description(self, skill_name: str) -> str:
+    def _tool_description(self, *, skill_name: str, tenant_capabilities: frozenset[str]) -> str:
         tools = {tool.name: tool for tool in self._kernel._tool_port.to_all_tool_definitions()}
+        runtime_tools = self._runtime_tool_names()
+        visible_skill_names = sorted(
+            tool_name
+            for tool_name in tools.keys()
+            if tool_name not in runtime_tools
+            and self._is_tool_allowed_for_capabilities(
+                tool_name=tool_name,
+                tenant_capabilities=tenant_capabilities,
+            )
+        )
         tool = tools.get(skill_name)
         if tool is None:
             return json.dumps(
@@ -95,7 +118,20 @@ class RuntimeToolManager:
                     "name": skill_name,
                     "loaded": False,
                     "error": "unknown_skill",
-                    "available": sorted(tools.keys()),
+                    "available": visible_skill_names,
+                },
+                ensure_ascii=False,
+            )
+        if tool.name in runtime_tools or not self._is_tool_allowed_for_capabilities(
+            tool_name=tool.name,
+            tenant_capabilities=tenant_capabilities,
+        ):
+            return json.dumps(
+                {
+                    "name": skill_name,
+                    "loaded": False,
+                    "error": "forbidden_skill",
+                    "available": visible_skill_names,
                 },
                 ensure_ascii=False,
             )
@@ -113,6 +149,25 @@ class RuntimeToolManager:
             },
             ensure_ascii=False,
         )
+
+    def _runtime_tool_names(self) -> set[str]:
+        return {
+            self._load_skill_name,
+            self._core_memory_append,
+            self._core_memory_replace,
+            self._core_memory_search,
+        }
+
+    def _is_tool_allowed_for_capabilities(
+        self,
+        *,
+        tool_name: str,
+        tenant_capabilities: frozenset[str],
+    ) -> bool:
+        required_capability = self._kernel._tool_port.capability_map().get(tool_name)
+        if required_capability is None:
+            return tool_name in self._kernel._tool_port.capability_map()
+        return required_capability in tenant_capabilities
 
 
 def extract_loaded_skill_name(payload_json: str) -> str | None:

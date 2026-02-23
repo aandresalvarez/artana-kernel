@@ -109,6 +109,8 @@ async def execute_tool_step_with_replay(
         request_event_id=request_event.event_id,
         tool_version="1.0.0",
         schema_version="1",
+        tenant_capabilities=tenant.capabilities,
+        tenant_budget_usd_limit=tenant.budget_usd_limit,
     )
     return ToolStepReplayResult(
         result_json=completed.result_json,
@@ -169,6 +171,8 @@ async def reconcile_tool_with_replay(
             request_event_id=resolution.request.event_id,
             tool_version=requested.tool_version,
             schema_version=requested.schema_version,
+            tenant_capabilities=tenant.capabilities,
+            tenant_budget_usd_limit=tenant.budget_usd_limit,
         )
         return completed.result_json
 
