@@ -72,14 +72,14 @@ async def test_chat_replays_completed_model_response(tmp_path: Path) -> None:
     )
 
     try:
-        first = await KernelModelClient(kernel=kernel).chat(
+        first = await KernelModelClient(kernel=kernel).step(
             run_id="run_1",
             prompt="Should we transfer?",
             model="gpt-4o-mini",
             tenant=tenant,
             output_schema=Decision,
         )
-        second = await KernelModelClient(kernel=kernel).chat(
+        second = await KernelModelClient(kernel=kernel).step(
             run_id="run_1",
             prompt="Should we transfer?",
             model="gpt-4o-mini",
@@ -96,6 +96,7 @@ async def test_chat_replays_completed_model_response(tmp_path: Path) -> None:
             "run_started",
             "model_requested",
             "model_completed",
+            "run_summary",
         ]
     finally:
         await kernel.close()
@@ -126,7 +127,7 @@ async def test_chat_filters_tools_by_capability(tmp_path: Path) -> None:
     )
 
     try:
-        await KernelModelClient(kernel=kernel).chat(
+        await KernelModelClient(kernel=kernel).step(
             run_id="run_2",
             prompt="Get account summary",
             model="gpt-4o-mini",
@@ -150,7 +151,7 @@ async def test_pause_persists_pause_event(tmp_path: Path) -> None:
     )
 
     try:
-        await KernelModelClient(kernel=kernel).chat(
+        await KernelModelClient(kernel=kernel).step(
             run_id="run_3",
             prompt="Approve transfer?",
             model="gpt-4o-mini",
@@ -190,14 +191,14 @@ async def test_chat_replays_tools_without_reexecuting_completed_tool(tmp_path: P
     )
 
     try:
-        first = await KernelModelClient(kernel=kernel).chat(
+        first = await KernelModelClient(kernel=kernel).step(
             run_id="run_4",
             prompt="Execute transfer",
             model="gpt-4o-mini",
             tenant=tenant,
             output_schema=Decision,
         )
-        second = await KernelModelClient(kernel=kernel).chat(
+        second = await KernelModelClient(kernel=kernel).step(
             run_id="run_4",
             prompt="Execute transfer",
             model="gpt-4o-mini",
@@ -217,6 +218,7 @@ async def test_chat_replays_tools_without_reexecuting_completed_tool(tmp_path: P
             "run_started",
             "model_requested",
             "model_completed",
+            "run_summary",
         ]
     finally:
         await kernel.close()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from artana.events import EventPayload, EventType, KernelEvent
+from artana.events import EventPayload, EventType, KernelEvent, RunSummaryPayload
 
 
 class EventStore(Protocol):
@@ -17,6 +17,13 @@ class EventStore(Protocol):
         ...
 
     async def get_events_for_run(self, run_id: str) -> list[KernelEvent]:
+        ...
+
+    async def get_latest_run_summary(
+        self,
+        run_id: str,
+        summary_type: str,
+    ) -> RunSummaryPayload | None:
         ...
 
     async def verify_run_chain(self, run_id: str) -> bool:

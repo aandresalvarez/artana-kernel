@@ -9,7 +9,13 @@ from uuid import uuid4
 import aiosqlite
 from pydantic import TypeAdapter
 
-from artana.events import EventPayload, EventType, KernelEvent, compute_event_hash
+from artana.events import (
+    EventPayload,
+    EventType,
+    KernelEvent,
+    RunSummaryPayload,
+    compute_event_hash,
+)
 from artana.store.base import EventStore
 
 _PAYLOAD_ADAPTER: TypeAdapter[EventPayload] = TypeAdapter(EventPayload)
@@ -156,6 +162,60 @@ class SQLiteStore(EventStore):
             )
         return events
 
+    async def get_latest_run_summary(
+        self,
+        run_id: str,
+        summary_type: str,
+    ) -> RunSummaryPayload | None:
+        connection = await self._ensure_connection()
+        try:
+            cursor = await connection.execute(
+                """
+                SELECT payload_json
+                FROM kernel_events
+                WHERE run_id = ?
+                  AND event_type = ?
+                  AND json_extract(payload_json, '$.summary_type') = ?
+                ORDER BY seq DESC
+                LIMIT 1
+                """,
+                (run_id, EventType.RUN_SUMMARY.value, summary_type),
+            )
+        except aiosqlite.OperationalError as exc:
+            if _is_missing_json_extract_error(exc):
+                return await self._latest_run_summary_via_events(
+                    run_id=run_id,
+                    summary_type=summary_type,
+                )
+            raise
+
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return None
+
+        payload_json_raw = row["payload_json"]
+        if not isinstance(payload_json_raw, str):
+            raise TypeError(
+                "Invalid payload_json row type for latest run summary lookup: "
+                f"{type(payload_json_raw)!r}"
+            )
+        payload_dict_raw = json.loads(payload_json_raw)
+        if not isinstance(payload_dict_raw, dict):
+            raise TypeError("Stored payload_json did not decode to an object.")
+        payload = _PAYLOAD_ADAPTER.validate_python(payload_dict_raw)
+        if not isinstance(payload, RunSummaryPayload):
+            raise TypeError(
+                "Latest run summary lookup returned non-summary payload "
+                f"{type(payload)!r}."
+            )
+        if payload.summary_type != summary_type:
+            raise TypeError(
+                "Latest run summary lookup returned unexpected summary_type "
+                f"{payload.summary_type!r}; expected {summary_type!r}."
+            )
+        return payload
+
     async def get_model_cost_sum_for_run(self, run_id: str) -> float:
         connection = await self._ensure_connection()
         try:
@@ -268,6 +328,12 @@ class SQLiteStore(EventStore):
                     """
                     CREATE INDEX IF NOT EXISTS idx_kernel_events_run_seq
                     ON kernel_events (run_id, seq)
+                    """
+                )
+                await connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_kernel_events_run_type_seq
+                    ON kernel_events (run_id, event_type, seq DESC)
                     """
                 )
                 await connection.commit()
@@ -388,6 +454,23 @@ class SQLiteStore(EventStore):
                 )
             spent += payload.cost_usd
         return spent
+
+    async def _latest_run_summary_via_events(
+        self,
+        *,
+        run_id: str,
+        summary_type: str,
+    ) -> RunSummaryPayload | None:
+        events = await self.get_events_for_run(run_id)
+        for event in reversed(events):
+            if event.event_type != EventType.RUN_SUMMARY:
+                continue
+            payload = event.payload
+            if not isinstance(payload, RunSummaryPayload):
+                continue
+            if payload.summary_type == summary_type:
+                return payload
+        return None
 
     def _retry_backoff(self, attempt: int) -> float:
         multiplier = float(2**attempt)

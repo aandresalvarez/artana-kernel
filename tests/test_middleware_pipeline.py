@@ -90,7 +90,7 @@ async def test_pii_scrubber_redacts_prompt_before_model_request(tmp_path: Path) 
     raw_prompt = "Contact me at user@example.com or 415-555-9999."
 
     try:
-        await KernelModelClient(kernel=kernel).chat(
+        await KernelModelClient(kernel=kernel).step(
             run_id="run_pii",
             prompt=raw_prompt,
             model="gpt-4o-mini",
@@ -134,7 +134,7 @@ async def test_kernel_enforces_middleware_order_for_known_middleware(tmp_path: P
     )
 
     try:
-        await KernelModelClient(kernel=kernel).chat(
+        await KernelModelClient(kernel=kernel).step(
             run_id="run_order",
             prompt="order check",
             model="gpt-4o-mini",
@@ -171,7 +171,7 @@ async def test_capability_guard_filters_unauthorized_tools(tmp_path: Path) -> No
     )
 
     try:
-        await KernelModelClient(kernel=kernel).chat(
+        await KernelModelClient(kernel=kernel).step(
             run_id="run_guard",
             prompt="Show tools",
             model="gpt-4o-mini",
@@ -209,7 +209,7 @@ async def test_capability_guard_keeps_authorized_tools_visible(tmp_path: Path) -
     )
 
     try:
-        await KernelModelClient(kernel=kernel).chat(
+        await KernelModelClient(kernel=kernel).step(
             run_id="run_guard_ok",
             prompt="Show tools",
             model="gpt-4o-mini",

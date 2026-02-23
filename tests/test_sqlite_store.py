@@ -10,6 +10,7 @@ from artana.events import (
     EventType,
     ModelCompletedPayload,
     ModelRequestedPayload,
+    RunSummaryPayload,
     ToolRequestedPayload,
 )
 from artana.store import SQLiteStore
@@ -146,5 +147,67 @@ async def test_get_model_cost_sum_for_run_aggregates_only_model_completed(
 
         total = await store.get_model_cost_sum_for_run("run_cost")
         assert total == pytest.approx(0.10)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_get_latest_run_summary_returns_latest_by_summary_type(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    try:
+        await store.append_event(
+            run_id="run_summary_lookup",
+            tenant_id="tenant_summary",
+            event_type=EventType.RUN_SUMMARY,
+            payload=RunSummaryPayload(
+                summary_type="task_progress",
+                summary_json='{"units":[{"id":"t1","state":"pending"}]}',
+                step_key="task_progress_1",
+            ),
+        )
+        await store.append_event(
+            run_id="run_summary_lookup",
+            tenant_id="tenant_summary",
+            event_type=EventType.RUN_SUMMARY,
+            payload=RunSummaryPayload(
+                summary_type="artifact::report",
+                summary_json='{"url":"s3://bucket/report.json"}',
+                step_key="artifact_1",
+            ),
+        )
+        await store.append_event(
+            run_id="run_summary_lookup",
+            tenant_id="tenant_summary",
+            event_type=EventType.RUN_SUMMARY,
+            payload=RunSummaryPayload(
+                summary_type="task_progress",
+                summary_json='{"units":[{"id":"t1","state":"done"}]}',
+                step_key="task_progress_2",
+            ),
+        )
+
+        latest_task = await store.get_latest_run_summary(
+            "run_summary_lookup",
+            "task_progress",
+        )
+        latest_artifact = await store.get_latest_run_summary(
+            "run_summary_lookup",
+            "artifact::report",
+        )
+        missing = await store.get_latest_run_summary(
+            "run_summary_lookup",
+            "artifact::missing",
+        )
+
+        assert latest_task is not None
+        assert latest_task.step_key == "task_progress_2"
+        assert latest_task.summary_json == '{"units":[{"id":"t1","state":"done"}]}'
+
+        assert latest_artifact is not None
+        assert latest_artifact.step_key == "artifact_1"
+        assert latest_artifact.summary_json == '{"url":"s3://bucket/report.json"}'
+        assert missing is None
     finally:
         await store.close()

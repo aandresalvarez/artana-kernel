@@ -49,7 +49,7 @@ async def main() -> None:
             "Approve this request and give a short reason."
         )
 
-        first = await KernelModelClient(kernel=kernel).chat(
+        first = await KernelModelClient(kernel=kernel).step(
             run_id=run.run_id,
             prompt=prompt,
             model="gpt-4o-mini",
@@ -58,7 +58,7 @@ async def main() -> None:
         )
         events_after_first = await store.get_events_for_run(run.run_id)
 
-        second = await KernelModelClient(kernel=kernel).chat(
+        second = await KernelModelClient(kernel=kernel).step(
             run_id=run.run_id,
             prompt=prompt,
             model="gpt-4o-mini",

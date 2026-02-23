@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from artana._kernel.policies import assert_tool_allowed_for_tenant
+from artana._kernel.policies import (
+    apply_prepare_tool_request_middleware,
+    assert_tool_allowed_for_tenant,
+)
 from artana._kernel.replay import validate_tenant_for_run
 from artana._kernel.tool_execution import (
     complete_pending_tool_request,
@@ -14,7 +18,9 @@ from artana._kernel.tool_state import resolve_tool_resolutions
 from artana._kernel.types import (
     ToolExecutionFailedError,
 )
+from artana.canonicalization import canonicalize_json_object
 from artana.events import EventType, ToolRequestedPayload
+from artana.middleware.base import KernelMiddleware
 from artana.models import TenantContext
 from artana.ports.tool import ToolPort
 from artana.store.base import EventStore
@@ -31,12 +37,23 @@ async def execute_tool_step_with_replay(
     *,
     store: EventStore,
     tool_port: ToolPort,
+    middleware: Sequence[KernelMiddleware],
     run_id: str,
     tenant: TenantContext,
     tool_name: str,
     arguments_json: str,
     step_key: str | None = None,
 ) -> ToolStepReplayResult:
+    normalized_arguments_json = canonicalize_json_object(arguments_json)
+    prepared_arguments_json = canonicalize_json_object(
+        await apply_prepare_tool_request_middleware(
+            middleware,
+            run_id=run_id,
+            tenant=tenant,
+            tool_name=tool_name,
+            arguments_json=normalized_arguments_json,
+        )
+    )
     events = await store.get_events_for_run(run_id)
     validate_tenant_for_run(events=events, tenant=tenant)
     assert_tool_allowed_for_tenant(
@@ -51,7 +68,7 @@ async def execute_tool_step_with_replay(
         if not _matches_tool_request(
             requested=requested,
             tool_name=tool_name,
-            arguments_json=arguments_json,
+            arguments_json=prepared_arguments_json,
             step_key=step_key,
         ):
             continue
@@ -84,8 +101,12 @@ async def execute_tool_step_with_replay(
     idempotency_key = derive_idempotency_key(
         run_id=run_id,
         tool_name=tool_name,
-        arguments_json=arguments_json,
+        arguments_json=prepared_arguments_json,
         step_key=step_key,
+    )
+    tool_version, schema_version = _tool_versions(
+        tool_port=tool_port,
+        tool_name=tool_name,
     )
     request_event = await store.append_event(
         run_id=run_id,
@@ -93,22 +114,26 @@ async def execute_tool_step_with_replay(
         event_type=EventType.TOOL_REQUESTED,
         payload=ToolRequestedPayload(
             tool_name=tool_name,
-            arguments_json=arguments_json,
+            arguments_json=prepared_arguments_json,
             idempotency_key=idempotency_key,
+            tool_version=tool_version,
+            schema_version=schema_version,
             step_key=step_key,
         ),
     )
     completed = await complete_pending_tool_request(
         store=store,
         tool_port=tool_port,
+        middleware=middleware,
         run_id=run_id,
         tenant_id=tenant.tenant_id,
         tool_name=tool_name,
-        arguments_json=arguments_json,
+        arguments_json=prepared_arguments_json,
         idempotency_key=idempotency_key,
         request_event_id=request_event.event_id,
-        tool_version="1.0.0",
-        schema_version="1",
+        tool_version=tool_version,
+        schema_version=schema_version,
+        tenant=tenant,
         tenant_capabilities=tenant.capabilities,
         tenant_budget_usd_limit=tenant.budget_usd_limit,
     )
@@ -123,12 +148,23 @@ async def reconcile_tool_with_replay(
     *,
     store: EventStore,
     tool_port: ToolPort,
+    middleware: Sequence[KernelMiddleware],
     run_id: str,
     tenant: TenantContext,
     tool_name: str,
     arguments_json: str,
     step_key: str | None = None,
 ) -> str:
+    normalized_arguments_json = canonicalize_json_object(arguments_json)
+    prepared_arguments_json = canonicalize_json_object(
+        await apply_prepare_tool_request_middleware(
+            middleware,
+            run_id=run_id,
+            tenant=tenant,
+            tool_name=tool_name,
+            arguments_json=normalized_arguments_json,
+        )
+    )
     events = await store.get_events_for_run(run_id)
     validate_tenant_for_run(events=events, tenant=tenant)
     assert_tool_allowed_for_tenant(
@@ -143,7 +179,7 @@ async def reconcile_tool_with_replay(
         if not _matches_tool_request(
             requested=requested,
             tool_name=tool_name,
-            arguments_json=arguments_json,
+            arguments_json=prepared_arguments_json,
             step_key=step_key,
         ):
             continue
@@ -163,14 +199,16 @@ async def reconcile_tool_with_replay(
         completed = await complete_pending_tool_request(
             store=store,
             tool_port=tool_port,
+            middleware=middleware,
             run_id=run_id,
             tenant_id=tenant.tenant_id,
             tool_name=tool_name,
-            arguments_json=arguments_json,
+            arguments_json=prepared_arguments_json,
             idempotency_key=requested.idempotency_key,
             request_event_id=resolution.request.event_id,
             tool_version=requested.tool_version,
             schema_version=requested.schema_version,
+            tenant=tenant,
             tenant_capabilities=tenant.capabilities,
             tenant_budget_usd_limit=tenant.budget_usd_limit,
         )
@@ -190,8 +228,18 @@ def _matches_tool_request(
 ) -> bool:
     if requested.tool_name != tool_name:
         return False
-    if requested.arguments_json != arguments_json:
+    if canonicalize_json_object(requested.arguments_json) != canonicalize_json_object(
+        arguments_json
+    ):
         return False
     if step_key is None:
         return requested.step_key is None
     return requested.step_key == step_key
+
+
+def _tool_versions(*, tool_port: ToolPort, tool_name: str) -> tuple[str, str]:
+    for definition in tool_port.to_all_tool_definitions():
+        if definition.name != tool_name:
+            continue
+        return definition.tool_version, definition.schema_version
+    raise KeyError(f"Tool {tool_name!r} is not registered.")

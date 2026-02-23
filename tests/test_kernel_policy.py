@@ -54,14 +54,14 @@ async def test_start_run_issues_kernel_run_id_and_replay_works(tmp_path: Path) -
         assert run.run_id
         assert run.tenant_id == "org_policy"
 
-        first = await KernelModelClient(kernel=kernel).chat(
+        first = await KernelModelClient(kernel=kernel).step(
             run_id=run.run_id,
             prompt="approve?",
             model="gpt-4o-mini",
             tenant=_tenant(),
             output_schema=Decision,
         )
-        second = await KernelModelClient(kernel=kernel).chat(
+        second = await KernelModelClient(kernel=kernel).step(
             run_id=run.run_id,
             prompt="approve?",
             model="gpt-4o-mini",
@@ -83,7 +83,7 @@ async def test_start_run_rejects_existing_run_id(tmp_path: Path) -> None:
     kernel = ArtanaKernel(store=store, model_port=model_port)
 
     try:
-        await KernelModelClient(kernel=kernel).chat(
+        await KernelModelClient(kernel=kernel).step(
             run_id="run_existing",
             prompt="approve?",
             model="gpt-4o-mini",
@@ -123,7 +123,7 @@ async def test_default_middleware_stack_satisfies_enforced_policy(
     )
 
     try:
-        result = await KernelModelClient(kernel=kernel).chat(
+        result = await KernelModelClient(kernel=kernel).step(
             run_id="run_policy_ok",
             prompt="approve?",
             model="gpt-4o-mini",

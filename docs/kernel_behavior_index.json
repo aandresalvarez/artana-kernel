@@ -1,0 +1,48 @@
+{
+  "event_types": [
+    "run_started",
+    "resume_requested",
+    "model_requested",
+    "model_completed",
+    "replayed_with_drift",
+    "tool_requested",
+    "tool_completed",
+    "pause_requested",
+    "run_summary",
+    "workflow_step_requested",
+    "workflow_step_completed"
+  ],
+  "model_requested_invariants": {
+    "context_version_fields": [
+      "system_prompt_hash",
+      "context_builder_version",
+      "compaction_version"
+    ],
+    "required_fields": [
+      "model",
+      "prompt",
+      "messages",
+      "allowed_tools",
+      "allowed_tool_signatures",
+      "allowed_tools_hash",
+      "step_key",
+      "context_version"
+    ],
+    "tool_signature_token_format": "name|tool_version|schema_version|schema_hash"
+  },
+  "replay_policies": [
+    "strict",
+    "allow_prompt_drift",
+    "fork_on_drift"
+  ],
+  "run_summary_types": [
+    "agent_model_step",
+    "agent_tool_step",
+    "capability_decision"
+  ],
+  "schema_version": 1,
+  "tool_io_hooks": [
+    "prepare_tool_request(run_id, tenant, tool_name, arguments_json)",
+    "prepare_tool_result(run_id, tenant, tool_name, result_json)"
+  ]
+}

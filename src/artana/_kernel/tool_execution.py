@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-import hashlib
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 
+from artana._kernel.policies import apply_prepare_tool_result_middleware
 from artana._kernel.types import ReplayConsistencyError, ToolExecutionFailedError
+from artana.canonicalization import canonicalize_json_object_or_original
 from artana.events import EventType, ToolCompletedPayload
+from artana.json_utils import sha256_hex
+from artana.middleware.base import KernelMiddleware
+from artana.models import TenantContext
 from artana.ports.tool import (
     ToolExecutionContext,
     ToolExecutionResult,
@@ -32,6 +37,8 @@ async def complete_pending_tool_request(
     request_event_id: str | None,
     tool_version: str,
     schema_version: str,
+    middleware: Sequence[KernelMiddleware],
+    tenant: TenantContext,
     tenant_capabilities: frozenset[str] = frozenset(),
     tenant_budget_usd_limit: float | None = None,
 ) -> ToolCompletionResult:
@@ -68,6 +75,15 @@ async def complete_pending_tool_request(
         raise ToolExecutionFailedError(
             f"Tool {tool_name!r} ended with unknown outcome and requires reconciliation."
         ) from exc
+
+    prepared_result_json = await apply_prepare_tool_result_middleware(
+        middleware,
+        run_id=run_id,
+        tenant=tenant,
+        tool_name=tool_name,
+        result_json=tool_result.result_json,
+    )
+    tool_result = replace(tool_result, result_json=prepared_result_json)
 
     completed_seq = await append_tool_completed_event(
         store=store,
@@ -164,5 +180,7 @@ def derive_idempotency_key(
     arguments_json: str,
     step_key: str | None = None,
 ) -> str:
-    token = f"{run_id}:{tool_name}:{arguments_json}:{step_key}"
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+    token = (
+        f"{run_id}:{tool_name}:{canonicalize_json_object_or_original(arguments_json)}:{step_key}"
+    )
+    return sha256_hex(token)

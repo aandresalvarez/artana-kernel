@@ -1,0 +1,335 @@
+{
+  "benchmark_name": "Epigenetic and Signaling Crosstalk in Cardiac Fibrotic Remodeling",
+  "fact_edges": [
+    [
+      "CARDEX-1",
+      "ACTIVATES",
+      "PKN-δ2"
+    ],
+    [
+      "PKN-δ2",
+      "PART_OF",
+      "TGFβ-CAR cascade"
+    ],
+    [
+      "TGFβ-CAR cascade",
+      "ACTIVATES",
+      "SMADL-7"
+    ],
+    [
+      "SMADL-7",
+      "UPREGULATES",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "Fibrotic Transcriptional Program (FTP)",
+      "ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome (CFS)"
+    ],
+    [
+      "SILEN-β",
+      "ACTIVATES",
+      "HDAC-9X"
+    ],
+    [
+      "HDAC-9X",
+      "UPREGULATES",
+      "Epigenetic Repression Module (ERM)"
+    ],
+    [
+      "Epigenetic Repression Module (ERM)",
+      "INHIBITS",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "FBG-α",
+      "PART_OF",
+      "WNT-FIB loop"
+    ],
+    [
+      "WNT-FIB loop",
+      "ACTIVATES",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "Wnt3a",
+      "ACTIVATES",
+      "WNT-FIB loop"
+    ],
+    [
+      "FBG-α",
+      "ASSOCIATED_WITH",
+      "β-catenin"
+    ],
+    [
+      "Cardivex (CVX-12)",
+      "INHIBITS",
+      "SMADL-7"
+    ],
+    [
+      "Cardivex (CVX-12)",
+      "DOWNREGULATES",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "Silenor (SLR-8)",
+      "ACTIVATES",
+      "HDAC-9X"
+    ],
+    [
+      "Silenor (SLR-8)",
+      "UPREGULATES",
+      "Epigenetic Repression Module (ERM)"
+    ],
+    [
+      "SILEN-β",
+      "DOWNREGULATES",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "Metabolic Reprogramming Response (MRR)",
+      "ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome (CFS)"
+    ]
+  ],
+  "derived_edges": [
+    [
+      "SILEN-β",
+      "DERIVED_REGULATES",
+      "Epigenetic Repression Module (ERM)"
+    ],
+    [
+      "HDAC-9X",
+      "DERIVED_INHIBITS",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "Epigenetic Repression Module (ERM)",
+      "DERIVED_REDUCES",
+      "Cardiac fibrotic syndrome (CFS)"
+    ],
+    [
+      "SILEN-β",
+      "DERIVED_REDUCES",
+      "Cardiac fibrotic syndrome (CFS)"
+    ],
+    [
+      "Cardivex (CVX-12)",
+      "DERIVED_REDUCES",
+      "Cardiac fibrotic syndrome (CFS)"
+    ],
+    [
+      "TGFβ-CAR cascade",
+      "DERIVED_REGULATES",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "WNT-FIB loop",
+      "DERIVED_ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome (CFS)"
+    ],
+    [
+      "Wnt3a",
+      "DERIVED_REGULATES",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "SMADL-7",
+      "DERIVED_ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome (CFS)"
+    ],
+    [
+      "CARDEX-1",
+      "DERIVED_REGULATES",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "Silenor (SLR-8)",
+      "DERIVED_INHIBITS",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "Silenor (SLR-8)",
+      "DERIVED_REDUCES",
+      "Cardiac fibrotic syndrome (CFS)"
+    ]
+  ],
+  "entities": {
+    "Cardiac fibrotic syndrome (CFS)": {
+      "type": "DISEASE",
+      "aliases": [
+        "fibrotic cardiomyopathy"
+      ]
+    },
+    "Fibrotic Transcriptional Program (FTP)": {
+      "type": "PROCESS",
+      "aliases": [
+        "fibrotic program",
+        "fibrotic gene module"
+      ]
+    },
+    "CARDEX-1": {
+      "type": "GENE",
+      "aliases": [
+        "CDX1",
+        "the cardiogenic regulator"
+      ]
+    },
+    "PKN-δ2": {
+      "type": "PROTEIN",
+      "aliases": [
+        "PKNd2",
+        "delta-2 kinase"
+      ]
+    },
+    "TGFβ-CAR cascade": {
+      "type": "PATHWAY",
+      "aliases": [
+        "T-CAR axis",
+        "cardiac TGF module"
+      ]
+    },
+    "SMADL-7": {
+      "type": "PROTEIN",
+      "aliases": [
+        "SL7",
+        "SMAD-like effector 7"
+      ]
+    },
+    "SILEN-β": {
+      "type": "GENE",
+      "aliases": [
+        "SLNβ",
+        "silencing gene beta",
+        "the β-silencer"
+      ]
+    },
+    "HDAC-9X": {
+      "type": "PROTEIN",
+      "aliases": [
+        "H9X",
+        "histone modifier 9X",
+        "the 9X deacetylase"
+      ]
+    },
+    "Epigenetic Repression Module (ERM)": {
+      "type": "PROCESS",
+      "aliases": [
+        "chromatin silencing signature",
+        "the repression module"
+      ]
+    },
+    "FBG-α": {
+      "type": "PROTEIN",
+      "aliases": [
+        "FBGA",
+        "fibrogenic transcription factor",
+        "fibrogenic factor"
+      ]
+    },
+    "WNT-FIB loop": {
+      "type": "PATHWAY",
+      "aliases": [
+        "W-F circuit",
+        "Wnt-fibrotic signaling",
+        "canonical WNT-fibrotic loop"
+      ]
+    },
+    "Wnt3a": {
+      "type": "PROTEIN",
+      "aliases": []
+    },
+    "mTOR-MET branch": {
+      "type": "PATHWAY",
+      "aliases": [
+        "M-branch",
+        "metabolic arm",
+        "metabolic mTOR module"
+      ]
+    },
+    "Metabolic Reprogramming Response (MRR)": {
+      "type": "PROCESS",
+      "aliases": [
+        "metabolic shift signature",
+        "reprogramming response"
+      ]
+    },
+    "PKD2": {
+      "type": "PROTEIN",
+      "aliases": [
+        "polycystin-2"
+      ]
+    },
+    "NOTCH-R3": {
+      "type": "PROTEIN",
+      "aliases": []
+    },
+    "Cardivex (CVX-12)": {
+      "type": "DRUG",
+      "aliases": [
+        "CVX-12",
+        "the antifibrotic agent"
+      ]
+    },
+    "Silenor (SLR-8)": {
+      "type": "DRUG",
+      "aliases": [
+        "SLR-8",
+        "the chromatin modifier"
+      ]
+    },
+    "β-catenin": {
+      "type": "PROTEIN",
+      "aliases": []
+    }
+  },
+  "contradicted_edges": [
+    [
+      "CARDEX-1",
+      "ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome (CFS)"
+    ],
+    [
+      "HDAC-9X",
+      "UPREGULATES",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "PKN-δ2",
+      "REGULATES",
+      "mTOR-MET branch"
+    ],
+    [
+      "NOTCH-R3",
+      "ASSOCIATED_WITH",
+      "Fibrotic Transcriptional Program (FTP)"
+    ],
+    [
+      "NOTCH-R3",
+      "ASSOCIATED_WITH",
+      "Epigenetic Repression Module (ERM)"
+    ],
+    [
+      "NOTCH-R3",
+      "ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome (CFS)"
+    ]
+  ],
+  "hypothesis_only": [
+    [
+      "FBG-α",
+      "POSSIBLE_ASSOCIATION",
+      "Epigenetic Repression Module (ERM)"
+    ],
+    [
+      "PKN-δ2",
+      "POSSIBLE_ASSOCIATION",
+      "Metabolic Reprogramming Response (MRR)"
+    ],
+    [
+      "mTOR-MET branch",
+      "POSSIBLE_ASSOCIATION",
+      "Fibrotic Transcriptional Program (FTP)"
+    ]
+  ]
+}

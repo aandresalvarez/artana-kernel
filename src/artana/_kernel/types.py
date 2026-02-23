@@ -41,6 +41,7 @@ class RunHandle:
 
 
 type RunRef = RunHandle
+type ReplayPolicy = Literal["strict", "allow_prompt_drift", "fork_on_drift"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,13 @@ class KernelPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextVersion:
+    system_prompt_hash: str | None = None
+    context_builder_version: str | None = None
+    compaction_version: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class StepModelResult(Generic[OutputT]):
     run_id: str
     seq: int
@@ -80,6 +88,8 @@ class StepModelResult(Generic[OutputT]):
     usage: ModelUsage
     tool_calls: tuple[ToolCall, ...]
     replayed: bool
+    replayed_with_drift: bool = False
+    forked_from_run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

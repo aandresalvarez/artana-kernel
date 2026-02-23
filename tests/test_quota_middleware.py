@@ -95,7 +95,7 @@ async def test_quota_persists_from_event_log_across_kernel_restarts(tmp_path: Pa
     )
 
     try:
-        await KernelModelClient(kernel=first_kernel).chat(
+        await KernelModelClient(kernel=first_kernel).step(
             run_id="run_budget",
             prompt="first decision",
             model="gpt-4o-mini",
@@ -104,7 +104,7 @@ async def test_quota_persists_from_event_log_across_kernel_restarts(tmp_path: Pa
         )
 
         with pytest.raises(BudgetExceededError):
-            await KernelModelClient(kernel=second_kernel).chat(
+            await KernelModelClient(kernel=second_kernel).step(
                 run_id="run_budget",
                 prompt="second decision",
                 model="gpt-4o-mini",
@@ -120,6 +120,7 @@ async def test_quota_persists_from_event_log_across_kernel_restarts(tmp_path: Pa
             "run_started",
             "model_requested",
             "model_completed",
+            "run_summary",
             "model_requested",
             "model_completed",
         ]
@@ -146,7 +147,7 @@ async def test_quota_blocks_before_model_when_budget_already_exhausted(tmp_path:
 
     try:
         with pytest.raises(BudgetExceededError):
-            await KernelModelClient(kernel=first_kernel).chat(
+            await KernelModelClient(kernel=first_kernel).step(
                 run_id="run_budget_2",
                 prompt="expensive call",
                 model="gpt-4o-mini",
@@ -164,7 +165,7 @@ async def test_quota_blocks_before_model_when_budget_already_exhausted(tmp_path:
     )
     try:
         with pytest.raises(BudgetExceededError):
-            await KernelModelClient(kernel=second_kernel).chat(
+            await KernelModelClient(kernel=second_kernel).step(
                 run_id="run_budget_2",
                 prompt="retry call",
                 model="gpt-4o-mini",

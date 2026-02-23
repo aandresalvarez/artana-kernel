@@ -17,6 +17,50 @@ async def apply_prepare_model_middleware(
     return current
 
 
+async def apply_prepare_tool_request_middleware(
+    middleware: Sequence[KernelMiddleware],
+    *,
+    run_id: str,
+    tenant: TenantContext,
+    tool_name: str,
+    arguments_json: str,
+) -> str:
+    current = arguments_json
+    for middleware_item in middleware:
+        prepare_tool_request = getattr(middleware_item, "prepare_tool_request", None)
+        if not callable(prepare_tool_request):
+            continue
+        current = await prepare_tool_request(
+            run_id=run_id,
+            tenant=tenant,
+            tool_name=tool_name,
+            arguments_json=current,
+        )
+    return current
+
+
+async def apply_prepare_tool_result_middleware(
+    middleware: Sequence[KernelMiddleware],
+    *,
+    run_id: str,
+    tenant: TenantContext,
+    tool_name: str,
+    result_json: str,
+) -> str:
+    current = result_json
+    for middleware_item in middleware:
+        prepare_tool_result = getattr(middleware_item, "prepare_tool_result", None)
+        if not callable(prepare_tool_result):
+            continue
+        current = await prepare_tool_result(
+            run_id=run_id,
+            tenant=tenant,
+            tool_name=tool_name,
+            result_json=current,
+        )
+    return current
+
+
 def assert_tool_allowed_for_tenant(
     *,
     tool_name: str,

@@ -1,0 +1,462 @@
+{
+  "benchmark_name": "Converging Neuroimmune, Epigenetic, and Proteostatic Cascades in Systemic Autoimmune Encephalomyelitis: A Multi-Axis Dissection",
+  "fact_edges": [
+    [
+      "IRF-κ7",
+      "ACTIVATES",
+      "JAK-η3"
+    ],
+    [
+      "JAK-η3",
+      "PART_OF",
+      "JAK-STAT-CNS axis"
+    ],
+    [
+      "JAK-STAT-CNS axis",
+      "ACTIVATES",
+      "STAT-ω6"
+    ],
+    [
+      "STAT-ω6",
+      "UPREGULATES",
+      "Neuroinflammatory Transcriptional Cascade"
+    ],
+    [
+      "Neuroinflammatory Transcriptional Cascade",
+      "ASSOCIATED_WITH",
+      "Systemic autoimmune encephalomyelitis"
+    ],
+    [
+      "BLIMP-2L",
+      "ACTIVATES",
+      "CASP-L12"
+    ],
+    [
+      "CASP-L12",
+      "PART_OF",
+      "CASP-INFLAM"
+    ],
+    [
+      "CASP-INFLAM",
+      "UPREGULATES",
+      "Autoimmune Activation Module"
+    ],
+    [
+      "CASP-INFLAM",
+      "ACTIVATES",
+      "IL-1β"
+    ],
+    [
+      "CASP-INFLAM",
+      "ACTIVATES",
+      "NFκB"
+    ],
+    [
+      "Autoimmune Activation Module",
+      "UPREGULATES",
+      "Neuroinflammatory Transcriptional Cascade"
+    ],
+    [
+      "FOXN-3α",
+      "INHIBITS",
+      "JAK-η3"
+    ],
+    [
+      "EPIG-4",
+      "ACTIVATES",
+      "SIRT-X4"
+    ],
+    [
+      "SIRT-X4",
+      "PART_OF",
+      "SIRT-EPIG loop"
+    ],
+    [
+      "SIRT-EPIG loop",
+      "UPREGULATES",
+      "Epigenetic Silencing Program"
+    ],
+    [
+      "Epigenetic Silencing Program",
+      "INHIBITS",
+      "Neuroinflammatory Transcriptional Cascade"
+    ],
+    [
+      "TRIM-55X",
+      "ACTIVATES",
+      "UBQ-M7"
+    ],
+    [
+      "UBQ-M7",
+      "PART_OF",
+      "UBQ-PROTEASOME axis"
+    ],
+    [
+      "UBQ-PROTEASOME axis",
+      "INHIBITS",
+      "STAT-ω6"
+    ],
+    [
+      "mTORC3 branch",
+      "REGULATES",
+      "Metabolic Exhaustion Response"
+    ],
+    [
+      "Metabolic Exhaustion Response",
+      "ASSOCIATED_WITH",
+      "Systemic autoimmune encephalomyelitis"
+    ],
+    [
+      "PDE-9R",
+      "INHIBITS",
+      "mTORC3 branch"
+    ],
+    [
+      "Neuroguard",
+      "INHIBITS",
+      "STAT-ω6"
+    ],
+    [
+      "Neuroguard",
+      "DOWNREGULATES",
+      "Neuroinflammatory Transcriptional Cascade"
+    ],
+    [
+      "Immustatin",
+      "INHIBITS",
+      "CASP-L12"
+    ],
+    [
+      "Immustatin",
+      "DOWNREGULATES",
+      "Autoimmune Activation Module"
+    ],
+    [
+      "Epivex",
+      "ACTIVATES",
+      "SIRT-X4"
+    ],
+    [
+      "Epivex",
+      "UPREGULATES",
+      "Epigenetic Silencing Program"
+    ],
+    [
+      "Triple combination therapy",
+      "DOWNREGULATES",
+      "Neuroinflammatory Transcriptional Cascade"
+    ]
+  ],
+  "derived_edges": [
+    [
+      "IRF-κ7",
+      "DERIVED_REGULATES",
+      "Neuroinflammatory Transcriptional Cascade"
+    ],
+    [
+      "BLIMP-2L",
+      "DERIVED_REGULATES",
+      "Neuroinflammatory Transcriptional Cascade"
+    ],
+    [
+      "FOXN-3α",
+      "DERIVED_INHIBITS",
+      "Neuroinflammatory Transcriptional Cascade"
+    ],
+    [
+      "EPIG-4",
+      "DERIVED_INHIBITS",
+      "Neuroinflammatory Transcriptional Cascade"
+    ],
+    [
+      "TRIM-55X",
+      "DERIVED_INHIBITS",
+      "Neuroinflammatory Transcriptional Cascade"
+    ]
+  ],
+  "entities": {
+    "Systemic autoimmune encephalomyelitis": {
+      "type": "DISEASE",
+      "aliases": [
+        "SAE",
+        "encephalomyelitis syndrome"
+      ]
+    },
+    "Neuroinflammatory Transcriptional Cascade": {
+      "type": "OTHER",
+      "aliases": [
+        "NTC",
+        "neuroinflammatory program",
+        "CNS inflammatory signature"
+      ]
+    },
+    "IRF-κ7": {
+      "type": "PROTEIN",
+      "aliases": [
+        "IRFK7",
+        "interferon regulatory factor kappa-7",
+        "κ7 regulator"
+      ]
+    },
+    "JAK-η3": {
+      "type": "PROTEIN",
+      "aliases": [
+        "JAKE3",
+        "Janus kinase eta-3",
+        "η3 kinase"
+      ],
+      "note": "Distinct from JAK3 (Janus kinase 3)."
+    },
+    "JAK-STAT-CNS axis": {
+      "type": "PATHWAY",
+      "aliases": [
+        "J-S-C axis",
+        "CNS JAK module",
+        "neuroimmune JAK cascade"
+      ]
+    },
+    "STAT-ω6": {
+      "type": "PROTEIN",
+      "aliases": [
+        "STW6",
+        "signal transducer omega-6",
+        "omega transducer"
+      ]
+    },
+    "TLR-9": {
+      "type": "PROTEIN",
+      "aliases": [
+        "Toll-like receptor 9"
+      ]
+    },
+    "BLIMP-2L": {
+      "type": "PROTEIN",
+      "aliases": [
+        "BL2",
+        "B-lymphocyte-induced maturation protein 2-like",
+        "maturation factor"
+      ]
+    },
+    "CASP-L12": {
+      "type": "PROTEIN",
+      "aliases": [
+        "CL12",
+        "caspase-like 12",
+        "executioner protease"
+      ]
+    },
+    "CASP-INFLAM": {
+      "type": "PATHWAY",
+      "aliases": [
+        "inflammasome cascade",
+        "CI-cascade",
+        "caspase-inflammatory pathway",
+        "CASP-INFLAM cascade"
+      ]
+    },
+    "Autoimmune Activation Module": {
+      "type": "OTHER",
+      "aliases": [
+        "AAM",
+        "autoimmune program",
+        "immune activation module"
+      ]
+    },
+    "IL-1β": {
+      "type": "PROTEIN",
+      "aliases": [
+        "interleukin-1 beta"
+      ]
+    },
+    "NFκB": {
+      "type": "OTHER",
+      "aliases": [
+        "NF-kappaB"
+      ]
+    },
+    "FOXN-3α": {
+      "type": "PROTEIN",
+      "aliases": [
+        "FN3A",
+        "forkhead box N3-alpha",
+        "forkhead regulator"
+      ]
+    },
+    "EPIG-4": {
+      "type": "PROTEIN",
+      "aliases": [
+        "EP4",
+        "epigenetic programmer 4",
+        "chromatin architect"
+      ]
+    },
+    "SIRT-X4": {
+      "type": "PROTEIN",
+      "aliases": [
+        "SX4",
+        "sirtuin X4",
+        "X4 deacetylase"
+      ]
+    },
+    "SIRT-EPIG loop": {
+      "type": "PATHWAY",
+      "aliases": [
+        "sirtuin-epigenetic circuit",
+        "S-E loop",
+        "chromatin regulatory loop"
+      ]
+    },
+    "Epigenetic Silencing Program": {
+      "type": "OTHER",
+      "aliases": [
+        "ESP",
+        "silencing program",
+        "chromatin suppression module"
+      ]
+    },
+    "TRIM-55X": {
+      "type": "PROTEIN",
+      "aliases": [
+        "T55X",
+        "tripartite motif 55X",
+        "ubiquitin ligase gene"
+      ]
+    },
+    "UBQ-M7": {
+      "type": "PROTEIN",
+      "aliases": [
+        "UM7",
+        "ubiquitin modifier M7"
+      ]
+    },
+    "UBQ-PROTEASOME axis": {
+      "type": "PATHWAY",
+      "aliases": [
+        "UPS",
+        "ubiquitin-proteasome axis",
+        "degradation pathway"
+      ]
+    },
+    "mTORC3 branch": {
+      "type": "PATHWAY",
+      "aliases": [
+        "metabolic branch 3",
+        "mTORC3 arm",
+        "m3 module"
+      ]
+    },
+    "Metabolic Exhaustion Response": {
+      "type": "OTHER",
+      "aliases": [
+        "MER",
+        "metabolic exhaustion",
+        "exhaustion signature"
+      ]
+    },
+    "PDE-9R": {
+      "type": "PROTEIN",
+      "aliases": [
+        "PD9R",
+        "phosphodiesterase 9R",
+        "cyclic nucleotide hydrolase"
+      ]
+    },
+    "PTEN-L": {
+      "type": "PROTEIN",
+      "aliases": [
+        "PTEN-L lipid phosphatase"
+      ]
+    },
+    "NOTCH-4B": {
+      "type": "PROTEIN",
+      "aliases": [
+        "Notch receptor paralog NOTCH-4B"
+      ]
+    },
+    "VEGF-R2": {
+      "type": "PROTEIN",
+      "aliases": [
+        "vascular endothelial growth factor receptor 2"
+      ]
+    },
+    "Neuroguard": {
+      "type": "DRUG",
+      "aliases": [
+        "NRG-15",
+        "neuroprotective agent"
+      ]
+    },
+    "Immustatin": {
+      "type": "DRUG",
+      "aliases": [
+        "IMT-8",
+        "immunosuppressive compound",
+        "immune modulator IMT"
+      ]
+    },
+    "Epivex": {
+      "type": "DRUG",
+      "aliases": [
+        "EPV-3",
+        "epigenetic activator"
+      ]
+    },
+    "Triple combination therapy": {
+      "type": "OTHER",
+      "aliases": [
+        "NRG-15 + IMT-8 + EPV-3",
+        "triple combination therapy",
+        "Triple combination therapy (Neuroguard + Immustatin + Epivex)"
+      ]
+    }
+  },
+  "contradicted_edges": [
+    [
+      "TLR-9",
+      "ACTIVATES",
+      "JAK-η3"
+    ],
+    [
+      "SIRT-X4",
+      "INHIBITS",
+      "Neuroinflammatory Transcriptional Cascade"
+    ],
+    [
+      "IRF-κ7",
+      "ASSOCIATED_WITH",
+      "Systemic autoimmune encephalomyelitis"
+    ],
+    [
+      "BLIMP-2L",
+      "ASSOCIATED_WITH",
+      "Systemic autoimmune encephalomyelitis"
+    ],
+    [
+      "NOTCH-4B",
+      "ASSOCIATED_WITH",
+      "Systemic autoimmune encephalomyelitis"
+    ],
+    [
+      "PTEN-L",
+      "REGULATES",
+      "mTORC3 branch"
+    ],
+    [
+      "JAK-η3",
+      "REGULATES",
+      "Metabolic Exhaustion Response"
+    ],
+    [
+      "Immustatin",
+      "INHIBITS",
+      "SIRT-X4"
+    ]
+  ],
+  "hypothesis_only": [
+    [
+      "mTORC3 branch",
+      "POSSIBLE_ASSOCIATION",
+      "Neuroinflammatory Transcriptional Cascade"
+    ]
+  ]
+}

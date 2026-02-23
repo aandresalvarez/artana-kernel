@@ -7,11 +7,20 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
-from artana.agent import AutonomousAgent, CompactionStrategy, ContextBuilder, SubAgentFactory
+from artana.agent import (
+    AgentRunFailed,
+    AutonomousAgent,
+    CompactionStrategy,
+    ContextBuilder,
+    MaxIterationsExceeded,
+    SubAgentFactory,
+)
 from artana.agent.experience import ExperienceRule, RuleType, SQLiteExperienceStore
 from artana.agent.memory import InMemoryMemoryStore
+from artana.agent.runtime_tools import RuntimeToolManager
 from artana.events import ChatMessage, EventType, ModelRequestedPayload
 from artana.kernel import ArtanaKernel
+from artana.middleware import QuotaMiddleware
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage, ToolCall
 from artana.store import SQLiteStore
@@ -69,6 +78,7 @@ class ProgressiveSkillsModelPort:
                 ToolCall(
                     tool_name="load_skill",
                     arguments_json='{"skill_name":"secret_tool"}',
+                    tool_call_id="call_load_skill_1",
                 ),
             )
             output = request.output_schema.model_validate({"done": False})
@@ -77,6 +87,7 @@ class ProgressiveSkillsModelPort:
                 ToolCall(
                     tool_name="secret_tool",
                     arguments_json='{"value":"x"}',
+                    tool_call_id="call_secret_tool_2",
                 ),
             )
             output = request.output_schema.model_validate({"done": False})
@@ -110,6 +121,7 @@ class MemoryModelPort:
                 ToolCall(
                     tool_name="core_memory_append",
                     arguments_json='{"content":"prefers-python"}',
+                    tool_call_id="call_memory_append_1",
                 ),
             )
             output = request.output_schema.model_validate({"done": False})
@@ -211,6 +223,7 @@ class SkillGuardModelPort:
                 ToolCall(
                     tool_name="load_skill",
                     arguments_json='{"skill_name":"admin_only_tool"}',
+                    tool_call_id="call_load_admin_skill_1",
                 ),
             )
             output = request.output_schema.model_validate({"done": False})
@@ -236,7 +249,11 @@ class SubAgentInheritanceModelPort:
             self.child_runs_seen.add(request.run_id)
             if len(request.messages) <= 2:
                 tool_calls = (
-                    ToolCall(tool_name="child_secret_tool", arguments_json="{}"),
+                    ToolCall(
+                        tool_name="child_secret_tool",
+                        arguments_json="{}",
+                        tool_call_id="call_child_secret_tool_1",
+                    ),
                 )
                 output = request.output_schema.model_validate({"done": False})
             else:
@@ -252,6 +269,110 @@ class SubAgentInheritanceModelPort:
         return ModelResult(
             output=output,
             usage=ModelUsage(prompt_tokens=3, completion_tokens=1, cost_usd=0.01),
+        )
+
+
+class ToolProtocolCaptureModelPort:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.messages_second_call: tuple[ChatMessage, ...] = ()
+
+    async def complete(
+        self, request: ModelRequest[OutputModelT]
+    ) -> ModelResult[OutputModelT]:
+        self.calls += 1
+        if self.calls == 1:
+            output = request.output_schema.model_validate({"done": False})
+            return ModelResult(
+                output=output,
+                usage=ModelUsage(prompt_tokens=6, completion_tokens=2, cost_usd=0.01),
+                tool_calls=(
+                    ToolCall(
+                        tool_name="lookup_weather",
+                        arguments_json='{"city":"SF"}',
+                        tool_call_id="call_weather_1",
+                    ),
+                ),
+            )
+        self.messages_second_call = tuple(request.messages)
+        output = request.output_schema.model_validate({"done": True})
+        return ModelResult(
+            output=output,
+            usage=ModelUsage(prompt_tokens=6, completion_tokens=2, cost_usd=0.01),
+        )
+
+
+class MissingToolCallIdModelPort:
+    async def complete(
+        self, request: ModelRequest[OutputModelT]
+    ) -> ModelResult[OutputModelT]:
+        output = request.output_schema.model_validate({"done": False})
+        return ModelResult(
+            output=output,
+            usage=ModelUsage(prompt_tokens=4, completion_tokens=2, cost_usd=0.01),
+            tool_calls=(
+                ToolCall(
+                    tool_name="any_tool",
+                    arguments_json="{}",
+                ),
+            ),
+        )
+
+
+class BudgetExceededModelPort:
+    async def complete(
+        self, request: ModelRequest[OutputModelT]
+    ) -> ModelResult[OutputModelT]:
+        output = request.output_schema.model_validate({"done": True})
+        return ModelResult(
+            output=output,
+            usage=ModelUsage(prompt_tokens=2, completion_tokens=1, cost_usd=1.0),
+        )
+
+
+class EndlessToolLoopModelPort:
+    async def complete(
+        self, request: ModelRequest[OutputModelT]
+    ) -> ModelResult[OutputModelT]:
+        output = request.output_schema.model_validate({"done": False})
+        return ModelResult(
+            output=output,
+            usage=ModelUsage(prompt_tokens=4, completion_tokens=2, cost_usd=0.01),
+            tool_calls=(
+                ToolCall(
+                    tool_name="spin",
+                    arguments_json="{}",
+                    tool_call_id="call_spin_loop",
+                ),
+            ),
+        )
+
+
+class QueryHistoryModelPort:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(
+        self, request: ModelRequest[OutputModelT]
+    ) -> ModelResult[OutputModelT]:
+        self.calls += 1
+        if self.calls == 1:
+            output = request.output_schema.model_validate({"done": False})
+            return ModelResult(
+                output=output,
+                usage=ModelUsage(prompt_tokens=5, completion_tokens=2, cost_usd=0.01),
+                tool_calls=(
+                    ToolCall(
+                        tool_name="query_event_history",
+                        arguments_json='{"limit":5,"event_type":"all"}',
+                        tool_call_id="call_history_1",
+                    ),
+                ),
+            )
+        output = request.output_schema.model_validate({"done": True})
+        return ModelResult(
+            output=output,
+            usage=ModelUsage(prompt_tokens=5, completion_tokens=2, cost_usd=0.01),
         )
 
 
@@ -272,6 +393,15 @@ class CustomContextBuilder(ContextBuilder):
 
 class ChildTaskArgs(BaseModel):
     task: str
+
+
+class MemoryAppendArgs(BaseModel):
+    content: str
+
+
+class EventHistoryArgs(BaseModel):
+    limit: int
+    event_type: str
 
 
 @pytest.mark.asyncio
@@ -310,6 +440,75 @@ async def test_autonomous_agent_compaction_records_compact_step(tmp_path: Path) 
                 step_keys.append(payload.step_key)
         assert "turn_1_compact" in step_keys
         assert "turn_1_model" in step_keys
+        assert any(
+            event.event_type == EventType.RUN_SUMMARY
+            and event.payload.summary_type == AutonomousAgent.COMPACTION_ARTIFACT_SUMMARY_TYPE
+            for event in events
+        )
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_autonomous_agent_compaction_reuses_artifact_for_identical_window(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = CompactionModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    agent = AutonomousAgent(
+        kernel=kernel,
+        compaction=CompactionStrategy(
+            trigger_at_messages=1,
+            keep_recent_messages=0,
+            summarize_with_model="gpt-4o-mini",
+        ),
+    )
+    tenant = _tenant()
+    run_id = "run_compaction_artifact_reuse"
+
+    try:
+        await kernel.start_run(tenant=tenant, run_id=run_id)
+        short_term_messages = (ChatMessage(role="user", content="compress this history"),)
+
+        first = await agent._compact_if_needed(
+            run_id=run_id,
+            tenant=tenant,
+            model="gpt-4o-mini",
+            iteration=1,
+            short_term_messages=short_term_messages,
+        )
+        second = await agent._compact_if_needed(
+            run_id=run_id,
+            tenant=tenant,
+            model="gpt-4o-mini",
+            iteration=2,
+            short_term_messages=short_term_messages,
+        )
+
+        assert first == second
+        assert model_port.calls == 1
+
+        artifact_summary = await kernel.get_latest_run_summary(
+            run_id=run_id,
+            summary_type=AutonomousAgent.COMPACTION_ARTIFACT_SUMMARY_TYPE,
+        )
+        assert artifact_summary is not None
+        artifact_payload = json.loads(artifact_summary.summary_json)
+        assert artifact_payload["summary"] == "condensed history"
+        assert len(artifact_payload["window_hash"]) == 64
+        assert len(artifact_payload["summary_hash"]) == 64
+
+        events = await store.get_events_for_run(run_id)
+        compact_model_steps: list[str | None] = []
+        for event in events:
+            if event.event_type != EventType.MODEL_REQUESTED:
+                continue
+            payload = event.payload
+            if isinstance(payload, ModelRequestedPayload):
+                compact_model_steps.append(payload.step_key)
+        assert "turn_1_compact" in compact_model_steps
+        assert "turn_2_compact" not in compact_model_steps
     finally:
         await kernel.close()
 
@@ -640,6 +839,244 @@ async def test_sub_agent_factory_inherits_parent_tenant_context(tmp_path: Path) 
         assert isinstance(payload, dict)
         assert payload.get("result") == {"done": True}
         assert model_port.child_runs_seen
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_autonomous_agent_emits_openai_tool_protocol_messages(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = ToolProtocolCaptureModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+
+    @kernel.tool()
+    async def lookup_weather(city: str) -> str:
+        return json.dumps({"city": city, "temp_c": 20})
+
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(progressive_skills=False),
+    )
+
+    try:
+        result = await agent.run(
+            run_id="run_tool_protocol",
+            tenant=_tenant(),
+            model="gpt-4o-mini",
+            prompt="get weather",
+            output_schema=AgentResult,
+            max_iterations=3,
+        )
+        assert result.done is True
+        assert len(model_port.messages_second_call) >= 4
+        assistant_tool_message = model_port.messages_second_call[-2]
+        tool_result_message = model_port.messages_second_call[-1]
+        assert assistant_tool_message.role == "assistant"
+        assert assistant_tool_message.tool_calls is not None
+        assert assistant_tool_message.tool_calls[0].id == "call_weather_1"
+        assert assistant_tool_message.tool_calls[0].function.name == "lookup_weather"
+        assert tool_result_message.role == "tool"
+        assert tool_result_message.tool_call_id == "call_weather_1"
+        assert tool_result_message.name == "lookup_weather"
+        parsed_tool_content = json.loads(tool_result_message.content)
+        assert parsed_tool_content["city"] == "SF"
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_autonomous_agent_requires_tool_call_id_for_tool_execution(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(store=store, model_port=MissingToolCallIdModelPort())
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(progressive_skills=False),
+    )
+
+    try:
+        with pytest.raises(ValueError, match="missing tool_call_id"):
+            await agent.run(
+                run_id="run_missing_tool_call_id",
+                tenant=_tenant(),
+                model="gpt-4o-mini",
+                prompt="use any tool",
+                output_schema=AgentResult,
+                max_iterations=2,
+            )
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_autonomous_agent_budget_exceeded_raises_failed_status(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(
+        store=store,
+        model_port=BudgetExceededModelPort(),
+        middleware=[QuotaMiddleware()],
+    )
+    agent = AutonomousAgent(kernel=kernel)
+    tenant = TenantContext(
+        tenant_id="org_budget_fail",
+        capabilities=frozenset(),
+        budget_usd_limit=0.5,
+    )
+
+    try:
+        with pytest.raises(AgentRunFailed) as exc_info:
+            await agent.run(
+                run_id="run_budget_fail",
+                tenant=tenant,
+                model="gpt-4o-mini",
+                prompt="do work",
+                output_schema=AgentResult,
+                max_iterations=2,
+            )
+        assert exc_info.value.status == "failed_budget_exceeded"
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_autonomous_agent_raises_max_iterations_exceeded(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = EndlessToolLoopModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+
+    @kernel.tool()
+    async def spin() -> str:
+        return json.dumps({"spun": True})
+
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(progressive_skills=False),
+    )
+
+    try:
+        with pytest.raises(MaxIterationsExceeded):
+            await agent.run(
+                run_id="run_max_iterations",
+                tenant=_tenant(),
+                model="gpt-4o-mini",
+                prompt="keep spinning",
+                output_schema=AgentResult,
+                max_iterations=2,
+            )
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_query_event_history_tool_is_callable(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = QueryHistoryModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    tenant = TenantContext(
+        tenant_id="org_reflection",
+        capabilities=frozenset({"self_reflection"}),
+        budget_usd_limit=3.0,
+    )
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(progressive_skills=False),
+    )
+
+    try:
+        result = await agent.run(
+            run_id="run_query_history",
+            tenant=tenant,
+            model="gpt-4o-mini",
+            prompt="inspect history",
+            output_schema=AgentResult,
+            max_iterations=3,
+        )
+        assert result.done is True
+
+        events = await store.get_events_for_run("run_query_history")
+        query_results: list[dict[str, object]] = []
+        for event in events:
+            if event.event_type != EventType.TOOL_COMPLETED:
+                continue
+            payload = event.payload
+            if payload.kind != "tool_completed":
+                continue
+            if payload.tool_name != "query_event_history":
+                continue
+            parsed = json.loads(payload.result_json)
+            if isinstance(parsed, dict):
+                query_results.append(parsed)
+        assert query_results
+        assert query_results[0].get("ok") is True
+        assert isinstance(query_results[0].get("events"), list)
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_tools_register_with_configured_names(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(store=store, model_port=QueryHistoryModelPort())
+    tenant = TenantContext(
+        tenant_id="org_runtime_names",
+        capabilities=frozenset({"self_reflection"}),
+        budget_usd_limit=3.0,
+    )
+    runtime_tools = RuntimeToolManager(
+        kernel=kernel,
+        memory_store=InMemoryMemoryStore(),
+        progressive_skills=True,
+        load_skill_name="load_skill_v2",
+        core_memory_append="memory_append_v2",
+        core_memory_replace="memory_replace_v2",
+        core_memory_search="memory_search_v2",
+        query_event_history="query_history_v2",
+    )
+    runtime_tools.ensure_registered()
+
+    configured_runtime_names = {
+        "load_skill_v2",
+        "memory_append_v2",
+        "memory_replace_v2",
+        "memory_search_v2",
+        "query_history_v2",
+    }
+
+    try:
+        registered = {tool.name for tool in kernel.list_registered_tools()}
+        assert configured_runtime_names.issubset(registered)
+        assert "load_skill" not in registered
+        assert "query_event_history" not in registered
+
+        visible = runtime_tools.visible_tool_names(
+            loaded_skills=set(),
+            tenant_capabilities=tenant.capabilities,
+        )
+        assert visible is not None
+        assert configured_runtime_names.issubset(visible)
+
+        await kernel.start_run(tenant=tenant, run_id="run_runtime_names")
+        append_result = await kernel.step_tool(
+            run_id="run_runtime_names",
+            tenant=tenant,
+            tool_name="memory_append_v2",
+            arguments=MemoryAppendArgs(content="hello memory"),
+            step_key="append",
+        )
+        append_payload = json.loads(append_result.result_json)
+        assert append_payload.get("status") == "appended"
+
+        history_result = await kernel.step_tool(
+            run_id="run_runtime_names",
+            tenant=tenant,
+            tool_name="query_history_v2",
+            arguments=EventHistoryArgs(limit=10, event_type="all"),
+            step_key="query_history",
+        )
+        history_payload = json.loads(history_result.result_json)
+        assert history_payload.get("ok") is True
+        assert isinstance(history_payload.get("events"), list)
     finally:
         await kernel.close()
 

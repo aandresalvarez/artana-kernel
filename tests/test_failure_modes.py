@@ -98,7 +98,7 @@ async def test_chat_does_not_execute_unauthorized_tool_call_implicitly(
         budget_usd_limit=1.0,
     )
     try:
-        response = await KernelModelClient(kernel=kernel).chat(
+        response = await KernelModelClient(kernel=kernel).step(
             run_id="run_denied",
             prompt="Transfer money",
             model="gpt-4o-mini",
@@ -152,7 +152,7 @@ async def test_store_failure_prevents_model_execution() -> None:
 
     try:
         with pytest.raises(RuntimeError, match="simulated store write failure"):
-            await KernelModelClient(kernel=kernel).chat(
+            await KernelModelClient(kernel=kernel).step(
                 run_id="run_store_fail",
                 prompt="hello",
                 model="gpt-4o-mini",

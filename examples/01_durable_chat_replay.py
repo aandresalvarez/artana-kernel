@@ -82,14 +82,14 @@ async def main() -> None:
     )
 
     try:
-        first = await KernelModelClient(kernel=kernel).chat(
+        first = await KernelModelClient(kernel=kernel).step(
             run_id="example_run_1",
             prompt="Transfer 10 from acc_1. My email is user@example.com",
             model="gpt-4o-mini",
             tenant=tenant,
             output_schema=TransferDecision,
         )
-        second = await KernelModelClient(kernel=kernel).chat(
+        second = await KernelModelClient(kernel=kernel).step(
             run_id="example_run_1",
             prompt="Transfer 10 from acc_1. My email is user@example.com",
             model="gpt-4o-mini",

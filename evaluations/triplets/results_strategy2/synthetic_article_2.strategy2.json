@@ -1,0 +1,148 @@
+{
+  "benchmark_name": "Indirect Regulatory Chains Explain Disorder D Better Than Direct Gene Associations",
+  "fact_edges": [
+    [
+      "Aine",
+      "ACTIVATES",
+      "XPK"
+    ],
+    [
+      "BEX-β",
+      "DOWNREGULATES",
+      "XPK"
+    ],
+    [
+      "P-axis",
+      "REGULATES",
+      "YTF"
+    ],
+    [
+      "YTF",
+      "UPREGULATES",
+      "IP signature"
+    ],
+    [
+      "Rivor",
+      "DOWNREGULATES",
+      "IP signature"
+    ],
+    [
+      "Zmod",
+      "ASSOCIATED_WITH",
+      "Disorder D"
+    ],
+    [
+      "Q-loop",
+      "PART_OF",
+      "Disorder D"
+    ]
+  ],
+  "derived_edges": [
+    [
+      "Aine",
+      "DERIVED_REGULATES",
+      "IP signature"
+    ],
+    [
+      "XPK",
+      "DERIVED_REGULATES",
+      "YTF"
+    ],
+    [
+      "YTF",
+      "DERIVED_ASSOCIATED_WITH",
+      "Disorder D"
+    ],
+    [
+      "Zmod",
+      "DERIVED_ASSOCIATED_WITH",
+      "Disorder D"
+    ],
+    [
+      "Q-loop",
+      "DERIVED_ASSOCIATED_WITH",
+      "Disorder D"
+    ],
+    [
+      "P-axis",
+      "DERIVED_REGULATES",
+      "IP signature"
+    ],
+    [
+      "BEX-β",
+      "DERIVED_DOWNREGULATES",
+      "IP signature"
+    ],
+    [
+      "Rivor",
+      "DERIVED_REDUCES",
+      "IP signature"
+    ]
+  ],
+  "entities": {
+    "Aine": {
+      "type": "PROTEIN",
+      "aliases": [
+        "ARX-1"
+      ]
+    },
+    "XPK": {
+      "type": "PROTEIN",
+      "aliases": [
+        "the X kinase"
+      ]
+    },
+    "BEX-β": {
+      "type": "PROTEIN",
+      "aliases": [
+        "Bex"
+      ]
+    },
+    "P-axis": {
+      "type": "PATHWAY",
+      "aliases": []
+    },
+    "YTF": {
+      "type": "PROTEIN",
+      "aliases": []
+    },
+    "IP signature": {
+      "type": "PROCESS",
+      "aliases": [
+        "inflammatory program"
+      ]
+    },
+    "Disorder D": {
+      "type": "DISEASE",
+      "aliases": []
+    },
+    "Zmod": {
+      "type": "PROTEIN",
+      "aliases": []
+    },
+    "Q-loop": {
+      "type": "PATHWAY",
+      "aliases": []
+    },
+    "Rivor": {
+      "type": "DRUG",
+      "aliases": [
+        "RIV-7"
+      ]
+    }
+  },
+  "contradicted_edges": [
+    [
+      "Aine",
+      "ASSOCIATED_WITH",
+      "Disorder D"
+    ]
+  ],
+  "hypothesis_only": [
+    [
+      "Aine",
+      "POSSIBLE_ASSOCIATION",
+      "Q-loop"
+    ]
+  ]
+}

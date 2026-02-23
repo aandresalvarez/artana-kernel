@@ -23,12 +23,16 @@ class ToolDefinition:
     name: str
     description: str
     arguments_schema_json: str
+    tool_version: str = "1.0.0"
+    schema_version: str = "1"
+    schema_hash: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class ToolCall:
     tool_name: str
     arguments_json: str
+    tool_call_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +81,7 @@ class LiteLLMCompletionFn(Protocol):
         self,
         *,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         response_format: type[BaseModel],
         tools: list[dict[str, object]] | None = None,
     ) -> object:

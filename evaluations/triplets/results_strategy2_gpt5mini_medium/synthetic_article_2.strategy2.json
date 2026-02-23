@@ -1,0 +1,193 @@
+{
+  "benchmark_name": "Indirect Regulatory Chains Explain Disorder D Better Than Direct Gene Associations",
+  "fact_edges": [
+    [
+      "Aine",
+      "ACTIVATES",
+      "XPK"
+    ],
+    [
+      "BEX-β",
+      "INHIBITS",
+      "XPK"
+    ],
+    [
+      "XPK",
+      "PART_OF",
+      "P-axis"
+    ],
+    [
+      "P-axis",
+      "ACTIVATES",
+      "YTF"
+    ],
+    [
+      "YTF",
+      "ACTIVATES",
+      "IP signature"
+    ],
+    [
+      "IP signature",
+      "ASSOCIATED_WITH",
+      "Disorder D"
+    ],
+    [
+      "Zmod",
+      "PART_OF",
+      "Q-loop"
+    ],
+    [
+      "Q-loop",
+      "REGULATES",
+      "METABOLIC_STRESS"
+    ],
+    [
+      "METABOLIC_STRESS",
+      "ASSOCIATED_WITH",
+      "Disorder D"
+    ],
+    [
+      "Rivor",
+      "INHIBITS",
+      "YTF"
+    ],
+    [
+      "Rivor",
+      "DOWNREGULATES",
+      "IP signature"
+    ]
+  ],
+  "derived_edges": [
+    [
+      "Aine",
+      "DERIVED_REGULATES",
+      "IP signature"
+    ],
+    [
+      "Aine",
+      "DERIVED_ASSOCIATED_WITH",
+      "Disorder D"
+    ],
+    [
+      "BEX-β",
+      "DERIVED_DOWNREGULATES",
+      "IP signature"
+    ],
+    [
+      "P-axis",
+      "DERIVED_REGULATES",
+      "IP signature"
+    ],
+    [
+      "P-axis",
+      "DERIVED_ASSOCIATED_WITH",
+      "Disorder D"
+    ],
+    [
+      "YTF",
+      "DERIVED_ASSOCIATED_WITH",
+      "Disorder D"
+    ],
+    [
+      "Rivor",
+      "DERIVED_REDUCES",
+      "Disorder D"
+    ]
+  ],
+  "entities": {
+    "Disorder D": {
+      "type": "DISEASE",
+      "aliases": []
+    },
+    "Aine": {
+      "type": "GENE",
+      "aliases": [
+        "ARX-1"
+      ]
+    },
+    "XPK": {
+      "type": "PROTEIN",
+      "aliases": [
+        "the X kinase"
+      ]
+    },
+    "BEX-β": {
+      "type": "PROTEIN",
+      "aliases": [
+        "Bex"
+      ]
+    },
+    "P-axis": {
+      "type": "PATHWAY",
+      "aliases": [
+        "P-axis complex"
+      ]
+    },
+    "YTF": {
+      "type": "PROTEIN",
+      "aliases": [
+        "transcription factor YTF"
+      ]
+    },
+    "IP signature": {
+      "type": "PROCESS",
+      "aliases": [
+        "inflammatory program"
+      ]
+    },
+    "Q-loop": {
+      "type": "PATHWAY",
+      "aliases": []
+    },
+    "Zmod": {
+      "type": "PROTEIN",
+      "aliases": []
+    },
+    "METABOLIC_STRESS": {
+      "type": "PROCESS",
+      "aliases": [
+        "MSR"
+      ]
+    },
+    "Rivor": {
+      "type": "DRUG",
+      "aliases": [
+        "RIV-7"
+      ]
+    }
+  },
+  "contradicted_edges": [
+    [
+      "Aine",
+      "ASSOCIATED_WITH",
+      "Disorder D"
+    ]
+  ],
+  "hypothesis_only": [
+    [
+      "Zmod",
+      "POSSIBLE_ASSOCIATION",
+      "IP signature"
+    ],
+    [
+      "Rivor",
+      "POSSIBLE_ASSOCIATION",
+      "METABOLIC_STRESS"
+    ],
+    [
+      "BEX-β",
+      "POSSIBLE_ASSOCIATION",
+      "IP signature"
+    ],
+    [
+      "Aine",
+      "POSSIBLE_ASSOCIATION",
+      "Q-loop"
+    ],
+    [
+      "P-axis",
+      "POSSIBLE_ASSOCIATION",
+      "Q-loop"
+    ]
+  ]
+}

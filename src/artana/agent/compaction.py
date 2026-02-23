@@ -13,6 +13,8 @@ class CompactionSummary(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class CompactionStrategy:
+    VERSION = "compaction.v1"
+
     max_history_messages: int = 40
     trigger_at_messages: int | None = None
     keep_recent_messages: int = 10
@@ -31,6 +33,10 @@ class CompactionStrategy:
             raise ValueError("max_context_tokens must be >= 1 when provided.")
         if self.context_utilization_ratio < 0.0:
             raise ValueError("context_utilization_ratio must be >= 0.0.")
+
+    @property
+    def version(self) -> str:
+        return self.VERSION
 
     def should_compact(self, *, messages: tuple[ChatMessage, ...], model: str) -> bool:
         history_limit = (

@@ -25,8 +25,27 @@ class CapabilityGuardMiddleware:
     ) -> None:
         return None
 
+    async def prepare_tool_request(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        arguments_json: str,
+    ) -> str:
+        return arguments_json
+
+    async def prepare_tool_result(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        result_json: str,
+    ) -> str:
+        return result_json
+
     def _is_allowed(self, *, capability: str | None, tenant: TenantContext) -> bool:
         if capability is None:
             return True
         return capability in tenant.capabilities
-

@@ -80,7 +80,7 @@ async def main() -> None:
         run = await kernel.start_run(tenant=tenant)
         prompt = f"{EXTRACTION_INSTRUCTIONS}\n\n---\n\nArticle:\n{SAMPLE_ARTICLE.strip()}"
 
-        result = await KernelModelClient(kernel=kernel).chat(
+        result = await KernelModelClient(kernel=kernel).step(
             run_id=run.run_id,
             tenant=tenant,
             model="gpt-4o-mini",

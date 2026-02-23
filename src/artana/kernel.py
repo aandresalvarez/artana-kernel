@@ -1,10 +1,12 @@
 from artana._kernel.core import ArtanaKernel
 from artana._kernel.types import (
     CapabilityDeniedError,
+    ContextVersion,
     KernelPolicy,
     ModelInput,
     PauseTicket,
     ReplayConsistencyError,
+    ReplayPolicy,
     RunHandle,
     RunRef,
     StepModelResult,
@@ -22,11 +24,13 @@ from artana._kernel.workflow_runtime import (
 
 __all__ = [
     "ArtanaKernel",
+    "ContextVersion",
     "CapabilityDeniedError",
     "KernelPolicy",
     "ModelInput",
     "JsonValue",
     "PauseTicket",
+    "ReplayPolicy",
     "ReplayConsistencyError",
     "RunHandle",
     "RunRef",

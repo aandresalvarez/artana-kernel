@@ -234,7 +234,7 @@ async def test_chat_client_wraps_step_model(tmp_path: Path) -> None:
 
     try:
         run = await kernel.start_run(tenant=_tenant())
-        first = await client.chat(
+        first = await client.step(
             run_id=run.run_id,
             tenant=_tenant(),
             model="gpt-4o-mini",
@@ -242,7 +242,7 @@ async def test_chat_client_wraps_step_model(tmp_path: Path) -> None:
             output_schema=Decision,
             step_key="chat_step",
         )
-        second = await client.chat(
+        second = await client.step(
             run_id=run.run_id,
             tenant=_tenant(),
             model="gpt-4o-mini",

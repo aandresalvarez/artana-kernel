@@ -151,7 +151,7 @@ async def main() -> None:
             "Approve this request and give a short reason."
         )
 
-        first = await chat.chat(
+        first = await chat.step(
             run_id=run_id,
             prompt=prompt,
             model="gpt-4o-mini",
@@ -175,7 +175,7 @@ async def main() -> None:
             },
         )
 
-        second = await chat.chat(
+        second = await chat.step(
             run_id=run_id,
             prompt=prompt,
             model="gpt-4o-mini",

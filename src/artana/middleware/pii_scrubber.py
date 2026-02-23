@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Mapping, Sequence
 
-from artana.events import ChatMessage
+from artana.json_utils import canonical_json_dumps
 from artana.middleware.base import ModelInvocation
 from artana.models import TenantContext
 from artana.ports.model import ModelUsage
@@ -31,7 +33,7 @@ class PIIScrubberMiddleware:
     async def prepare_model(self, invocation: ModelInvocation) -> ModelInvocation:
         redacted_prompt = self._redact_text(invocation.prompt)
         redacted_messages = tuple(
-            ChatMessage(role=message.role, content=self._redact_text(message.content))
+            message.model_copy(update={"content": self._redact_text(message.content)})
             for message in invocation.messages
         )
         return invocation.with_updates(
@@ -47,8 +49,45 @@ class PIIScrubberMiddleware:
     ) -> None:
         return None
 
+    async def prepare_tool_request(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        arguments_json: str,
+    ) -> str:
+        return self._redact_json_payload(arguments_json)
+
+    async def prepare_tool_result(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        result_json: str,
+    ) -> str:
+        return self._redact_json_payload(result_json)
+
     def _redact_text(self, input_text: str) -> str:
         result = input_text
         for pattern, replacement in self._patterns:
             result = pattern.sub(replacement, result)
         return result
+
+    def _redact_json_payload(self, payload_json: str) -> str:
+        try:
+            parsed = json.loads(payload_json)
+        except json.JSONDecodeError:
+            return self._redact_text(payload_json)
+        redacted = self._redact_value(parsed)
+        return canonical_json_dumps(redacted)
+
+    def _redact_value(self, value: object) -> object:
+        if isinstance(value, str):
+            return self._redact_text(value)
+        if isinstance(value, Mapping):
+            return {str(key): self._redact_value(nested) for key, nested in value.items()}
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            return [self._redact_value(item) for item in value]
+        return value

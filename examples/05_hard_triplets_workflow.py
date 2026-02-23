@@ -6,8 +6,8 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-from artana.agent import ChatClient
-from artana.kernel import ArtanaKernel, WorkflowContext, KernelPolicy, pydantic_step_serde
+from artana.agent import SingleStepModelClient
+from artana.kernel import ArtanaKernel, KernelPolicy, WorkflowContext, pydantic_step_serde
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage
 from artana.store import SQLiteStore
@@ -82,12 +82,12 @@ async def _run_workflow_with_human_gate(
     tenant: TenantContext,
     prompt: str,
 ) -> None:
-    chat = ChatClient(kernel=kernel)
+    chat = SingleStepModelClient(kernel=kernel)
     should_pause = [True]
 
     async def workflow(context: WorkflowContext) -> CommitResult:
         async def extract_action() -> FactExtractionResult:
-            result = await chat.chat(
+            result = await chat.step(
                 run_id=run_id,
                 tenant=tenant,
                 model="triplet-extractor-demo",

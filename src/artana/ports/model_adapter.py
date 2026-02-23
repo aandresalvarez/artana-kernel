@@ -8,6 +8,7 @@ from typing import cast
 from pydantic import BaseModel
 
 from artana.events import ChatMessage
+from artana.json_utils import canonicalize_json_object
 from artana.ports.model_types import (
     LiteLLMCompletionFn,
     ModelPermanentError,
@@ -96,7 +97,7 @@ class LiteLLMAdapter:
         self,
         *,
         model: str,
-        messages_payload: list[dict[str, str]],
+        messages_payload: list[dict[str, object]],
         response_format: type[BaseModel],
         tools_payload: list[dict[str, object]] | None,
     ) -> Mapping[str, object]:
@@ -161,10 +162,35 @@ def _serialize_tools(tools: Sequence[ToolDefinition]) -> list[dict[str, object]]
 
 def _serialize_messages(
     messages: Sequence[ChatMessage], *, fallback_prompt: str
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     if len(messages) == 0:
         return [{"role": "user", "content": fallback_prompt}]
-    return [{"role": message.role, "content": message.content} for message in messages]
+    serialized: list[dict[str, object]] = []
+    for message in messages:
+        payload: dict[str, object] = {"role": message.role, "content": message.content}
+        if message.role == "tool":
+            if message.tool_call_id is None or message.name is None:
+                raise ValueError(
+                    "Tool chat messages require both tool_call_id and name."
+                )
+        if message.tool_call_id is not None:
+            payload["tool_call_id"] = message.tool_call_id
+        if message.name is not None:
+            payload["name"] = message.name
+        if message.tool_calls is not None:
+            payload["tool_calls"] = [
+                {
+                    "id": tool_call.id,
+                    "type": tool_call.type,
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    },
+                }
+                for tool_call in message.tool_calls
+            ]
+        serialized.append(payload)
+    return serialized
 
 
 def _normalize_response(response_obj: object) -> Mapping[str, object]:
@@ -241,13 +267,28 @@ def _extract_tool_calls(response: Mapping[str, object]) -> tuple[ToolCall, ...]:
         function_obj = tool_call_obj.get("function")
         if not isinstance(function_obj, Mapping):
             continue
+        tool_call_id_obj = tool_call_obj.get("id")
         tool_name = function_obj.get("name")
         arguments_json = function_obj.get("arguments")
         if not isinstance(tool_name, str):
             continue
         if not isinstance(arguments_json, str):
             continue
-        parsed.append(ToolCall(tool_name=tool_name, arguments_json=arguments_json))
+        try:
+            canonical_arguments_json = canonicalize_json_object(arguments_json)
+        except Exception as exc:
+            raise ValueError(
+                f"Tool call {tool_name!r} returned malformed arguments JSON."
+            ) from exc
+        parsed.append(
+            ToolCall(
+                tool_name=tool_name,
+                arguments_json=canonical_arguments_json,
+                tool_call_id=tool_call_id_obj
+                if isinstance(tool_call_id_obj, str)
+                else None,
+            )
+        )
 
     return tuple(parsed)
 

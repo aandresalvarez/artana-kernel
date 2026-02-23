@@ -19,6 +19,7 @@ from pydantic import (
     create_model,
 )
 
+from artana.json_utils import canonical_json_dumps, sha256_hex
 from artana.ports.model import ToolDefinition
 
 ToolExecutionOutcome = Literal[
@@ -76,11 +77,18 @@ class RegisteredTool:
     arguments_schema_json: str
     arguments_model: type[BaseModel]
     accepts_artana_context: bool
+    tool_version: str
+    schema_version: str
+    schema_hash: str
 
 
 class ToolPort(Protocol):
     def register(
-        self, function: ToolCallable, requires_capability: str | None = None
+        self,
+        function: ToolCallable,
+        requires_capability: str | None = None,
+        tool_version: str = "1.0.0",
+        schema_version: str = "1",
     ) -> None:
         ...
 
@@ -111,7 +119,11 @@ class LocalToolRegistry:
         self._tools: dict[str, RegisteredTool] = {}
 
     def register(
-        self, function: ToolCallable, requires_capability: str | None = None
+        self,
+        function: ToolCallable,
+        requires_capability: str | None = None,
+        tool_version: str = "1.0.0",
+        schema_version: str = "1",
     ) -> None:
         signature = inspect.signature(function)
         resolved_hints = get_type_hints(function)
@@ -142,15 +154,20 @@ class LocalToolRegistry:
             **model_fields,
         )
         schema = arguments_model.model_json_schema()
+        schema_json = canonical_json_dumps(schema)
+        schema_hash = sha256_hex(schema_json)
         description = inspect.getdoc(function) or ""
         self._tools[function.__name__] = RegisteredTool(
             name=function.__name__,
             requires_capability=requires_capability,
             function=function,
             description=description,
-            arguments_schema_json=json.dumps(schema),
+            arguments_schema_json=schema_json,
             arguments_model=arguments_model,
             accepts_artana_context=accepts_artana_context,
+            tool_version=tool_version,
+            schema_version=schema_version,
+            schema_hash=schema_hash,
         )
 
     def list_for_capabilities(self, capabilities: frozenset[str]) -> list[RegisteredTool]:
@@ -230,6 +247,9 @@ class LocalToolRegistry:
                 name=tool.name,
                 description=tool.description,
                 arguments_schema_json=tool.arguments_schema_json,
+                tool_version=tool.tool_version,
+                schema_version=tool.schema_version,
+                schema_hash=tool.schema_hash,
             )
             for tool in self.list_for_capabilities(capabilities)
         ]
@@ -240,6 +260,9 @@ class LocalToolRegistry:
                 name=tool.name,
                 description=tool.description,
                 arguments_schema_json=tool.arguments_schema_json,
+                tool_version=tool.tool_version,
+                schema_version=tool.schema_version,
+                schema_hash=tool.schema_hash,
             )
             for tool in self._tools.values()
         ]
@@ -267,15 +290,18 @@ def _strictify_annotation(annotation: object) -> object:
     origin = get_origin(annotation)
     if origin is None:
         return annotation
-
-        if origin in (UnionType, Union):
-            raw_args = get_args(annotation)
-            if len(raw_args) == 2 and type(None) in raw_args:
-                non_none = raw_args[0] if raw_args[1] is type(None) else raw_args[1]
-                strict_non_none = _strictify_annotation(non_none)
-                if isinstance(strict_non_none, type):
-                    return strict_non_none | None
-                return annotation
+    if origin is Literal:
         return annotation
+    if origin in (UnionType, Union):
+        raw_args = get_args(annotation)
+        strict_args = tuple(_strictify_annotation(arg) for arg in raw_args)
+        return Union[strict_args]
 
-    return annotation
+    raw_args = get_args(annotation)
+    if not raw_args:
+        return annotation
+    strict_args = tuple(_strictify_annotation(arg) for arg in raw_args)
+    try:
+        return origin[strict_args]
+    except TypeError:
+        return annotation

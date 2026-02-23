@@ -1,0 +1,144 @@
+{
+  "benchmark_name": "Indirect Regulatory Chains Explain Disorder D Better Than Direct Gene Associations",
+  "fact_edges": [
+    [
+      "Aine",
+      "ACTIVATES",
+      "XPK"
+    ],
+    [
+      "BEX-β",
+      "DOWNREGULATES",
+      "XPK"
+    ],
+    [
+      "P-axis",
+      "REGULATES",
+      "YTF"
+    ],
+    [
+      "YTF",
+      "UPREGULATES",
+      "IP signature"
+    ],
+    [
+      "IP signature",
+      "ASSOCIATED_WITH",
+      "Disorder D"
+    ],
+    [
+      "Q-loop",
+      "PART_OF",
+      "Disorder D"
+    ],
+    [
+      "Zmod",
+      "PART_OF",
+      "Q-loop"
+    ],
+    [
+      "Rivor",
+      "INHIBITS",
+      "YTF"
+    ],
+    [
+      "YTF",
+      "REGULATES",
+      "IP signature"
+    ]
+  ],
+  "derived_edges": [
+    [
+      "BEX-β",
+      "DERIVED_DOWNREGULATES",
+      "IP signature"
+    ],
+    [
+      "Rivor",
+      "DERIVED_INHIBITS",
+      "IP signature"
+    ]
+  ],
+  "entities": {
+    "Aine": {
+      "type": "PROTEIN",
+      "aliases": [
+        "ARX-1"
+      ]
+    },
+    "XPK": {
+      "type": "PROTEIN",
+      "aliases": [
+        "the X kinase"
+      ]
+    },
+    "BEX-β": {
+      "type": "PROTEIN",
+      "aliases": [
+        "Bex"
+      ]
+    },
+    "YTF": {
+      "type": "PROTEIN",
+      "aliases": []
+    },
+    "IP signature": {
+      "type": "PROCESS",
+      "aliases": [
+        "inflammatory program"
+      ]
+    },
+    "Zmod": {
+      "type": "PROTEIN",
+      "aliases": []
+    },
+    "Rivor": {
+      "type": "DRUG",
+      "aliases": [
+        "RIV-7"
+      ]
+    },
+    "Q-loop": {
+      "type": "PATHWAY",
+      "aliases": []
+    },
+    "P-axis": {
+      "type": "PATHWAY",
+      "aliases": []
+    },
+    "Disorder D": {
+      "type": "DISEASE",
+      "aliases": [],
+      "note": "A heterogeneous syndrome characterized by episodic inflammation and intermittent metabolic instability."
+    }
+  },
+  "contradicted_edges": [
+    [
+      "Aine",
+      "ASSOCIATED_WITH",
+      "Disorder D"
+    ]
+  ],
+  "hypothesis_only": [
+    [
+      "Aine",
+      "POSSIBLE_ASSOCIATION",
+      "Disorder D"
+    ],
+    [
+      "BEX-β",
+      "POSSIBLE_ASSOCIATION",
+      "Disorder D"
+    ],
+    [
+      "Zmod",
+      "POSSIBLE_ASSOCIATION",
+      "IP signature"
+    ],
+    [
+      "Aine",
+      "POSSIBLE_ASSOCIATION",
+      "Q-loop"
+    ]
+  ]
+}

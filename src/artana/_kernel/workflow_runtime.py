@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from artana._kernel.replay import validate_tenant_for_run
 from artana._kernel.types import PauseTicket, ReplayConsistencyError
+from artana.canonicalization import canonical_json_dumps
 from artana.events import (
     EventType,
     KernelEvent,
@@ -36,7 +37,7 @@ class StepSerde(Generic[StepT]):
 
 def json_step_serde() -> StepSerde[JsonValue]:
     return StepSerde(
-        dump=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
+        dump=lambda value: canonical_json_dumps(value),
         load=lambda raw: _load_json_value(raw),
     )
 

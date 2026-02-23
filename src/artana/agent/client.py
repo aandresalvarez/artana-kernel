@@ -5,7 +5,7 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from artana._kernel.types import StepModelResult
-from artana.kernel import ArtanaKernel, ModelInput
+from artana.kernel import ArtanaKernel, ContextVersion, ModelInput, ReplayPolicy
 from artana.models import TenantContext
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -15,7 +15,7 @@ class KernelModelClient:
     def __init__(self, *, kernel: ArtanaKernel) -> None:
         self._kernel = kernel
 
-    async def chat(
+    async def step(
         self,
         *,
         run_id: str,
@@ -24,6 +24,8 @@ class KernelModelClient:
         prompt: str,
         output_schema: type[OutputT],
         step_key: str | None = None,
+        replay_policy: ReplayPolicy = "strict",
+        context_version: ContextVersion | None = None,
     ) -> StepModelResult[OutputT]:
         try:
             await self._kernel.load_run(run_id=run_id)
@@ -36,10 +38,12 @@ class KernelModelClient:
             input=ModelInput.from_prompt(prompt),
             output_schema=output_schema,
             step_key=step_key,
+            replay_policy=replay_policy,
+            context_version=context_version,
         )
 
 
-ChatClient = KernelModelClient
+SingleStepModelClient = KernelModelClient
 
 
-__all__ = ["ChatClient", "KernelModelClient"]
+__all__ = ["KernelModelClient", "SingleStepModelClient"]

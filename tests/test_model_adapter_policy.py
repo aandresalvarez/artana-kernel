@@ -6,7 +6,7 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
-from artana.events import ChatMessage
+from artana.events import ChatMessage, ToolCallMessage, ToolFunctionCall
 from artana.ports.model import (
     LiteLLMAdapter,
     ModelPermanentError,
@@ -231,3 +231,183 @@ async def test_litellm_adapter_sends_full_message_history() -> None:
             {"role": "assistant", "content": "Need one more input."},
         ]
     ]
+
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_serializes_tool_protocol_messages() -> None:
+    captured_messages: list[list[dict[str, object]]] = []
+
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        captured_messages.append(messages)
+        return {
+            "choices": [{"message": {"content": '{"approved": true, "reason": "ok"}'}}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+            "_response_cost": 0.001,
+        }
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_tool_messages",
+        model="gpt-4o-mini",
+        prompt="ignored",
+        messages=(
+            ChatMessage(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCallMessage(
+                        id="call_abc",
+                        function=ToolFunctionCall(
+                            name="lookup_weather",
+                            arguments='{"city":"NYC"}',
+                        ),
+                    )
+                ],
+            ),
+            ChatMessage(
+                role="tool",
+                content='{"temp_c":21}',
+                tool_call_id="call_abc",
+                name="lookup_weather",
+            ),
+        ),
+        output_schema=Decision,
+        allowed_tools=(),
+    )
+
+    result = await adapter.complete(request)
+    assert result.output.approved is True
+    assert captured_messages == [
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": {
+                            "name": "lookup_weather",
+                            "arguments": '{"city":"NYC"}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "content": '{"temp_c":21}',
+                "tool_call_id": "call_abc",
+                "name": "lookup_weather",
+            },
+        ]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_extracts_tool_call_ids() -> None:
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"approved": false, "reason": "needs tool"}',
+                        "tool_calls": [
+                            {
+                                "id": "call_xyz",
+                                "type": "function",
+                                "function": {
+                                    "name": "lookup_weather",
+                                    "arguments": '{"city":"SF"}',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            "_response_cost": 0.001,
+        }
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_tool_call_id",
+        model="gpt-4o-mini",
+        prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
+        output_schema=Decision,
+        allowed_tools=(),
+    )
+
+    result = await adapter.complete(request)
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].tool_name == "lookup_weather"
+    assert result.tool_calls[0].tool_call_id == "call_xyz"
+
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_raises_on_malformed_tool_call_arguments() -> None:
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"approved": true, "reason": "ok"}',
+                        "tool_calls": [
+                            {
+                                "id": "call_bad",
+                                "type": "function",
+                                "function": {
+                                    "name": "lookup_weather",
+                                    "arguments": '{"city":"SF"',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            "_response_cost": 0.001,
+        }
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_bad_tool_args",
+        model="gpt-4o-mini",
+        prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
+        output_schema=Decision,
+        allowed_tools=(),
+    )
+
+    with pytest.raises(ValueError, match="malformed arguments JSON"):
+        await adapter.complete(request)

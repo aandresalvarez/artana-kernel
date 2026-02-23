@@ -48,3 +48,23 @@ class KernelMiddleware(Protocol):
         self, *, run_id: str, tenant: TenantContext, usage: ModelUsage
     ) -> None:
         ...
+
+    async def prepare_tool_request(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        arguments_json: str,
+    ) -> str:
+        ...
+
+    async def prepare_tool_result(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        result_json: str,
+    ) -> str:
+        ...

@@ -65,6 +65,7 @@ Initial implementation aligned with the Artana Kernel PRD:
 - Core kernel APIs:
   - `start_run` / `load_run` — authoritative run lifecycle
   - `step_model` / `step_tool` — deterministic, atomic execution primitives
+  - replay policy modes on `step_model`: `strict | allow_prompt_drift | fork_on_drift`
   - `reconcile_tool` — resolve `unknown_outcome` tool requests safely
   - `pause` / `resume` — human-in-the-loop durable interrupts
 - **The Agent Runtime:**
@@ -81,6 +82,12 @@ Initial implementation aligned with the Artana Kernel PRD:
 - Tool registration via `@kernel.tool(requires_capability="...")`
 - Middleware stack: `PIIScrubberMiddleware`, `QuotaMiddleware`, `CapabilityGuardMiddleware`
 - Replay-safe two-phase tool execution (protects against double-charging/executing on crash recovery)
+- Tool signature hashing (`name + version + schema hash`) for replay compatibility checks
+- Context version tracking in `model_requested` events (`system_prompt_hash`, context builder, compaction)
+- Agent `run_summary` events for lightweight autonomous observability
+- Kernel `capability_decision` run summaries for per-tool allow/filter reasoning
+- Kernel contracts reference: `docs/kernel_contracts.md`
+- Generated behavior index reference: `docs/kernel_behavior_index.json`
 
 ## Core Guarantees
 
@@ -175,7 +182,7 @@ Use this when you need strict, deterministic pipelines with Human-In-The-Loop pa
 ```python
 async def my_workflow(ctx: WorkflowContext):
     # 1. Atomic LLM call
-    facts = await chat.chat(..., step_key="extract")
+    facts = await model_client.step(..., step_key="extract")
     
     # 2. Deterministic Python logic (cached to DB)
     derived = await ctx.step(name="math", action=run_math, serde=...)
@@ -187,6 +194,39 @@ async def my_workflow(ctx: WorkflowContext):
 
 result = await kernel.run_workflow(run_id="run_1", tenant=tenant, workflow=my_workflow)
 ```
+
+### 3. The Harness SDK (Developer-Friendly Default)
+Use this when you want durable long-running work with minimal kernel plumbing.
+
+```python
+from artana import IncrementalTaskHarness, TaskUnit
+
+class ResearchHarness(IncrementalTaskHarness):
+    async def define_tasks(self) -> list[TaskUnit]:
+        return [
+            TaskUnit(id="collect_data", description="Collect datasets"),
+            TaskUnit(id="analyze", description="Analyze patterns"),
+            TaskUnit(id="write_summary", description="Write final report"),
+        ]
+
+    async def work_on(self, task: TaskUnit) -> None:
+        if task.id == "collect_data":
+            ...
+        elif task.id == "analyze":
+            ...
+        else:
+            ...
+
+harness = ResearchHarness(kernel=kernel, tenant=tenant)
+snapshot = await harness.run(run_id="research_run_01")
+```
+
+What the SDK handles automatically:
+- run creation and wake/sleep lifecycle
+- wake reorientation summaries
+- task progress persistence and one-task-per-session advancement
+- replay-safe model/tool execution helpers (`run_model`, `run_tool`)
+- clean-state validation before sleep
 
 ## Architecture
 
@@ -237,10 +277,24 @@ kernel = ArtanaKernel(
 
 ### Tool Registration
 ```python
+from artana.ports.tool import ToolExecutionContext
+
 @kernel.tool(requires_capability="finance:write")
-async def transfer_funds(account_id: str, amount: str) -> str:
+async def transfer_funds(
+    account_id: str,
+    amount: str,
+    artana_context: ToolExecutionContext,
+) -> str:
+    # For side-effect calls, always forward artana_context.idempotency_key
+    # to the external API (Stripe, SendGrid, etc.) to prevent duplicate effects.
+    idempotency_key = artana_context.idempotency_key
+    _ = idempotency_key
     return "Success"
 ```
+
+For side-effect tools, treating idempotency as optional is unsafe. Always accept
+`artana_context: ToolExecutionContext` and pass `artana_context.idempotency_key`
+to downstream APIs.
 
 ### Autonomous Agent API
 A runtime wrapper over the kernel that manages conversation history, automatic tool execution,

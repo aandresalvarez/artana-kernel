@@ -1,0 +1,315 @@
+{
+  "benchmark_name": "Epigenetic and Signaling Crosstalk in Cardiac Fibrotic Remodeling",
+  "fact_edges": [
+    [
+      "CARDEX-1",
+      "ACTIVATES",
+      "PKN-δ2"
+    ],
+    [
+      "PKN-δ2",
+      "PART_OF",
+      "TGFβ-CAR cascade"
+    ],
+    [
+      "TGFβ-CAR cascade",
+      "ACTIVATES",
+      "SMADL-7"
+    ],
+    [
+      "SMADL-7",
+      "UPREGULATES",
+      "Fibrotic Transcriptional Program"
+    ],
+    [
+      "Fibrotic Transcriptional Program",
+      "ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome"
+    ],
+    [
+      "SILEN-β",
+      "ACTIVATES",
+      "HDAC-9X"
+    ],
+    [
+      "HDAC-9X",
+      "UPREGULATES",
+      "Epigenetic Repression Module"
+    ],
+    [
+      "Epigenetic Repression Module",
+      "INHIBITS",
+      "Fibrotic Transcriptional Program"
+    ],
+    [
+      "FBG-α",
+      "PART_OF",
+      "WNT-FIB loop"
+    ],
+    [
+      "WNT-FIB loop",
+      "ACTIVATES",
+      "Fibrotic Transcriptional Program"
+    ],
+    [
+      "mTOR-MET branch",
+      "REGULATES",
+      "Metabolic Reprogramming Response"
+    ],
+    [
+      "PKD2",
+      "REGULATES",
+      "mTOR-MET branch"
+    ],
+    [
+      "Metabolic Reprogramming Response",
+      "ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome"
+    ],
+    [
+      "Cardivex",
+      "INHIBITS",
+      "SMADL-7"
+    ],
+    [
+      "Cardivex",
+      "INHIBITS",
+      "Fibrotic Transcriptional Program"
+    ],
+    [
+      "Silenor",
+      "ACTIVATES",
+      "HDAC-9X"
+    ],
+    [
+      "Silenor",
+      "UPREGULATES",
+      "Epigenetic Repression Module"
+    ],
+    [
+      "HDAC-9X",
+      "INHIBITS",
+      "Fibrotic Transcriptional Program"
+    ],
+    [
+      "SILEN-β",
+      "INHIBITS",
+      "Fibrotic Transcriptional Program"
+    ]
+  ],
+  "derived_edges": [
+    [
+      "CARDEX-1",
+      "DERIVED_ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome"
+    ],
+    [
+      "CARDEX-1",
+      "DERIVED_REGULATES",
+      "Fibrotic Transcriptional Program"
+    ],
+    [
+      "CARDEX-1",
+      "DERIVED_REGULATES",
+      "TGFβ-CAR cascade"
+    ],
+    [
+      "SILEN-β",
+      "DERIVED_REGULATES",
+      "Epigenetic Repression Module"
+    ],
+    [
+      "Silenor",
+      "DERIVED_DOWNREGULATES",
+      "Fibrotic Transcriptional Program"
+    ],
+    [
+      "Silenor",
+      "DERIVED_REDUCES",
+      "Cardiac fibrotic syndrome"
+    ]
+  ],
+  "entities": {
+    "Cardiac fibrotic syndrome": {
+      "type": "DISEASE",
+      "aliases": [
+        "CFS",
+        "fibrotic cardiomyopathy"
+      ]
+    },
+    "CARDEX-1": {
+      "type": "GENE",
+      "aliases": [
+        "CDX1",
+        "the cardiogenic regulator"
+      ],
+      "note": "Encodes a zinc-finger domain protein expressed predominantly in cardiac tissue."
+    },
+    "PKN-δ2": {
+      "type": "PROTEIN",
+      "aliases": [
+        "PKNd2",
+        "delta-2 kinase"
+      ]
+    },
+    "TGFβ-CAR cascade": {
+      "type": "PATHWAY",
+      "aliases": [
+        "T-CAR axis",
+        "cardiac TGF module"
+      ],
+      "note": "Also referred to as the cardiac TGF module or T-CAR axis; a signaling assembly in cardiogenic signaling."
+    },
+    "SMADL-7": {
+      "type": "PROTEIN",
+      "aliases": [
+        "SL7",
+        "SMAD-like effector 7"
+      ]
+    },
+    "Fibrotic Transcriptional Program": {
+      "type": "PROCESS",
+      "aliases": [
+        "FTP",
+        "fibrotic program",
+        "fibrotic gene module"
+      ],
+      "note": "Coordinate gene expression program linked to fibrotic outcomes and measured in patient cohorts."
+    },
+    "SILEN-β": {
+      "type": "GENE",
+      "aliases": [
+        "SLNβ",
+        "silencing gene beta",
+        "the β-silencer"
+      ],
+      "note": "Highly expressed in cardiac tissue resistant to fibrotic remodeling."
+    },
+    "HDAC-9X": {
+      "type": "PROTEIN",
+      "aliases": [
+        "H9X",
+        "histone modifier 9X"
+      ],
+      "note": "A class II histone deacetylase; catalyzes removal of H3K27 acetyl marks."
+    },
+    "Epigenetic Repression Module": {
+      "type": "PROCESS",
+      "aliases": [
+        "ERM",
+        "chromatin silencing signature",
+        "repression module"
+      ],
+      "note": "Chromatin compaction signature defined by H3K27 deacetylation at FTP loci."
+    },
+    "WNT-FIB loop": {
+      "type": "PATHWAY",
+      "aliases": [
+        "W-F circuit",
+        "Wnt-fibrotic signaling",
+        "canonical WNT-fibrotic loop"
+      ]
+    },
+    "FBG-α": {
+      "type": "PROTEIN",
+      "aliases": [
+        "FBGA",
+        "fibrogenic transcription factor"
+      ],
+      "note": "Acts as a scaffold for β-catenin recruitment within the WNT-FIB loop."
+    },
+    "mTOR-MET branch": {
+      "type": "PATHWAY",
+      "aliases": [
+        "mTOR-MET",
+        "metabolic mTOR module",
+        "M-branch",
+        "metabolic arm"
+      ],
+      "note": "Governs metabolic adaptation in cardiomyocytes; operates largely independently of fibrotic axes."
+    },
+    "PKD2": {
+      "type": "PROTEIN",
+      "aliases": [
+        "polycystin-2"
+      ],
+      "note": "A calcium-permeable channel; modulates mTOR-MET activity in kidney tissue but has no demonstrated role in cardiac mTOR-MET in this study."
+    },
+    "Metabolic Reprogramming Response": {
+      "type": "PROCESS",
+      "aliases": [
+        "MRR",
+        "metabolic shift signature",
+        "reprogramming response"
+      ],
+      "note": "Transcriptional and post-transcriptional program governed by the mTOR-MET branch; includes substrate utilization shifts."
+    },
+    "Cardivex": {
+      "type": "DRUG",
+      "aliases": [
+        "CVX-12",
+        "the antifibrotic agent"
+      ],
+      "note": "Pharmacological inhibitor of SMADL-7 phosphorylation; crystalline binding to SL7 kinase domain reported."
+    },
+    "Silenor": {
+      "type": "DRUG",
+      "aliases": [
+        "SLR-8",
+        "the chromatin modifier"
+      ],
+      "note": "Allosteric activator of HDAC-9X that increases H9X enzymatic activity and upregulates ERM."
+    },
+    "NOTCH-R3": {
+      "type": "PROTEIN",
+      "aliases": [
+        "Notch-R3"
+      ],
+      "note": "Detected in fibrotic cardiac tissue but shown to be a bystander with no consistent effects on FTP, ERM, or CFS phenotypes in this study."
+    }
+  },
+  "contradicted_edges": [
+    [
+      "CARDEX-1",
+      "ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome"
+    ],
+    [
+      "HDAC-9X",
+      "UPREGULATES",
+      "Fibrotic Transcriptional Program"
+    ],
+    [
+      "PKN-δ2",
+      "REGULATES",
+      "mTOR-MET branch"
+    ],
+    [
+      "NOTCH-R3",
+      "ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome"
+    ],
+    [
+      "NOTCH-R3",
+      "REGULATES",
+      "Fibrotic Transcriptional Program"
+    ],
+    [
+      "NOTCH-R3",
+      "REGULATES",
+      "Epigenetic Repression Module"
+    ]
+  ],
+  "hypothesis_only": [
+    [
+      "FBG-α",
+      "POSSIBLE_ASSOCIATION",
+      "Epigenetic Repression Module"
+    ],
+    [
+      "mTOR-MET branch",
+      "POSSIBLE_ASSOCIATION",
+      "Fibrotic Transcriptional Program"
+    ]
+  ]
+}

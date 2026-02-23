@@ -43,6 +43,26 @@ class QuotaMiddleware:
                 f"limit={tenant.budget_usd_limit:.6f}, spent={spent_after:.6f}"
             )
 
+    async def prepare_tool_request(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        arguments_json: str,
+    ) -> str:
+        return arguments_json
+
+    async def prepare_tool_result(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        result_json: str,
+    ) -> str:
+        return result_json
+
     async def _load_spent_for_run(self, *, run_id: str) -> float:
         if self._store is None:
             return self._spent_usd_by_run.get(run_id, 0.0)

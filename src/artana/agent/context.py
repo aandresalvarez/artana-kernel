@@ -10,6 +10,8 @@ from artana.models import TenantContext
 
 
 class ContextBuilder(ABC):
+    VERSION = "context_builder.v1"
+
     def __init__(
         self,
         *,
@@ -24,6 +26,10 @@ class ContextBuilder(ABC):
         self.experience_store = experience_store
         self.task_category = task_category
         self.progressive_skills = progressive_skills
+
+    @property
+    def version(self) -> str:
+        return self.VERSION
 
     async def build_messages(
         self,
@@ -60,15 +66,22 @@ class ContextBuilder(ABC):
         available_skill_summaries: Mapping[str, str] | None,
     ) -> str:
         loaded = ", ".join(sorted(active_skills)) or "(none)"
+        available_names = (
+            ", ".join(sorted(available_skill_summaries.keys()))
+            if available_skill_summaries
+            else ""
+        )
+        available_block = f"Available tools: [{available_names}]"
         if available_skill_summaries:
-            available = ", ".join(
+            summaries = ", ".join(
                 f"{name}: {summary}"
                 for name, summary in sorted(available_skill_summaries.items())
             )
         else:
-            available = "(none)"
+            summaries = "(none)"
         return (
-            f"Available Skills: {available}\n"
+            f"{available_block}\n"
+            f"Tool summaries: {summaries}\n"
             f"Loaded Skills: {loaded}\n"
             "Call load_skill(skill_name=\"<name>\") when you need full "
             "tool arguments and constraints."

@@ -1,0 +1,157 @@
+{
+  "benchmark_name": "Synthetic Test Article: Regulatory Cascades Linking GENE_A to Inflammatory Disease Pathophysiology",
+  "fact_edges": [
+    [
+      "GENE_A",
+      "ACTIVATES",
+      "PROTEIN_X"
+    ],
+    [
+      "PROTEIN_X",
+      "PART_OF",
+      "PATHWAY_P"
+    ],
+    [
+      "PATHWAY_P",
+      "ACTIVATES",
+      "PROTEIN_Y"
+    ],
+    [
+      "PROTEIN_Y",
+      "UPREGULATES",
+      "INFLAMMATORY_RESPONSE"
+    ],
+    [
+      "INFLAMMATORY_RESPONSE",
+      "ASSOCIATED_WITH",
+      "DISEASE_D"
+    ],
+    [
+      "GENE_B",
+      "INHIBITS",
+      "PROTEIN_X"
+    ],
+    [
+      "PROTEIN_Z",
+      "PART_OF",
+      "PATHWAY_Q"
+    ],
+    [
+      "PATHWAY_Q",
+      "REGULATES",
+      "METABOLIC_STRESS"
+    ],
+    [
+      "METABOLIC_STRESS",
+      "ASSOCIATED_WITH",
+      "DISEASE_D"
+    ],
+    [
+      "DRUG_R",
+      "INHIBITS",
+      "PROTEIN_Y"
+    ],
+    [
+      "DRUG_R",
+      "DOWNREGULATES",
+      "INFLAMMATORY_RESPONSE"
+    ]
+  ],
+  "derived_edges": [
+    [
+      "GENE_A",
+      "DERIVED_REGULATES",
+      "INFLAMMATORY_RESPONSE"
+    ],
+    [
+      "GENE_B",
+      "DERIVED_DOWNREGULATES",
+      "INFLAMMATORY_RESPONSE"
+    ]
+  ],
+  "entities": {
+    "GENE_A": {
+      "type": "GENE",
+      "aliases": [],
+      "note": "Upstream regulator discussed in inflammatory contexts."
+    },
+    "PROTEIN_X": {
+      "type": "PROTEIN",
+      "aliases": [],
+      "note": "Activated downstream of GENE_A; component of PATHWAY_P."
+    },
+    "PATHWAY_P": {
+      "type": "PATHWAY",
+      "aliases": [],
+      "note": "Immune regulation pathway containing PROTEIN_X; activates PROTEIN_Y."
+    },
+    "PROTEIN_Y": {
+      "type": "PROTEIN",
+      "aliases": [],
+      "note": "Downstream target of PATHWAY_P; modulates inflammatory transcriptional program."
+    },
+    "INFLAMMATORY_RESPONSE": {
+      "type": "PROCESS",
+      "aliases": [
+        "INFLAMMATORY_RESPONSE gene program"
+      ],
+      "note": "Inflammatory mediator transcriptional program."
+    },
+    "DISEASE_D": {
+      "type": "DISEASE",
+      "aliases": [],
+      "note": "Disease whose severity/progression is associated with inflammatory and metabolic stress signals."
+    },
+    "GENE_B": {
+      "type": "GENE",
+      "aliases": [],
+      "note": "Functional antagonist of PROTEIN_X."
+    },
+    "PROTEIN_Z": {
+      "type": "PROTEIN",
+      "aliases": [],
+      "note": "Core component of PATHWAY_Q; speculated to influence inflammatory signaling."
+    },
+    "PATHWAY_Q": {
+      "type": "PATHWAY",
+      "aliases": [],
+      "note": "Metabolic adaptation pathway regulating metabolic stress responses."
+    },
+    "METABOLIC_STRESS": {
+      "type": "PROCESS",
+      "aliases": [
+        "METABOLIC_STRESS responses"
+      ],
+      "note": "Cellular metabolic stress response under hypoxia; correlated with DISEASE_D progression."
+    },
+    "DRUG_R": {
+      "type": "DRUG",
+      "aliases": [],
+      "note": "Selectively inhibits PROTEIN_Y; reduces inflammatory transcription and signaling."
+    },
+    "GENE_C": {
+      "type": "GENE",
+      "aliases": [],
+      "note": "Proposed transcriptional regulator with limited evidence for involvement with PATHWAY_P."
+    }
+  },
+  "contradicted_edges": [
+    [
+      "GENE_A",
+      "ASSOCIATED_WITH",
+      "DISEASE_D"
+    ]
+  ],
+  "hypothesis_only": [
+    [
+      "GENE_C",
+      "POSSIBLE_ASSOCIATION",
+      "PATHWAY_P"
+    ],
+    [
+      "PROTEIN_Z",
+      "POSSIBLE_ASSOCIATION",
+      "INFLAMMATORY_RESPONSE"
+    ]
+  ]
+}

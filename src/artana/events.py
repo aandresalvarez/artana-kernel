@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from artana.canonicalization import canonical_json_dumps
 
 
 class EventType(StrEnum):
@@ -14,9 +15,11 @@ class EventType(StrEnum):
     RESUME_REQUESTED = "resume_requested"
     MODEL_REQUESTED = "model_requested"
     MODEL_COMPLETED = "model_completed"
+    REPLAYED_WITH_DRIFT = "replayed_with_drift"
     TOOL_REQUESTED = "tool_requested"
     TOOL_COMPLETED = "tool_completed"
     PAUSE_REQUESTED = "pause_requested"
+    RUN_SUMMARY = "run_summary"
     WORKFLOW_STEP_REQUESTED = "workflow_step_requested"
     WORKFLOW_STEP_COMPLETED = "workflow_step_completed"
 
@@ -28,6 +31,33 @@ def utc_now() -> datetime:
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
+    tool_call_id: str | None = None
+    name: str | None = None
+    tool_calls: list["ToolCallMessage"] | None = None
+
+
+class ToolFunctionCall(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCallMessage(BaseModel):
+    id: str
+    type: Literal["function"] = "function"
+    function: ToolFunctionCall
+
+
+class ToolSignatureRecord(BaseModel):
+    name: str
+    tool_version: str
+    schema_version: str
+    schema_hash: str
+
+
+class ContextVersionRecord(BaseModel):
+    system_prompt_hash: str | None = None
+    context_builder_version: str | None = None
+    compaction_version: str | None = None
 
 
 class ModelRequestedPayload(BaseModel):
@@ -36,13 +66,16 @@ class ModelRequestedPayload(BaseModel):
     prompt: str
     messages: list[ChatMessage]
     allowed_tools: list[str] = Field(default_factory=list)
+    allowed_tool_signatures: list[ToolSignatureRecord] = Field(default_factory=list)
     allowed_tools_hash: str | None = None
     step_key: str | None = None
+    context_version: ContextVersionRecord | None = None
 
 
 class ToolCallRecord(BaseModel):
     tool_name: str
     arguments_json: str
+    tool_call_id: str | None = None
 
 
 class ModelCompletedPayload(BaseModel):
@@ -53,6 +86,17 @@ class ModelCompletedPayload(BaseModel):
     completion_tokens: int = Field(ge=0)
     cost_usd: float = Field(ge=0.0)
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
+
+
+class ReplayedWithDriftPayload(BaseModel):
+    kind: Literal["replayed_with_drift"] = "replayed_with_drift"
+    step_key: str | None = None
+    model: str
+    drift_fields: list[str] = Field(default_factory=list)
+    source_model_requested_event_id: str
+    source_model_completed_seq: int | None = None
+    replay_policy: Literal["allow_prompt_drift", "fork_on_drift"]
+    fork_run_id: str | None = None
 
 
 class ToolRequestedPayload(BaseModel):
@@ -88,6 +132,13 @@ class PauseRequestedPayload(BaseModel):
     step_key: str | None = None
 
 
+class RunSummaryPayload(BaseModel):
+    kind: Literal["run_summary"] = "run_summary"
+    summary_type: str
+    summary_json: str
+    step_key: str | None = None
+
+
 class RunStartedPayload(BaseModel):
     kind: Literal["run_started"] = "run_started"
 
@@ -113,12 +164,13 @@ class WorkflowStepCompletedPayload(BaseModel):
 EventPayload = (
     RunStartedPayload
     | ResumeRequestedPayload
-    |
-    ModelRequestedPayload
+    | ModelRequestedPayload
     | ModelCompletedPayload
+    | ReplayedWithDriftPayload
     | ToolRequestedPayload
     | ToolCompletedPayload
     | PauseRequestedPayload
+    | RunSummaryPayload
     | WorkflowStepRequestedPayload
     | WorkflowStepCompletedPayload
 )
@@ -169,7 +221,31 @@ def payload_to_canonical_json(payload: EventPayload) -> str:
         and payload_dict.get("allowed_tools_hash") is None
     ):
         payload_dict.pop("allowed_tools_hash", None)
-    return json.dumps(payload_dict, sort_keys=True, separators=(",", ":"))
+    if payload_dict.get("kind") == "model_requested":
+        if payload_dict.get("allowed_tool_signatures") == []:
+            payload_dict.pop("allowed_tool_signatures", None)
+        if payload_dict.get("context_version") is None:
+            payload_dict.pop("context_version", None)
+        messages = payload_dict.get("messages")
+        if isinstance(messages, list):
+            for message in messages:
+                if not isinstance(message, dict):
+                    continue
+                if message.get("tool_call_id") is None:
+                    message.pop("tool_call_id", None)
+                if message.get("name") is None:
+                    message.pop("name", None)
+                if message.get("tool_calls") is None:
+                    message.pop("tool_calls", None)
+    if payload_dict.get("kind") == "model_completed":
+        tool_calls = payload_dict.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                if tool_call.get("tool_call_id") is None:
+                    tool_call.pop("tool_call_id", None)
+    return canonical_json_dumps(payload_dict)
 
 
 def compute_allowed_tools_hash(tool_names: list[str]) -> str:

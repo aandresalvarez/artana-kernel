@@ -1,0 +1,148 @@
+{
+  "benchmark_name": "Epigenetic and Signaling Crosstalk in Cardiac Fibrotic Remodeling",
+  "fact_edges": [
+    [
+      "CARDEX-1",
+      "ACTIVATES",
+      "PKN-δ2"
+    ],
+    [
+      "SMADL-7",
+      "UPREGULATES",
+      "FTP"
+    ],
+    [
+      "TGFβ-CAR",
+      "PART_OF",
+      "SMADL-7"
+    ],
+    [
+      "SILEN-β",
+      "ACTIVATES",
+      "HDAC-9X"
+    ],
+    [
+      "HDAC-9X",
+      "INHIBITS",
+      "FTP"
+    ],
+    [
+      "WNT-FIB",
+      "PART_OF",
+      "FTP"
+    ],
+    [
+      "FBG-α",
+      "ASSOCIATED_WITH",
+      "WNT-FIB"
+    ],
+    [
+      "mTOR-MET",
+      "REGULATES",
+      "MRR"
+    ]
+  ],
+  "derived_edges": [
+    [
+      "SILEN-β",
+      "DERIVED_DOWNREGULATES",
+      "FTP"
+    ],
+    [
+      "SILEN-β",
+      "DERIVED_INHIBITS",
+      "FTP"
+    ]
+  ],
+  "entities": {
+    "Cardiac fibrotic syndrome": {
+      "type": "DISEASE",
+      "aliases": [
+        "CFS",
+        "fibrotic cardiomyopathy"
+      ]
+    },
+    "CARDEX-1": {
+      "type": "GENE",
+      "aliases": [
+        "CDX1",
+        "the cardiogenic regulator"
+      ]
+    },
+    "PKN-δ2": {
+      "type": "PROTEIN",
+      "aliases": [
+        "PKNd2"
+      ]
+    },
+    "SMADL-7": {
+      "type": "PROTEIN",
+      "aliases": [
+        "SL7"
+      ]
+    },
+    "FTP": {
+      "type": "PROCESS",
+      "aliases": [
+        "Fibrotic Transcriptional Program",
+        "fibrotic gene module",
+        "fibrotic program"
+      ]
+    },
+    "SILEN-β": {
+      "type": "GENE",
+      "aliases": [
+        "SLNβ",
+        "silencing gene beta",
+        "the β-silencer"
+      ]
+    },
+    "HDAC-9X": {
+      "type": "PROTEIN",
+      "aliases": [
+        "H9X",
+        "histone modifier 9X"
+      ]
+    },
+    "FBG-α": {
+      "type": "PROTEIN",
+      "aliases": [
+        "FBGA"
+      ]
+    }
+  },
+  "contradicted_edges": [
+    [
+      "CARDEX-1",
+      "ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome"
+    ],
+    [
+      "HDAC-9X",
+      "UPREGULATES",
+      "FTP"
+    ],
+    [
+      "NOTCH-R3",
+      "ASSOCIATED_WITH",
+      "Cardiac fibrotic syndrome"
+    ]
+  ],
+  "hypothesis_only": [
+    [
+      "FBG-α",
+      "POSSIBLE_ASSOCIATION",
+      "ERM"
+    ],
+    [
+      "PKN-δ2",
+      "POSSIBLE_ASSOCIATION",
+      "MRR"
+    ],
+    [
+      "mTOR-MET",
+      "POSSIBLE_ASSOCIATION",
+      "FTP"
+    ]
+  ]
+}
