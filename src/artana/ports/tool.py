@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from enum import Enum
 from types import UnionType
-from typing import Any, Literal, Protocol, Union, cast, get_args, get_origin, get_type_hints
+from typing import Any, Literal, Protocol, Union, get_args, get_origin, get_type_hints
 
 from pydantic import (
     BaseModel,
@@ -113,6 +113,7 @@ class LocalToolRegistry:
     ) -> None:
         signature = inspect.signature(function)
         resolved_hints = get_type_hints(function)
+        # Pydantic `create_model` typing requires `Any` for dynamic field kwargs.
         model_fields: dict[str, Any] = {}
         accepts_artana_context = False
         for parameter in signature.parameters.values():
@@ -265,11 +266,14 @@ def _strictify_annotation(annotation: object) -> object:
     if origin is None:
         return annotation
 
-    if origin in (UnionType, Union):
-        raw_args = get_args(annotation)
-        if len(raw_args) == 2 and type(None) in raw_args:
-            non_none = raw_args[0] if raw_args[1] is type(None) else raw_args[1]
-            return cast(Any, _strictify_annotation(non_none)) | None
+        if origin in (UnionType, Union):
+            raw_args = get_args(annotation)
+            if len(raw_args) == 2 and type(None) in raw_args:
+                non_none = raw_args[0] if raw_args[1] is type(None) else raw_args[1]
+                strict_non_none = _strictify_annotation(non_none)
+                if isinstance(strict_non_none, type):
+                    return strict_non_none | None
+                return annotation
         return annotation
 
     return annotation

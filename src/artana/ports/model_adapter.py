@@ -69,6 +69,14 @@ class LiteLLMAdapter:
         )
 
         raw_output = _extract_output_json(response_dict)
+        tool_calls = _extract_tool_calls(response_dict)
+        if raw_output is None:
+            if not tool_calls:
+                raise ValueError(
+                    "Could not extract structured output from LiteLLM response."
+                )
+            raw_output = "{}"
+
         output = request.output_schema.model_validate_json(raw_output)
         usage = _extract_usage(response_dict)
         if self._fail_on_unknown_cost and _has_tokens(usage) and usage.cost_usd <= 0.0:
@@ -76,7 +84,6 @@ class LiteLLMAdapter:
                 "LiteLLM response cost is unknown for a tokenized response. "
                 "Configure model pricing or disable fail_on_unknown_cost."
             )
-        tool_calls = _extract_tool_calls(response_dict)
 
         return ModelResult(
             output=output,
@@ -169,7 +176,7 @@ def _normalize_response(response_obj: object) -> Mapping[str, object]:
     raise TypeError(f"Unsupported LiteLLM response object: {type(response_obj)!r}.")
 
 
-def _extract_output_json(response: Mapping[str, object]) -> str:
+def _extract_output_json(response: Mapping[str, object]) -> str | None:
     choice = _first_choice(response)
     message_obj = choice.get("message")
     if not isinstance(message_obj, Mapping):
@@ -191,7 +198,7 @@ def _extract_output_json(response: Mapping[str, object]) -> str:
                 if isinstance(text_obj, str):
                     return text_obj
 
-    raise ValueError("Could not extract structured output from LiteLLM response.")
+    return None
 
 
 def _extract_usage(response: Mapping[str, object]) -> ModelUsage:

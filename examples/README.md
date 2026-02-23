@@ -81,3 +81,17 @@ Run:
 ```bash
 uv run python examples/05_hard_triplets_workflow.py
 ```
+
+## 06 - Triplets Swarm (Sub-Agent Runtime)
+
+Demonstrates the sub-agent runtime pattern:
+- lead model orchestrates extractor and adjudicator sub-agents
+- deterministic `run_graph_math` Python tool for inferred relations
+- capability-scoped execution with durable replay
+
+Run:
+
+```bash
+set -a; source .env; set +a
+uv run python examples/06_triplets_swarm.py
+```

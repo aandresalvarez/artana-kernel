@@ -1,4 +1,12 @@
-from artana.agent import AutonomousAgent, ChatClient, KernelModelClient
+from artana.agent import (
+    AutonomousAgent,
+    ChatClient,
+    CompactionStrategy,
+    ContextBuilder,
+    KernelModelClient,
+    SubAgentFactory,
+)
+from artana.agent.memory import InMemoryMemoryStore, MemoryStore, SQLiteMemoryStore
 from artana.agent_runtime import AgentRuntime, AgentRuntimeResult, AgentRuntimeState
 from artana.kernel import (
     ArtanaKernel,
@@ -27,8 +35,14 @@ __all__ = [
     "AgentRuntimeState",
     "ChatClient",
     "KernelModelClient",
+    "CompactionStrategy",
+    "ContextBuilder",
     "JsonValue",
     "KernelPolicy",
+    "MemoryStore",
+    "SubAgentFactory",
+    "InMemoryMemoryStore",
+    "SQLiteMemoryStore",
     "ModelInput",
     "PauseTicket",
     "RunHandle",

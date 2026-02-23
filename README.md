@@ -57,7 +57,7 @@ Artana is the safety and durability layer your AI agent should run on. It comple
 
 Initial implementation aligned with the Artana Kernel PRD:
 
-- Strictly typed kernel and event models (`mypy --strict`, no `Any`)
+- Strictly typed kernel and event models (`mypy --strict`)
 - Event-sourced SQLite store (`SQLiteStore`) with hash-chained cryptographic ledgers
 - Ports for model and tools:
   - `LiteLLMAdapter` (implements `ModelPort`)
@@ -69,6 +69,11 @@ Initial implementation aligned with the Artana Kernel PRD:
   - `pause` / `resume` — human-in-the-loop durable interrupts
 - **The Agent Runtime:**
   - `AutonomousAgent` — An out-of-the-box `Model -> Tool -> Model` loop that automatically executes tools and manages conversation memory on top of the Kernel.
+  - `CompactionStrategy` — proactive context compaction (message-count and token-threshold triggers) with replay-safe summaries.
+  - `ContextBuilder` — pluggable prompt assembly pipeline (identity + long-term memory + progressive skills + short-term history).
+  - Progressive skill disclosure via built-in `load_skill(...)` meta-tool.
+  - Built-in long-term memory tools: `core_memory_append`, `core_memory_replace`, `core_memory_search`.
+  - `SubAgentFactory` — sub-agent delegation with run lineage (`parent::sub_agent::idempotency_key`) and shared tenant governance.
 - **The Workflow Runtime:**
   - `run_workflow` — Durable workflow with `WorkflowContext`, deterministic Python logic execution (`ctx.step`), and `ctx.pause`.
 - Tool registration via `@kernel.tool(requires_capability="...")`
@@ -126,6 +131,33 @@ report = await agent.run(
     model="gpt-4o",
     prompt="Find the CEO of Acme Corp.",
     output_schema=CompanyReport
+)
+```
+
+For long-running agents, configure the runtime explicitly:
+
+```python
+from artana import (
+    AutonomousAgent,
+    CompactionStrategy,
+    ContextBuilder,
+    SQLiteMemoryStore,
+)
+
+memory_store = SQLiteMemoryStore("agent_memory.db")
+context_builder = ContextBuilder(
+    identity="You are a senior data analyst.",
+    memory_store=memory_store,
+    progressive_skills=True,
+)
+agent = AutonomousAgent(
+    kernel=kernel,
+    context_builder=context_builder,
+    compaction=CompactionStrategy(
+        trigger_at_messages=40,
+        keep_recent_messages=10,
+        summarize_with_model="gpt-4o-mini",
+    ),
 )
 ```
 
@@ -203,11 +235,20 @@ async def transfer_funds(account_id: str, amount: str) -> str:
 ```
 
 ### Autonomous Agent API
-A lightweight wrapper over the kernel that manages conversation history and automatic tool execution.
+A runtime wrapper over the kernel that manages conversation history, automatic tool execution,
+context compaction, long-term memory, and progressive skill disclosure.
 ```python
-from artana.agent import AutonomousAgent
+from artana.agent import AutonomousAgent, CompactionStrategy, ContextBuilder
+from artana.agent.memory import SQLiteMemoryStore
 
-agent = AutonomousAgent(kernel=kernel)
+memory_store = SQLiteMemoryStore("agent_memory.db")
+context_builder = ContextBuilder(memory_store=memory_store, progressive_skills=True)
+
+agent = AutonomousAgent(
+    kernel=kernel,
+    context_builder=context_builder,
+    compaction=CompactionStrategy(trigger_at_messages=40, keep_recent_messages=10),
+)
 result = await agent.run(
     run_id="run_123",
     tenant=tenant,
@@ -216,6 +257,22 @@ result = await agent.run(
     prompt="Do the task.",
     output_schema=FinalDecision,
     max_iterations=15
+)
+```
+
+### Sub-Agent Delegation API
+Create tools that run specialized child agents with inherited governance and durable lineage.
+```python
+from artana.agent import SubAgentFactory
+
+factory = SubAgentFactory(kernel=kernel, tenant=tenant)
+
+factory.create(
+    name="run_researcher",
+    output_schema=ResearchResult,
+    model="gpt-4o-mini",
+    system_prompt="You are a specialized researcher.",
+    requires_capability="spawn_researcher",
 )
 ```
 
@@ -263,11 +320,12 @@ Run examples from the repository root:
 - **`03_fact_extraction_triplets.py`**: Single-step structured extraction.
 - **`04_autonomous_agent_research.py`**: Demonstrates the `AutonomousAgent` loop dynamically selecting tools to accomplish a goal.
 - **`05_hard_triplets_workflow.py`**: Demonstrates the strict `run_workflow` pattern interleaving LLM calls, deterministic Python math, and a durable Human-In-The-Loop pause.
+- **`06_triplets_swarm.py`**: Demonstrates multi-agent orchestration (lead agent + extractor/adjudicator sub-agents + deterministic graph math tool) on the shared Kernel ledger.
 - **`golden_example.py`**: Canonical production-leaning example testing unknown tool outcomes and reconciliation.
 
 ## Growth Path
 
-- **Phase 1 (MVP - Current):** SQLite, single worker, strict replay semantics, Autonomous Agent loop, Workflow contexts.
+- **Phase 1 (MVP - Current):** SQLite, single worker, strict replay semantics, Autonomous Agent runtime (compaction/memory/progressive skills/sub-agents), Workflow contexts.
 - **Phase 2:** Postgres backend (for multi-worker concurrency), Snapshotting, Advanced Observability (Logfire tracing decorators).
 - **Phase 3:** Optional integration with Temporal, distributed execution model, enterprise policy engines (OPA).
  
