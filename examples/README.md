@@ -28,6 +28,18 @@ set -a; source .env; set +a
 uv run python examples/02_real_litellm_chat.py
 ```
 
+## 03 - Fact Extraction (Triplets)
+
+Single-step fact extraction from articles as subject–predicate–object triplets.
+Uses one model call with structured output (`ExtractedFacts` / `Triplet`).
+
+Run:
+
+```bash
+set -a; source .env; set +a
+uv run python examples/03_fact_extraction_triplets.py
+```
+
 ## Golden Example
 
 Canonical production-leaning example with:

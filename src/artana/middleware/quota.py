@@ -4,7 +4,7 @@ from artana.events import EventType
 from artana.middleware.base import BudgetExceededError, ModelInvocation
 from artana.models import TenantContext
 from artana.ports.model import ModelUsage
-from artana.store.base import EventStore
+from artana.store.base import EventStore, SupportsModelCostAggregation
 
 
 class QuotaMiddleware:
@@ -51,6 +51,9 @@ class QuotaMiddleware:
     async def _load_spent_from_store(self, *, run_id: str) -> float:
         if self._store is None:
             raise RuntimeError("QuotaMiddleware store is not configured.")
+
+        if isinstance(self._store, SupportsModelCostAggregation):
+            return await self._store.get_model_cost_sum_for_run(run_id)
 
         events = await self._store.get_events_for_run(run_id)
         spent = 0.0

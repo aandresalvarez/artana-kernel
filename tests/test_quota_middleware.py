@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from artana import ChatClient
+from artana.events import EventPayload, EventType, KernelEvent
 from artana.kernel import ArtanaKernel
 from artana.middleware import BudgetExceededError, QuotaMiddleware
 from artana.models import TenantContext
@@ -35,6 +36,39 @@ class CostModelPort:
             output=output,
             usage=ModelUsage(prompt_tokens=10, completion_tokens=5, cost_usd=self._cost_usd),
         )
+
+
+class AggregateOnlyStore:
+    def __init__(self, spent_usd: float) -> None:
+        self._spent_usd = spent_usd
+        self.aggregate_calls = 0
+        self.events_calls = 0
+
+    async def append_event(
+        self,
+        *,
+        run_id: str,
+        tenant_id: str,
+        event_type: EventType,
+        payload: EventPayload,
+    ) -> KernelEvent:
+        raise NotImplementedError
+
+    async def get_events_for_run(self, run_id: str) -> list[KernelEvent]:
+        self.events_calls += 1
+        raise AssertionError(
+            "QuotaMiddleware should not scan full event history when aggregate API exists."
+        )
+
+    async def verify_run_chain(self, run_id: str) -> bool:
+        return True
+
+    async def close(self) -> None:
+        return None
+
+    async def get_model_cost_sum_for_run(self, run_id: str) -> float:
+        self.aggregate_calls += 1
+        return self._spent_usd
 
 
 @pytest.mark.asyncio
@@ -140,3 +174,28 @@ async def test_quota_blocks_before_model_when_budget_already_exhausted(tmp_path:
         assert retry_model.calls == 0
     finally:
         await second_kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_quota_uses_aggregate_store_cost_api_when_available() -> None:
+    store = AggregateOnlyStore(spent_usd=0.09)
+    quota = QuotaMiddleware(store=store)
+    allowed_tenant = TenantContext(
+        tenant_id="org_agg_ok",
+        capabilities=frozenset(),
+        budget_usd_limit=0.10,
+    )
+    blocked_tenant = TenantContext(
+        tenant_id="org_agg_block",
+        capabilities=frozenset(),
+        budget_usd_limit=0.09,
+    )
+
+    await quota.before_model(run_id="run_aggregate", tenant=allowed_tenant)
+    assert store.aggregate_calls == 1
+    assert store.events_calls == 0
+
+    with pytest.raises(BudgetExceededError):
+        await quota.before_model(run_id="run_aggregate", tenant=blocked_tenant)
+    assert store.aggregate_calls == 2
+    assert store.events_calls == 0

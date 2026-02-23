@@ -266,6 +266,262 @@ step = await kernel.step_model(
 decision = step.output
 ```
 
+## Detailed API Reference (Latest)
+
+This section documents the current API surface (no backwards-compatibility aliases).
+
+### Imports
+
+```python
+from pydantic import BaseModel
+
+from artana import (
+    ArtanaKernel,
+    ChatClient,
+    KernelPolicy,
+    ModelInput,
+    TenantContext,
+    WorkflowContext,
+    json_step_serde,
+    pydantic_step_serde,
+)
+from artana.kernel import CapabilityDeniedError, ReplayConsistencyError, ToolExecutionFailedError
+from artana.ports.model import LiteLLMAdapter
+from artana.store import SQLiteStore
+```
+
+### Core Data Types
+
+```python
+TenantContext(
+    tenant_id: str,
+    capabilities: frozenset[str] = frozenset(),
+    budget_usd_limit: float,  # > 0.0
+)
+
+KernelPolicy(mode: Literal["permissive", "enforced"] = "permissive")
+KernelPolicy.enforced() -> KernelPolicy
+
+ModelInput.from_prompt(prompt: str) -> ModelInput
+ModelInput.from_messages(messages: Sequence[ChatMessage], *, prompt: str | None = None) -> ModelInput
+```
+
+`StepModelResult` fields:
+- `run_id: str`
+- `seq: int`
+- `output: BaseModel`
+- `usage: ModelUsage`
+- `tool_calls: tuple[ToolCall, ...]`
+- `replayed: bool`
+
+`StepToolResult` fields:
+- `run_id: str`
+- `seq: int`
+- `tool_name: str`
+- `result_json: str`
+- `replayed: bool`
+
+`PauseTicket` fields:
+- `run_id: str`
+- `ticket_id: str`
+- `seq: int`
+- `reason: str`
+
+### ArtanaKernel
+
+Constructor:
+
+```python
+ArtanaKernel(
+    *,
+    store: EventStore,
+    model_port: ModelPort,
+    tool_port: ToolPort | None = None,
+    middleware: Sequence[KernelMiddleware] | None = None,
+    policy: KernelPolicy | None = None,
+)
+```
+
+Recommended deterministic middleware setup:
+
+```python
+ArtanaKernel.default_middleware_stack(
+    *,
+    pii: bool = True,
+    quota: bool = True,
+    capabilities: bool = True,
+) -> tuple[KernelMiddleware, ...]
+```
+
+Lifecycle:
+
+```python
+await kernel.start_run(*, tenant: TenantContext, run_id: str | None = None) -> RunRef
+await kernel.load_run(*, run_id: str) -> RunRef
+await kernel.close() -> None
+```
+
+Model step:
+
+```python
+await kernel.step_model(
+    *,
+    run_id: str,
+    tenant: TenantContext,
+    model: str,
+    input: ModelInput,
+    output_schema: type[OutputT],
+    step_key: str | None = None,
+) -> StepModelResult[OutputT]
+```
+
+Notes:
+- If a matching model cycle already exists for `(run_id, step_key, request shape)`, result is replayed with `replayed=True`.
+- If no match exists, kernel appends `model_requested` then `model_completed`.
+
+Tool registration and execution:
+
+```python
+@kernel.tool(requires_capability: str | None = None)
+async def my_tool(...) -> str | ToolExecutionResult:
+    ...
+
+await kernel.step_tool(
+    *,
+    run_id: str,
+    tenant: TenantContext,
+    tool_name: str,
+    arguments: BaseModel,
+    step_key: str | None = None,
+) -> StepToolResult
+
+await kernel.reconcile_tool(
+    *,
+    run_id: str,
+    tenant: TenantContext,
+    tool_name: str,
+    arguments: BaseModel,
+    step_key: str | None = None,
+) -> str
+```
+
+Notes:
+- Tool execution is two-phase: `tool_requested` is appended before call, `tool_completed` after call.
+- Unknown outcomes are fail-closed (`ToolExecutionFailedError`) and must be reconciled via `reconcile_tool(...)`.
+- Stable `step_key` values are recommended for deterministic replay over time.
+
+Human-in-the-loop boundaries:
+
+```python
+await kernel.pause(
+    *,
+    run_id: str,
+    tenant: TenantContext,
+    reason: str,
+    context: BaseModel | None = None,
+    step_key: str | None = None,
+) -> PauseTicket
+
+await kernel.resume(
+    *,
+    run_id: str,
+    tenant: TenantContext,
+    human_input: BaseModel | None = None,
+) -> RunRef
+```
+
+Workflow runtime:
+
+```python
+await kernel.run_workflow(
+    *,
+    run_id: str | None,
+    tenant: TenantContext,
+    workflow: Callable[[WorkflowContext], Awaitable[WorkflowOutputT]],
+) -> WorkflowRunResult[WorkflowOutputT]
+```
+
+`WorkflowRunResult` fields:
+- `run_id: str`
+- `status: Literal["complete", "paused"]`
+- `output: WorkflowOutputT | None`
+- `pause_ticket: PauseTicket | None`
+
+Inside `WorkflowContext`:
+
+```python
+await ctx.step(
+    *,
+    name: str,
+    action: Callable[[], Awaitable[StepT]],
+    serde: StepSerde[StepT],
+) -> StepT
+
+await ctx.pause(
+    reason: str,
+    *,
+    context: BaseModel | None = None,
+    step_key: str | None = None,
+) -> PauseTicket  # raises internal pause interrupt and returns via WorkflowRunResult
+```
+
+### ChatClient
+
+```python
+chat = ChatClient(kernel=kernel)
+
+await chat.chat(
+    *,
+    run_id: str,
+    tenant: TenantContext,
+    model: str,
+    prompt: str,
+    output_schema: type[OutputT],
+    step_key: str | None = None,
+) -> StepModelResult[OutputT]
+```
+
+Notes:
+- `ChatClient.chat` auto-starts the run if `run_id` does not exist.
+- `chat(...)` delegates to `kernel.step_model(...)` and preserves replay behavior.
+
+### Event Store
+
+`SQLiteStore` implements `EventStore`:
+
+```python
+SQLiteStore(
+    database_path: str,
+    *,
+    busy_timeout_ms: int = 5000,
+    max_retry_attempts: int = 5,
+    retry_backoff_seconds: float = 0.02,
+)
+
+await store.append_event(
+    *,
+    run_id: str,
+    tenant_id: str,
+    event_type: EventType,
+    payload: EventPayload,
+) -> KernelEvent
+
+await store.get_events_for_run(run_id: str) -> list[KernelEvent]
+await store.verify_run_chain(run_id: str) -> bool
+await store.close() -> None
+
+# Optional fast-path API used by QuotaMiddleware when available:
+await store.get_model_cost_sum_for_run(run_id: str) -> float
+```
+
+### Error Surface
+
+Common exceptions:
+- `CapabilityDeniedError`: tenant lacks required capability for requested tool.
+- `ToolExecutionFailedError`: tool failed, unknown outcome halt, or replayed non-success completion.
+- `ReplayConsistencyError`: replay invariants broken (mismatched event history).
+- `ValueError`: missing/unknown run, invalid lifecycle usage.
+
 ### Real OpenAI Usage
 
 ```bash

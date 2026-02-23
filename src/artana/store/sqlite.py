@@ -16,8 +16,25 @@ _PAYLOAD_ADAPTER: TypeAdapter[EventPayload] = TypeAdapter(EventPayload)
 
 
 class SQLiteStore(EventStore):
-    def __init__(self, database_path: str) -> None:
+    def __init__(
+        self,
+        database_path: str,
+        *,
+        busy_timeout_ms: int = 5000,
+        max_retry_attempts: int = 5,
+        retry_backoff_seconds: float = 0.02,
+    ) -> None:
+        if busy_timeout_ms <= 0:
+            raise ValueError("busy_timeout_ms must be > 0")
+        if max_retry_attempts <= 0:
+            raise ValueError("max_retry_attempts must be > 0")
+        if retry_backoff_seconds <= 0:
+            raise ValueError("retry_backoff_seconds must be > 0")
+
         self._database_path = Path(database_path)
+        self._busy_timeout_ms = busy_timeout_ms
+        self._max_retry_attempts = max_retry_attempts
+        self._retry_backoff_seconds = retry_backoff_seconds
         self._connection: aiosqlite.Connection | None = None
         self._connection_lock = asyncio.Lock()
         self._append_lock = asyncio.Lock()
@@ -33,57 +50,29 @@ class SQLiteStore(EventStore):
         connection = await self._ensure_connection()
 
         async with self._append_lock:
-            await connection.execute("BEGIN IMMEDIATE")
-            try:
-                next_seq, prev_event_hash = await self._next_sequence_and_prev_hash(
-                    connection, run_id=run_id
-                )
-                timestamp = datetime.now(timezone.utc)
-                event_id = uuid4().hex
-                event = KernelEvent(
-                    event_id=event_id,
-                    run_id=run_id,
-                    tenant_id=tenant_id,
-                    seq=next_seq,
-                    event_type=event_type,
-                    prev_event_hash=prev_event_hash,
-                    event_hash=compute_event_hash(
-                        event_id=event_id,
+            for attempt in range(self._max_retry_attempts):
+                try:
+                    return await self._append_event_once(
+                        connection=connection,
                         run_id=run_id,
                         tenant_id=tenant_id,
-                        seq=next_seq,
                         event_type=event_type,
-                        prev_event_hash=prev_event_hash,
-                        timestamp=timestamp,
                         payload=payload,
-                    ),
-                    timestamp=timestamp,
-                    payload=payload,
-                )
-                await connection.execute(
-                    """
-                    INSERT INTO kernel_events (
-                        run_id, seq, event_id, tenant_id, event_type, prev_event_hash,
-                        event_hash, timestamp, payload_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        event.run_id,
-                        event.seq,
-                        event.event_id,
-                        event.tenant_id,
-                        event.event_type.value,
-                        event.prev_event_hash,
-                        event.event_hash,
-                        event.timestamp.isoformat(),
-                        json.dumps(event.payload.model_dump(mode="json")),
-                    ),
-                )
-                await connection.commit()
-                return event
-            except Exception:
-                await connection.rollback()
-                raise
+                    )
+                except aiosqlite.IntegrityError as exc:
+                    if not _is_run_seq_conflict_error(exc):
+                        raise
+                    if attempt >= self._max_retry_attempts - 1:
+                        raise
+                except aiosqlite.OperationalError as exc:
+                    if not _is_locked_error(exc):
+                        raise
+                    if attempt >= self._max_retry_attempts - 1:
+                        raise
+                await asyncio.sleep(self._retry_backoff(attempt))
+        raise RuntimeError(
+            "Failed to append event due to repeated SQLite write contention."
+        )
 
     async def get_events_for_run(self, run_id: str) -> list[KernelEvent]:
         connection = await self._ensure_connection()
@@ -167,6 +156,42 @@ class SQLiteStore(EventStore):
             )
         return events
 
+    async def get_model_cost_sum_for_run(self, run_id: str) -> float:
+        connection = await self._ensure_connection()
+        try:
+            cursor = await connection.execute(
+                """
+                SELECT COALESCE(
+                    SUM(CAST(json_extract(payload_json, '$.cost_usd') AS REAL)),
+                    0.0
+                ) AS total_cost
+                FROM kernel_events
+                WHERE run_id = ?
+                  AND event_type = ?
+                """,
+                (run_id, EventType.MODEL_COMPLETED.value),
+            )
+        except aiosqlite.OperationalError as exc:
+            if _is_missing_json_extract_error(exc):
+                return await self._sum_model_cost_via_events(run_id=run_id)
+            raise
+
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return 0.0
+
+        total_cost_obj: object = row["total_cost"]
+        if total_cost_obj is None:
+            return 0.0
+        if isinstance(total_cost_obj, int):
+            return float(total_cost_obj)
+        if isinstance(total_cost_obj, float):
+            return total_cost_obj
+        raise TypeError(
+            f"Invalid total_cost row type for model cost aggregate: {type(total_cost_obj)!r}"
+        )
+
     async def verify_run_chain(self, run_id: str) -> bool:
         try:
             events = await self.get_events_for_run(run_id)
@@ -207,6 +232,20 @@ class SQLiteStore(EventStore):
                 self._database_path.parent.mkdir(parents=True, exist_ok=True)
                 connection = await aiosqlite.connect(self._database_path)
                 connection.row_factory = aiosqlite.Row
+                try:
+                    await self._initialize_connection(connection)
+                except Exception:
+                    await connection.close()
+                    raise
+                self._connection = connection
+        if self._connection is None:
+            raise RuntimeError("Failed to initialize SQLite connection.")
+        return self._connection
+
+    async def _initialize_connection(self, connection: aiosqlite.Connection) -> None:
+        for attempt in range(self._max_retry_attempts):
+            try:
+                await connection.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms};")
                 await connection.execute("PRAGMA journal_mode = WAL;")
                 await connection.execute("PRAGMA synchronous = NORMAL;")
                 await connection.execute(
@@ -232,10 +271,19 @@ class SQLiteStore(EventStore):
                     """
                 )
                 await connection.commit()
-                self._connection = connection
-        if self._connection is None:
-            raise RuntimeError("Failed to initialize SQLite connection.")
-        return self._connection
+                return
+            except aiosqlite.OperationalError as exc:
+                await _rollback_quietly(connection)
+                if _is_locked_error(exc) and attempt < self._max_retry_attempts - 1:
+                    await asyncio.sleep(self._retry_backoff(attempt))
+                    continue
+                raise RuntimeError(
+                    "Failed to initialize SQLiteStore due to database lock contention. "
+                    "For multi-worker deployments, prefer a Postgres-backed store."
+                ) from exc
+            except Exception:
+                await _rollback_quietly(connection)
+                raise
 
     async def _next_sequence_and_prev_hash(
         self, connection: aiosqlite.Connection, *, run_id: str
@@ -265,3 +313,106 @@ class SQLiteStore(EventStore):
                 f"Expected string event_hash from database, got {type(event_hash_raw)!r}"
             )
         return seq_raw + 1, event_hash_raw
+
+    async def _append_event_once(
+        self,
+        *,
+        connection: aiosqlite.Connection,
+        run_id: str,
+        tenant_id: str,
+        event_type: EventType,
+        payload: EventPayload,
+    ) -> KernelEvent:
+        await connection.execute("BEGIN IMMEDIATE")
+        try:
+            next_seq, prev_event_hash = await self._next_sequence_and_prev_hash(
+                connection, run_id=run_id
+            )
+            timestamp = datetime.now(timezone.utc)
+            event_id = uuid4().hex
+            event = KernelEvent(
+                event_id=event_id,
+                run_id=run_id,
+                tenant_id=tenant_id,
+                seq=next_seq,
+                event_type=event_type,
+                prev_event_hash=prev_event_hash,
+                event_hash=compute_event_hash(
+                    event_id=event_id,
+                    run_id=run_id,
+                    tenant_id=tenant_id,
+                    seq=next_seq,
+                    event_type=event_type,
+                    prev_event_hash=prev_event_hash,
+                    timestamp=timestamp,
+                    payload=payload,
+                ),
+                timestamp=timestamp,
+                payload=payload,
+            )
+            await connection.execute(
+                """
+                INSERT INTO kernel_events (
+                    run_id, seq, event_id, tenant_id, event_type, prev_event_hash,
+                    event_hash, timestamp, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.run_id,
+                    event.seq,
+                    event.event_id,
+                    event.tenant_id,
+                    event.event_type.value,
+                    event.prev_event_hash,
+                    event.event_hash,
+                    event.timestamp.isoformat(),
+                    json.dumps(event.payload.model_dump(mode="json")),
+                ),
+            )
+            await connection.commit()
+            return event
+        except Exception:
+            await _rollback_quietly(connection)
+            raise
+
+    async def _sum_model_cost_via_events(self, *, run_id: str) -> float:
+        events = await self.get_events_for_run(run_id)
+        spent = 0.0
+        for event in events:
+            if event.event_type != EventType.MODEL_COMPLETED:
+                continue
+            payload = event.payload
+            if payload.kind != "model_completed":
+                raise RuntimeError(
+                    f"Invalid event payload kind {payload.kind!r} for model_completed event."
+                )
+            spent += payload.cost_usd
+        return spent
+
+    def _retry_backoff(self, attempt: int) -> float:
+        multiplier = float(2**attempt)
+        delay = float(self._retry_backoff_seconds * multiplier)
+        if delay > 1.0:
+            return 1.0
+        return float(delay)
+
+
+def _is_locked_error(exc: aiosqlite.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "database is locked" in message or "database schema is locked" in message
+
+
+def _is_run_seq_conflict_error(exc: aiosqlite.IntegrityError) -> bool:
+    message = str(exc).lower()
+    return "unique constraint failed: kernel_events.run_id, kernel_events.seq" in message
+
+
+def _is_missing_json_extract_error(exc: aiosqlite.OperationalError) -> bool:
+    return "no such function: json_extract" in str(exc).lower()
+
+
+async def _rollback_quietly(connection: aiosqlite.Connection) -> None:
+    try:
+        await connection.rollback()
+    except aiosqlite.OperationalError:
+        return

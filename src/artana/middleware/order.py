@@ -17,6 +17,7 @@ def order_middleware(middleware: Sequence[KernelMiddleware]) -> tuple[KernelMidd
 
 
 def _priority_for(middleware_item: KernelMiddleware) -> int:
+    # Security-critical order: scrub PII before any quota/policy checks or model calls.
     if isinstance(middleware_item, PIIScrubberMiddleware):
         return 0
     if isinstance(middleware_item, QuotaMiddleware):
@@ -24,4 +25,3 @@ def _priority_for(middleware_item: KernelMiddleware) -> int:
     if isinstance(middleware_item, CapabilityGuardMiddleware):
         return 2
     return 3
-
