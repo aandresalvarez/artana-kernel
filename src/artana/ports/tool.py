@@ -4,7 +4,20 @@ import inspect
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import Literal, Protocol
+from decimal import Decimal
+from enum import Enum
+from types import UnionType
+from typing import Any, Literal, Protocol, Union, cast, get_args, get_origin, get_type_hints
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    ValidationError,
+    create_model,
+)
 
 from artana.ports.model import ToolDefinition
 
@@ -59,6 +72,7 @@ class RegisteredTool:
     function: ToolCallable
     description: str
     arguments_schema_json: str
+    arguments_model: type[BaseModel]
     accepts_artana_context: bool
 
 
@@ -98,8 +112,8 @@ class LocalToolRegistry:
         self, function: ToolCallable, requires_capability: str | None = None
     ) -> None:
         signature = inspect.signature(function)
-        required: list[str] = []
-        properties: dict[str, dict[str, str]] = {}
+        resolved_hints = get_type_hints(function)
+        model_fields: dict[str, Any] = {}
         accepts_artana_context = False
         for parameter in signature.parameters.values():
             if parameter.name == "artana_context":
@@ -110,16 +124,21 @@ class LocalToolRegistry:
                 inspect.Parameter.KEYWORD_ONLY,
             ):
                 continue
-            properties[parameter.name] = {"type": "string"}
+            raw_annotation = resolved_hints.get(parameter.name, parameter.annotation)
+            annotation = _strictify_annotation(raw_annotation)
+            default: object
             if parameter.default is inspect.Parameter.empty:
-                required.append(parameter.name)
+                default = ...
+            else:
+                default = parameter.default
+            model_fields[parameter.name] = (annotation, default)
 
-        schema = {
-            "type": "object",
-            "properties": properties,
-            "required": required,
-            "additionalProperties": False,
-        }
+        arguments_model = create_model(
+            f"{function.__name__}Arguments",
+            __config__=ConfigDict(extra="forbid"),
+            **model_fields,
+        )
+        schema = arguments_model.model_json_schema()
         description = inspect.getdoc(function) or ""
         self._tools[function.__name__] = RegisteredTool(
             name=function.__name__,
@@ -127,6 +146,7 @@ class LocalToolRegistry:
             function=function,
             description=description,
             arguments_schema_json=json.dumps(schema),
+            arguments_model=arguments_model,
             accepts_artana_context=accepts_artana_context,
         )
 
@@ -153,12 +173,16 @@ class LocalToolRegistry:
             raise ValueError(
                 f"Tool arguments for {tool_name!r} must be a JSON object."
             )
+        if any(not isinstance(key, str) for key in parsed_arguments.keys()):
+            raise ValueError("Tool argument keys must be strings.")
+        try:
+            validated = tool.arguments_model.model_validate(parsed_arguments)
+        except ValidationError as exc:
+            raise ValueError(
+                f"Invalid arguments for tool {tool_name!r}: {exc}"
+            ) from exc
 
-        kwargs: dict[str, object] = {}
-        for key, value in parsed_arguments.items():
-            if not isinstance(key, str):
-                raise ValueError("Tool argument keys must be strings.")
-            kwargs[key] = value
+        kwargs = validated.model_dump(mode="python")
         if tool.accepts_artana_context:
             kwargs["artana_context"] = context
 
@@ -221,3 +245,31 @@ class LocalToolRegistry:
         return {
             tool_name: tool.requires_capability for tool_name, tool in self._tools.items()
         }
+
+
+def _strictify_annotation(annotation: object) -> object:
+    if annotation is inspect._empty:
+        return str
+    if annotation is int:
+        return StrictInt
+    if annotation is float:
+        return StrictFloat
+    if annotation is bool:
+        return StrictBool
+    if annotation is Decimal:
+        return Decimal
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return annotation
+
+    origin = get_origin(annotation)
+    if origin is None:
+        return annotation
+
+    if origin in (UnionType, Union):
+        raw_args = get_args(annotation)
+        if len(raw_args) == 2 and type(None) in raw_args:
+            non_none = raw_args[0] if raw_args[1] is type(None) else raw_args[1]
+            return cast(Any, _strictify_annotation(non_none)) | None
+        return annotation
+
+    return annotation

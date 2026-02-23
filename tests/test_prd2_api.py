@@ -6,7 +6,7 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
-from artana import ArtanaKernel, ChatClient, ModelInput
+from artana import ArtanaKernel, KernelModelClient, ModelInput
 from artana.events import ChatMessage, PauseRequestedPayload, ResumeRequestedPayload
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage
@@ -37,12 +37,16 @@ class CountingModelPort:
     def __init__(self) -> None:
         self.calls = 0
         self.prompts: list[str] = []
+        self.message_batches: list[list[str]] = []
 
     async def complete(
         self, request: ModelRequest[OutputModelT]
     ) -> ModelResult[OutputModelT]:
         self.calls += 1
         self.prompts.append(request.prompt)
+        self.message_batches.append(
+            [f"{message.role}:{message.content}" for message in request.messages]
+        )
         output = request.output_schema.model_validate(
             {"approved": True, "reason": f"call-{self.calls}"}
         )
@@ -160,6 +164,12 @@ async def test_step_model_supports_messages_input(tmp_path: Path) -> None:
         assert result.replayed is False
         assert model_port.calls == 1
         assert model_port.prompts == ["approve transfer?"]
+        assert model_port.message_batches == [
+            [
+                "system:You are a strict approver.",
+                "user:approve transfer?",
+            ]
+        ]
     finally:
         await kernel.close()
 
@@ -220,7 +230,7 @@ async def test_chat_client_wraps_step_model(tmp_path: Path) -> None:
     store = SQLiteStore(str(tmp_path / "state.db"))
     model_port = CountingModelPort()
     kernel = ArtanaKernel(store=store, model_port=model_port)
-    client = ChatClient(kernel=kernel)
+    client = KernelModelClient(kernel=kernel)
 
     try:
         run = await kernel.start_run(tenant=_tenant())

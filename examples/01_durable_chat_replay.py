@@ -6,7 +6,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-from artana import ArtanaKernel, ChatClient, TenantContext
+from artana import ArtanaKernel, KernelModelClient, TenantContext
 from artana.middleware import (
     CapabilityGuardMiddleware,
     PIIScrubberMiddleware,
@@ -82,14 +82,14 @@ async def main() -> None:
     )
 
     try:
-        first = await ChatClient(kernel=kernel).chat(
+        first = await KernelModelClient(kernel=kernel).chat(
             run_id="example_run_1",
             prompt="Transfer 10 from acc_1. My email is user@example.com",
             model="gpt-4o-mini",
             tenant=tenant,
             output_schema=TransferDecision,
         )
-        second = await ChatClient(kernel=kernel).chat(
+        second = await KernelModelClient(kernel=kernel).chat(
             run_id="example_run_1",
             prompt="Transfer 10 from acc_1. My email is user@example.com",
             model="gpt-4o-mini",

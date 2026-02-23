@@ -8,7 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from artana._kernel.model_cycle import get_or_execute_model_step
-from artana._kernel.policies import apply_prepare_model_middleware, enforce_capability_scope
+from artana._kernel.policies import apply_prepare_model_middleware
 from artana._kernel.replay import validate_tenant_for_run
 from artana._kernel.tool_cycle import (
     execute_tool_step_with_replay,
@@ -206,20 +206,22 @@ class ArtanaKernel:
             self._middleware,
             initial_invocation,
         )
-        scoped_invocation = enforce_capability_scope(prepared_invocation)
+        allowed_tool_names = sorted(
+            tool.name for tool in prepared_invocation.allowed_tools
+        )
 
         model_result = await get_or_execute_model_step(
             store=self._store,
             model_port=self._model_port,
             middleware=self._middleware,
             run_id=run_id,
-            prompt=scoped_invocation.prompt,
-            messages=scoped_invocation.messages,
-            model=scoped_invocation.model,
+            prompt=prepared_invocation.prompt,
+            messages=prepared_invocation.messages,
+            model=prepared_invocation.model,
             tenant=tenant,
             output_schema=output_schema,
-            tool_definitions=scoped_invocation.allowed_tools,
-            allowed_tool_names=[tool.name for tool in scoped_invocation.allowed_tools],
+            tool_definitions=prepared_invocation.allowed_tools,
+            allowed_tool_names=allowed_tool_names,
             events=events,
             step_key=step_key,
         )

@@ -17,31 +17,6 @@ async def apply_prepare_model_middleware(
     return current
 
 
-def enforce_capability_scope(invocation: ModelInvocation) -> ModelInvocation:
-    filtered_tools = tuple(
-        tool
-        for tool in invocation.allowed_tools
-        if is_tool_allowed_for_tenant(
-            tool_name=tool.name,
-            tenant=invocation.tenant,
-            tool_capability_by_name=invocation.tool_capability_by_name,
-        )
-    )
-    return invocation.with_updates(allowed_tools=filtered_tools)
-
-
-def is_tool_allowed_for_tenant(
-    *,
-    tool_name: str,
-    tenant: TenantContext,
-    tool_capability_by_name: dict[str, str | None],
-) -> bool:
-    required_capability = tool_capability_by_name.get(tool_name)
-    if required_capability is None:
-        return True
-    return required_capability in tenant.capabilities
-
-
 def assert_tool_allowed_for_tenant(
     *,
     tool_name: str,
@@ -57,4 +32,3 @@ def assert_tool_allowed_for_tenant(
         raise CapabilityDeniedError(
             f"Tool {tool_name!r} requires capability {required_capability!r}."
         )
-

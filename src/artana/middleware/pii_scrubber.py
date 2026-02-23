@@ -9,6 +9,12 @@ from artana.ports.model import ModelUsage
 
 
 class PIIScrubberMiddleware:
+    """Demo-only regex scrubber for basic examples.
+
+    This middleware is intentionally minimal and does not provide production-grade
+    PII detection/coverage guarantees.
+    """
+
     def __init__(self) -> None:
         self._patterns: tuple[tuple[re.Pattern[str], str], ...] = (
             (
@@ -46,4 +52,3 @@ class PIIScrubberMiddleware:
         for pattern, replacement in self._patterns:
             result = pattern.sub(replacement, result)
         return result
-

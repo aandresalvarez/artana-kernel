@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from artana import ArtanaKernel, ChatClient, KernelPolicy, TenantContext
+from artana import ArtanaKernel, KernelModelClient, KernelPolicy, TenantContext
 from artana.events import EventType, KernelEvent, ToolCompletedPayload, ToolRequestedPayload
 from artana.kernel import ToolExecutionFailedError
 from artana.ports.model import LiteLLMAdapter
@@ -133,7 +133,7 @@ async def main() -> None:
     tool_args = TransferArgs(account_id="acc_1", amount=Decimal("10.00"))
     model_step_key = "decision.v1"
     tool_step_key = "transfer.acc_1.10.v1"
-    chat = ChatClient(kernel=kernel)
+    chat = KernelModelClient(kernel=kernel)
 
     try:
         run = await kernel.start_run(tenant=tenant)

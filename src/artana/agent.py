@@ -10,7 +10,7 @@ from artana.models import TenantContext
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
 
-class ChatClient:
+class KernelModelClient:
     def __init__(self, *, kernel: ArtanaKernel) -> None:
         self._kernel = kernel
 
@@ -36,3 +36,6 @@ class ChatClient:
             output_schema=output_schema,
             step_key=step_key,
         )
+
+
+ChatClient = KernelModelClient

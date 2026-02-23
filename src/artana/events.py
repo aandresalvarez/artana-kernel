@@ -36,6 +36,7 @@ class ModelRequestedPayload(BaseModel):
     prompt: str
     messages: list[ChatMessage]
     allowed_tools: list[str] = Field(default_factory=list)
+    allowed_tools_hash: str | None = None
     step_key: str | None = None
 
 
@@ -162,7 +163,18 @@ class KernelEvent(BaseModel):
 
 
 def payload_to_canonical_json(payload: EventPayload) -> str:
-    return json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    payload_dict = payload.model_dump(mode="json")
+    if (
+        payload_dict.get("kind") == "model_requested"
+        and payload_dict.get("allowed_tools_hash") is None
+    ):
+        payload_dict.pop("allowed_tools_hash", None)
+    return json.dumps(payload_dict, sort_keys=True, separators=(",", ":"))
+
+
+def compute_allowed_tools_hash(tool_names: list[str]) -> str:
+    joined = ",".join(sorted(tool_names))
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
 def compute_event_hash(

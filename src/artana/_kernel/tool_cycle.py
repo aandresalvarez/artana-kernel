@@ -81,9 +81,12 @@ async def execute_tool_step_with_replay(
             f"Tool {tool_name!r} has an unresolved pending request and requires reconciliation."
         )
 
-    events = await store.get_events_for_run(run_id)
-    next_seq = events[-1].seq + 1 if events else 1
-    idempotency_key = derive_idempotency_key(run_id=run_id, seq=next_seq, step_key=step_key)
+    idempotency_key = derive_idempotency_key(
+        run_id=run_id,
+        tool_name=tool_name,
+        arguments_json=arguments_json,
+        step_key=step_key,
+    )
     request_event = await store.append_event(
         run_id=run_id,
         tenant_id=tenant.tenant_id,

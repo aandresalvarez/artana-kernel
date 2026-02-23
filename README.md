@@ -82,11 +82,12 @@ Initial implementation aligned with the Artana Kernel PRD:
   - `pause` — request human-in-the-loop pause with optional context
   - `resume` — append a resume boundary event with optional human input
   - `run_workflow` — durable workflow with `WorkflowContext`, step serde, replay
-  - `ChatClient.chat(...)` (agent layer) — convenience wrapper around `step_model`
+  - `KernelModelClient.chat(...)` (agent layer) — convenience wrapper around `step_model`
   - `default_middleware_stack` — deterministic middleware ordering helper
   - `KernelPolicy.enforced()` — startup guard requiring governance middleware
 - Tool registration via `@kernel.tool(requires_capability="...")` decorator
 - Middleware stack: `PIIScrubberMiddleware`, `QuotaMiddleware`, `CapabilityGuardMiddleware`
+- `PIIScrubberMiddleware` is intentionally demo-level; use production DLP/classification controls for real PII handling.
 - Replay-safe two-phase tool execution
 - Deterministic crash recovery
 - Cryptographic audit hash-chain with verification
@@ -124,6 +125,8 @@ Every outbound call passes through middleware:
 - Audit logging
 
 There is no bypass path.
+
+`PIIScrubberMiddleware` is intentionally simple regex redaction for examples and tests. It is not production-grade PII detection.
 
 ### Budget Enforcement
 
@@ -185,8 +188,10 @@ artana/
 │   ├── replay.py        # replay matching + tenant validation helpers
 │   ├── model_cycle.py   # get_or_execute_model_step
 │   ├── tool_cycle.py    # replay-aware tool step execution
-│   ├── policies.py     # apply_prepare_model_middleware, enforce_capability_scope
+│   ├── policies.py      # middleware pipeline + tool capability assertion helpers
 │   └── types.py         # ModelInput, StepModelResult, StepToolResult, KernelPolicy, RunHandle
+├── agent.py             # KernelModelClient (ChatClient compatibility alias)
+├── agent_runtime.py     # AgentRuntime loop abstraction over kernel primitives
 ├── middleware/          # PIIScrubberMiddleware, QuotaMiddleware, CapabilityGuardMiddleware
 ├── ports/
 │   ├── model.py        # LiteLLMAdapter, ModelPort
@@ -268,7 +273,7 @@ decision = step.output
 
 ## Detailed API Reference (Latest)
 
-This section documents the current API surface (no backwards-compatibility aliases).
+This section documents the current API surface.
 
 ### Imports
 
@@ -276,8 +281,9 @@ This section documents the current API surface (no backwards-compatibility alias
 from pydantic import BaseModel
 
 from artana import (
+    AgentRuntime,
     ArtanaKernel,
-    ChatClient,
+    KernelModelClient,
     KernelPolicy,
     ModelInput,
     TenantContext,
@@ -465,10 +471,10 @@ await ctx.pause(
 ) -> PauseTicket  # raises internal pause interrupt and returns via WorkflowRunResult
 ```
 
-### ChatClient
+### KernelModelClient
 
 ```python
-chat = ChatClient(kernel=kernel)
+chat = KernelModelClient(kernel=kernel)
 
 await chat.chat(
     *,
@@ -482,8 +488,20 @@ await chat.chat(
 ```
 
 Notes:
-- `ChatClient.chat` auto-starts the run if `run_id` does not exist.
+- `KernelModelClient.chat` auto-starts the run if `run_id` does not exist.
 - `chat(...)` delegates to `kernel.step_model(...)` and preserves replay behavior.
+- `ChatClient` remains available as a compatibility alias to `KernelModelClient`.
+
+### AgentRuntime
+
+```python
+runtime = AgentRuntime(kernel=kernel)
+```
+
+Notes:
+- `AgentRuntime` is an optional loop layer above `ArtanaKernel`.
+- Use `run_turn(...)` for one replay-safe model turn with message accumulation.
+- Use `run_until(...)` with a policy callback to stop/continue the loop.
 
 ### Event Store
 
@@ -529,7 +547,7 @@ set -a; source .env; set +a
 uv run python examples/02_real_litellm_chat.py
 ```
 
-The script proves deterministic replay by calling `ChatClient.chat()` twice for the same `run_id` and asserting:
+The script proves deterministic replay by calling `KernelModelClient.chat()` twice for the same `run_id` and asserting:
 
 - second response has `replayed=True`
 - event count does not grow on replay

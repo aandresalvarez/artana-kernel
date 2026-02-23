@@ -7,6 +7,7 @@ from typing import cast
 
 from pydantic import BaseModel
 
+from artana.events import ChatMessage
 from artana.ports.model_types import (
     LiteLLMCompletionFn,
     ModelPermanentError,
@@ -60,7 +61,9 @@ class LiteLLMAdapter:
         tools_payload = _serialize_tools(request.allowed_tools)
         response_dict = await self._call_with_retry(
             model=request.model,
-            prompt=request.prompt,
+            messages_payload=_serialize_messages(
+                request.messages, fallback_prompt=request.prompt
+            ),
             response_format=request.output_schema,
             tools_payload=tools_payload if tools_payload else None,
         )
@@ -86,7 +89,7 @@ class LiteLLMAdapter:
         self,
         *,
         model: str,
-        prompt: str,
+        messages_payload: list[dict[str, str]],
         response_format: type[BaseModel],
         tools_payload: list[dict[str, object]] | None,
     ) -> Mapping[str, object]:
@@ -96,7 +99,7 @@ class LiteLLMAdapter:
                 response_obj = await asyncio.wait_for(
                     self._completion_fn(
                         model=model,
-                        messages=[{"role": "user", "content": prompt}],
+                        messages=messages_payload,
                         response_format=response_format,
                         tools=tools_payload,
                     ),
@@ -147,6 +150,14 @@ def _serialize_tools(tools: Sequence[ToolDefinition]) -> list[dict[str, object]]
             }
         )
     return serialized
+
+
+def _serialize_messages(
+    messages: Sequence[ChatMessage], *, fallback_prompt: str
+) -> list[dict[str, str]]:
+    if len(messages) == 0:
+        return [{"role": "user", "content": fallback_prompt}]
+    return [{"role": message.role, "content": message.content} for message in messages]
 
 
 def _normalize_response(response_obj: object) -> Mapping[str, object]:

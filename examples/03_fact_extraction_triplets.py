@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from artana import ArtanaKernel, ChatClient, KernelPolicy, TenantContext
+from artana import ArtanaKernel, KernelModelClient, KernelPolicy, TenantContext
 from artana.ports.model import LiteLLMAdapter
 from artana.store import SQLiteStore
 
@@ -80,7 +80,7 @@ async def main() -> None:
         run = await kernel.start_run(tenant=tenant)
         prompt = f"{EXTRACTION_INSTRUCTIONS}\n\n---\n\nArticle:\n{SAMPLE_ARTICLE.strip()}"
 
-        result = await ChatClient(kernel=kernel).chat(
+        result = await KernelModelClient(kernel=kernel).chat(
             run_id=run.run_id,
             tenant=tenant,
             model="gpt-4o-mini",

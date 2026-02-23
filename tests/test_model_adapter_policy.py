@@ -6,6 +6,7 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
+from artana.events import ChatMessage
 from artana.ports.model import (
     LiteLLMAdapter,
     ModelPermanentError,
@@ -65,6 +66,7 @@ async def test_litellm_adapter_retries_transient_error_then_succeeds() -> None:
         run_id="run_model_retry",
         model="gpt-4o-mini",
         prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
         output_schema=Decision,
         allowed_tools=(),
     )
@@ -105,6 +107,7 @@ async def test_litellm_adapter_raises_timeout_error_after_retries() -> None:
         run_id="run_model_timeout",
         model="gpt-4o-mini",
         prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
         output_schema=Decision,
         allowed_tools=(),
     )
@@ -140,6 +143,7 @@ async def test_litellm_adapter_raises_permanent_error_without_retry() -> None:
         run_id="run_model_permanent",
         model="gpt-4o-mini",
         prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
         output_schema=Decision,
         allowed_tools=(),
     )
@@ -173,9 +177,57 @@ async def test_litellm_adapter_fails_when_cost_unknown_in_strict_mode() -> None:
         run_id="run_model_cost_unknown",
         model="gpt-4o-mini",
         prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
         output_schema=Decision,
         allowed_tools=(),
     )
 
     with pytest.raises(ModelPermanentError, match="cost is unknown"):
         await adapter.complete(request)
+
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_sends_full_message_history() -> None:
+    captured_messages: list[list[dict[str, str]]] = []
+
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        captured_messages.append(messages)
+        return {
+            "choices": [{"message": {"content": '{"approved": true, "reason": "ok"}'}}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            "_response_cost": 0.001,
+        }
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_messages",
+        model="gpt-4o-mini",
+        prompt="latest user turn",
+        messages=(
+            ChatMessage(role="system", content="You are concise."),
+            ChatMessage(role="user", content="Summarize the run."),
+            ChatMessage(role="assistant", content="Need one more input."),
+        ),
+        output_schema=Decision,
+        allowed_tools=(),
+    )
+
+    result = await adapter.complete(request)
+    assert result.output.approved is True
+    assert captured_messages == [
+        [
+            {"role": "system", "content": "You are concise."},
+            {"role": "user", "content": "Summarize the run."},
+            {"role": "assistant", "content": "Need one more input."},
+        ]
+    ]

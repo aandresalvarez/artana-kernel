@@ -15,6 +15,7 @@ from artana.events import (
     ModelCompletedPayload,
     ModelRequestedPayload,
     ToolCallRecord,
+    compute_allowed_tools_hash,
 )
 from artana.middleware.base import KernelMiddleware
 from artana.models import TenantContext
@@ -38,12 +39,13 @@ async def get_or_execute_model_step(
     events: Sequence[KernelEvent],
     step_key: str | None = None,
 ) -> ModelStepResult[OutputT]:
+    normalized_tool_names = sorted(allowed_tool_names)
     request_event, completed_event = find_matching_model_cycle(
         events=events,
         prompt=prompt,
         messages=messages,
         model=model,
-        allowed_tool_names=allowed_tool_names,
+        allowed_tool_names=normalized_tool_names,
         step_key=step_key,
     )
     if completed_event is not None:
@@ -62,7 +64,8 @@ async def get_or_execute_model_step(
                 model=model,
                 prompt=prompt,
                 messages=list(messages),
-                allowed_tools=allowed_tool_names,
+                allowed_tools=normalized_tool_names,
+                allowed_tools_hash=compute_allowed_tools_hash(normalized_tool_names),
                 step_key=step_key,
             ),
         )
@@ -75,6 +78,7 @@ async def get_or_execute_model_step(
             run_id=run_id,
             model=model,
             prompt=prompt,
+            messages=messages,
             output_schema=output_schema,
             allowed_tools=tool_definitions,
         )

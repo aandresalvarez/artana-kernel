@@ -11,6 +11,7 @@ from artana.events import (
     KernelEvent,
     ModelCompletedPayload,
     ModelRequestedPayload,
+    compute_allowed_tools_hash,
 )
 from artana.models import TenantContext
 from artana.ports.model import ModelUsage, ToolCall
@@ -66,6 +67,8 @@ def find_matching_model_cycle(
     step_key: str | None = None,
 ) -> tuple[KernelEvent | None, KernelEvent | None]:
     expected_messages = list(messages)
+    expected_allowed_tools = sorted(allowed_tool_names)
+    expected_allowed_tools_hash = compute_allowed_tools_hash(expected_allowed_tools)
     for index in range(len(events) - 1, -1, -1):
         event = events[index]
         if event.event_type != EventType.MODEL_REQUESTED:
@@ -79,7 +82,14 @@ def find_matching_model_cycle(
             continue
         if payload.step_key != step_key:
             continue
-        if payload.allowed_tools != allowed_tool_names:
+        payload_allowed_tools = sorted(payload.allowed_tools)
+        payload_allowed_tools_hash = payload.allowed_tools_hash
+        if payload_allowed_tools_hash is not None:
+            if payload_allowed_tools_hash != expected_allowed_tools_hash:
+                raise ReplayConsistencyError(
+                    "Cannot resume run with changed allowed tools for the same model request."
+                )
+        if payload_allowed_tools != expected_allowed_tools:
             raise ReplayConsistencyError(
                 "Cannot resume run with changed allowed tools for the same model request."
             )

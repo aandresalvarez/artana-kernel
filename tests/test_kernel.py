@@ -6,9 +6,10 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
-from artana import ChatClient
+from artana import KernelModelClient
 from artana.events import EventType
 from artana.kernel import ArtanaKernel
+from artana.middleware import CapabilityGuardMiddleware
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage, ToolCall
 from artana.store import SQLiteStore
@@ -71,14 +72,14 @@ async def test_chat_replays_completed_model_response(tmp_path: Path) -> None:
     )
 
     try:
-        first = await ChatClient(kernel=kernel).chat(
+        first = await KernelModelClient(kernel=kernel).chat(
             run_id="run_1",
             prompt="Should we transfer?",
             model="gpt-4o-mini",
             tenant=tenant,
             output_schema=Decision,
         )
-        second = await ChatClient(kernel=kernel).chat(
+        second = await KernelModelClient(kernel=kernel).chat(
             run_id="run_1",
             prompt="Should we transfer?",
             model="gpt-4o-mini",
@@ -104,7 +105,11 @@ async def test_chat_replays_completed_model_response(tmp_path: Path) -> None:
 async def test_chat_filters_tools_by_capability(tmp_path: Path) -> None:
     store = SQLiteStore(str(tmp_path / "state.db"))
     model_port = FakeModelPort()
-    kernel = ArtanaKernel(store=store, model_port=model_port)
+    kernel = ArtanaKernel(
+        store=store,
+        model_port=model_port,
+        middleware=[CapabilityGuardMiddleware()],
+    )
 
     @kernel.tool(requires_capability="finance:read")
     async def get_balance(account_id: str) -> str:
@@ -121,7 +126,7 @@ async def test_chat_filters_tools_by_capability(tmp_path: Path) -> None:
     )
 
     try:
-        await ChatClient(kernel=kernel).chat(
+        await KernelModelClient(kernel=kernel).chat(
             run_id="run_2",
             prompt="Get account summary",
             model="gpt-4o-mini",
@@ -145,7 +150,7 @@ async def test_pause_persists_pause_event(tmp_path: Path) -> None:
     )
 
     try:
-        await ChatClient(kernel=kernel).chat(
+        await KernelModelClient(kernel=kernel).chat(
             run_id="run_3",
             prompt="Approve transfer?",
             model="gpt-4o-mini",
@@ -185,14 +190,14 @@ async def test_chat_replays_tools_without_reexecuting_completed_tool(tmp_path: P
     )
 
     try:
-        first = await ChatClient(kernel=kernel).chat(
+        first = await KernelModelClient(kernel=kernel).chat(
             run_id="run_4",
             prompt="Execute transfer",
             model="gpt-4o-mini",
             tenant=tenant,
             output_schema=Decision,
         )
-        second = await ChatClient(kernel=kernel).chat(
+        second = await KernelModelClient(kernel=kernel).chat(
             run_id="run_4",
             prompt="Execute transfer",
             model="gpt-4o-mini",

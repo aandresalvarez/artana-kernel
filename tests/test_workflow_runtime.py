@@ -87,11 +87,13 @@ async def test_run_workflow_replays_completed_step_with_pydantic_serde(
 
         events = await second_store.get_events_for_run("run_workflow_replay")
         assert [event.event_type for event in events] == [
+            "run_started",
             "workflow_step_requested",
             "workflow_step_completed",
         ]
-        assert isinstance(events[1].payload, WorkflowStepCompletedPayload)
-        assert events[1].payload.step_name == "compute"
+        assert isinstance(events[2].payload, WorkflowStepCompletedPayload)
+        assert events[2].payload.step_name == "compute"
+        assert await second_store.verify_run_chain("run_workflow_replay") is True
     finally:
         await second_kernel.close()
 
@@ -161,14 +163,15 @@ async def test_run_workflow_pause_then_resume_continues_after_completed_steps(
 
         events = await second_store.get_events_for_run("run_workflow_pause")
         assert [event.event_type for event in events] == [
+            "run_started",
             "workflow_step_requested",
             "workflow_step_completed",
             "pause_requested",
             "workflow_step_requested",
             "workflow_step_completed",
         ]
-        assert isinstance(events[2].payload, PauseRequestedPayload)
-        assert events[2].payload.reason == "manual approval required"
+        assert isinstance(events[3].payload, PauseRequestedPayload)
+        assert events[3].payload.reason == "manual approval required"
     finally:
         await second_kernel.close()
 
@@ -206,6 +209,7 @@ async def test_run_workflow_retries_pending_step_after_crash(
     try:
         first_events = await first_store.get_events_for_run("run_workflow_crash")
         assert [event.event_type for event in first_events] == [
+            "run_started",
             "workflow_step_requested",
         ]
     finally:
@@ -225,6 +229,7 @@ async def test_run_workflow_retries_pending_step_after_crash(
 
         second_events = await second_store.get_events_for_run("run_workflow_crash")
         assert [event.event_type for event in second_events] == [
+            "run_started",
             "workflow_step_requested",
             "workflow_step_completed",
         ]

@@ -6,6 +6,8 @@ from typing import Generic, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel
 
+from artana.events import ChatMessage
+
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
 
@@ -34,6 +36,7 @@ class ModelRequest(Generic[OutputT]):
     run_id: str
     model: str
     prompt: str
+    messages: Sequence[ChatMessage]
     output_schema: type[OutputT]
     allowed_tools: Sequence[ToolDefinition]
 
@@ -79,4 +82,3 @@ class LiteLLMCompletionFn(Protocol):
         tools: list[dict[str, object]] | None = None,
     ) -> object:
         ...
-

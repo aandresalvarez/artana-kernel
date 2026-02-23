@@ -13,6 +13,7 @@ from artana._kernel.types import PauseTicket, ReplayConsistencyError
 from artana.events import (
     EventType,
     KernelEvent,
+    RunStartedPayload,
     WorkflowStepCompletedPayload,
     WorkflowStepRequestedPayload,
 )
@@ -222,6 +223,14 @@ async def run_workflow(
 ) -> WorkflowRunResult[WorkflowOutputT]:
     run_id_value = run_id if run_id is not None else uuid4().hex
     events = await store.get_events_for_run(run_id_value)
+    if len(events) == 0:
+        await store.append_event(
+            run_id=run_id_value,
+            tenant_id=tenant.tenant_id,
+            event_type=EventType.RUN_STARTED,
+            payload=RunStartedPayload(),
+        )
+        events = await store.get_events_for_run(run_id_value)
     validate_tenant_for_run(events=events, tenant=tenant)
     context = WorkflowContext(
         run_id=run_id_value,

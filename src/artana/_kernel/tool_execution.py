@@ -153,6 +153,12 @@ def resolve_completed_tool_result(
     return result_json
 
 
-def derive_idempotency_key(*, run_id: str, seq: int, step_key: str | None = None) -> str:
-    token = f"{run_id}:{step_key}" if step_key is not None else f"{run_id}:{seq}"
+def derive_idempotency_key(
+    *,
+    run_id: str,
+    tool_name: str,
+    arguments_json: str,
+    step_key: str | None = None,
+) -> str:
+    token = f"{run_id}:{tool_name}:{arguments_json}:{step_key}"
     return hashlib.sha256(token.encode("utf-8")).hexdigest()

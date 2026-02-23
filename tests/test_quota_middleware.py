@@ -6,7 +6,7 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
-from artana import ChatClient
+from artana import KernelModelClient
 from artana.events import EventPayload, EventType, KernelEvent
 from artana.kernel import ArtanaKernel
 from artana.middleware import BudgetExceededError, QuotaMiddleware
@@ -95,7 +95,7 @@ async def test_quota_persists_from_event_log_across_kernel_restarts(tmp_path: Pa
     )
 
     try:
-        await ChatClient(kernel=first_kernel).chat(
+        await KernelModelClient(kernel=first_kernel).chat(
             run_id="run_budget",
             prompt="first decision",
             model="gpt-4o-mini",
@@ -104,7 +104,7 @@ async def test_quota_persists_from_event_log_across_kernel_restarts(tmp_path: Pa
         )
 
         with pytest.raises(BudgetExceededError):
-            await ChatClient(kernel=second_kernel).chat(
+            await KernelModelClient(kernel=second_kernel).chat(
                 run_id="run_budget",
                 prompt="second decision",
                 model="gpt-4o-mini",
@@ -146,7 +146,7 @@ async def test_quota_blocks_before_model_when_budget_already_exhausted(tmp_path:
 
     try:
         with pytest.raises(BudgetExceededError):
-            await ChatClient(kernel=first_kernel).chat(
+            await KernelModelClient(kernel=first_kernel).chat(
                 run_id="run_budget_2",
                 prompt="expensive call",
                 model="gpt-4o-mini",
@@ -164,7 +164,7 @@ async def test_quota_blocks_before_model_when_budget_already_exhausted(tmp_path:
     )
     try:
         with pytest.raises(BudgetExceededError):
-            await ChatClient(kernel=second_kernel).chat(
+            await KernelModelClient(kernel=second_kernel).chat(
                 run_id="run_budget_2",
                 prompt="retry call",
                 model="gpt-4o-mini",
