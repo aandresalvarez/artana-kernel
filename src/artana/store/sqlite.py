@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -29,6 +30,7 @@ class SQLiteStore(EventStore):
         busy_timeout_ms: int = 5000,
         max_retry_attempts: int = 5,
         retry_backoff_seconds: float = 0.02,
+        on_event: Callable[[KernelEvent], Awaitable[None]] | None = None,
     ) -> None:
         if busy_timeout_ms <= 0:
             raise ValueError("busy_timeout_ms must be > 0")
@@ -44,6 +46,7 @@ class SQLiteStore(EventStore):
         self._connection: aiosqlite.Connection | None = None
         self._connection_lock = asyncio.Lock()
         self._append_lock = asyncio.Lock()
+        self._on_event = on_event
 
     async def append_event(
         self,
@@ -52,19 +55,24 @@ class SQLiteStore(EventStore):
         tenant_id: str,
         event_type: EventType,
         payload: EventPayload,
+        parent_step_key: str | None = None,
     ) -> KernelEvent:
         connection = await self._ensure_connection()
 
         async with self._append_lock:
             for attempt in range(self._max_retry_attempts):
                 try:
-                    return await self._append_event_once(
+                    event = await self._append_event_once(
                         connection=connection,
                         run_id=run_id,
                         tenant_id=tenant_id,
                         event_type=event_type,
                         payload=payload,
+                        parent_step_key=parent_step_key,
                     )
+                    if self._on_event is not None:
+                        await self._on_event(event)
+                    return event
                 except aiosqlite.IntegrityError as exc:
                     if not _is_run_seq_conflict_error(exc):
                         raise
@@ -85,7 +93,7 @@ class SQLiteStore(EventStore):
         cursor = await connection.execute(
             """
             SELECT run_id, seq, event_id, tenant_id, event_type, prev_event_hash,
-                   event_hash, timestamp, payload_json
+                   event_hash, parent_step_key, timestamp, payload_json
             FROM kernel_events
             WHERE run_id = ?
             ORDER BY seq ASC
@@ -104,6 +112,7 @@ class SQLiteStore(EventStore):
             event_type_raw = row["event_type"]
             prev_event_hash_raw = row["prev_event_hash"]
             event_hash_raw = row["event_hash"]
+            parent_step_key_raw = row["parent_step_key"]
             timestamp_raw = row["timestamp"]
             payload_json_raw = row["payload_json"]
 
@@ -126,6 +135,13 @@ class SQLiteStore(EventStore):
             if not isinstance(event_hash_raw, str):
                 raise TypeError(
                     f"Invalid event_hash row type: {type(event_hash_raw)!r}"
+                )
+            if parent_step_key_raw is not None and not isinstance(
+                parent_step_key_raw, str
+            ):
+                raise TypeError(
+                    "Invalid parent_step_key row type: "
+                    f"{type(parent_step_key_raw)!r}"
                 )
             if not isinstance(timestamp_raw, str):
                 raise TypeError(
@@ -156,6 +172,7 @@ class SQLiteStore(EventStore):
                     event_type=event_type,
                     prev_event_hash=prev_event_hash_raw,
                     event_hash=event_hash_raw,
+                    parent_step_key=parent_step_key_raw,
                     timestamp=datetime.fromisoformat(timestamp_raw),
                     payload=payload,
                 )
@@ -269,6 +286,7 @@ class SQLiteStore(EventStore):
                 seq=event.seq,
                 event_type=event.event_type,
                 prev_event_hash=event.prev_event_hash,
+                parent_step_key=event.parent_step_key,
                 timestamp=event.timestamp,
                 payload=event.payload,
             )
@@ -324,6 +342,20 @@ class SQLiteStore(EventStore):
                     )
                     """
                 )
+                cursor = await connection.execute("PRAGMA table_info(kernel_events);")
+                columns = await cursor.fetchall()
+                await cursor.close()
+                column_names = [column["name"] for column in columns]
+                if "parent_step_key" not in column_names:
+                    try:
+                        await connection.execute(
+                            "ALTER TABLE kernel_events ADD COLUMN parent_step_key TEXT"
+                        )
+                    except aiosqlite.OperationalError as exc:
+                        if "duplicate column name: parent_step_key" not in str(
+                            exc
+                        ).lower():
+                            raise
                 await connection.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_kernel_events_run_seq
@@ -388,6 +420,7 @@ class SQLiteStore(EventStore):
         tenant_id: str,
         event_type: EventType,
         payload: EventPayload,
+        parent_step_key: str | None = None,
     ) -> KernelEvent:
         await connection.execute("BEGIN IMMEDIATE")
         try:
@@ -410,9 +443,11 @@ class SQLiteStore(EventStore):
                     seq=next_seq,
                     event_type=event_type,
                     prev_event_hash=prev_event_hash,
+                    parent_step_key=parent_step_key,
                     timestamp=timestamp,
                     payload=payload,
                 ),
+                parent_step_key=parent_step_key,
                 timestamp=timestamp,
                 payload=payload,
             )
@@ -420,8 +455,8 @@ class SQLiteStore(EventStore):
                 """
                 INSERT INTO kernel_events (
                     run_id, seq, event_id, tenant_id, event_type, prev_event_hash,
-                    event_hash, timestamp, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    event_hash, parent_step_key, timestamp, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.run_id,
@@ -431,6 +466,7 @@ class SQLiteStore(EventStore):
                     event.event_type.value,
                     event.prev_event_hash,
                     event.event_hash,
+                    event.parent_step_key,
                     event.timestamp.isoformat(),
                     json.dumps(event.payload.model_dump(mode="json")),
                 ),

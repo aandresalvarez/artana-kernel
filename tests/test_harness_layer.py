@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from artana import ArtanaKernel
-from artana.events import EventType, ToolRequestedPayload
+from artana.events import EventType, RunSummaryPayload, ToolRequestedPayload
 from artana.harness import (
     HarnessContext,
     HarnessStateError,
@@ -221,7 +221,7 @@ async def test_harness_sleep_requires_clean_state_without_pending_tool_requests(
 
 
 @pytest.mark.asyncio
-async def test_kernel_latest_summary_aliases_return_latest_payload(tmp_path: Path) -> None:
+async def test_kernel_get_latest_run_summary_returns_latest_payload(tmp_path: Path) -> None:
     store = SQLiteStore(str(tmp_path / "state.db"))
     kernel = ArtanaKernel(store=store, model_port=UnusedModelPort())
     harness = IncrementalTaskHarness(kernel=kernel)
@@ -249,14 +249,69 @@ async def test_kernel_latest_summary_aliases_return_latest_payload(tmp_path: Pat
             run_id=run_id,
             summary_type="task_progress",
         )
-        latest_b = await kernel.get_latest_summary(
-            run_id=run_id,
-            summary_type="task_progress",
-        )
         assert latest_a is not None
-        assert latest_b is not None
-        assert latest_a.summary_json == latest_b.summary_json
         assert latest_a.step_key == "task_2"
         assert json.loads(latest_a.summary_json)["units"][0]["state"] == "done"
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_harness_emits_state_transitions_and_cost_snapshots(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(store=store, model_port=UnusedModelPort())
+    harness = IncrementalTaskHarness(kernel=kernel)
+    tenant = _tenant()
+    run_id = "run_harness_trace_channels"
+
+    try:
+        await kernel.start_run(tenant=tenant, run_id=run_id)
+        await harness.set_task_progress(
+            run_id=run_id,
+            tenant=tenant,
+            units=(TaskUnit(id="t1", description="Only task", state="pending"),),
+            step_key="task_seed",
+        )
+        await harness.run(run_id=run_id, tenant=tenant)
+
+        events = await store.get_events_for_run(run_id)
+        state_transitions = [
+            json.loads(event.payload.summary_json)
+            for event in events
+            if event.event_type == EventType.RUN_SUMMARY
+            and isinstance(event.payload, RunSummaryPayload)
+            and event.payload.summary_type == "trace::state_transition"
+        ]
+        cost_snapshots = [
+            json.loads(event.payload.summary_json)
+            for event in events
+            if event.event_type == EventType.RUN_SUMMARY
+            and isinstance(event.payload, RunSummaryPayload)
+            and event.payload.summary_type == "trace::cost_snapshot"
+        ]
+
+        assert [item["to_stage"] for item in state_transitions] == [
+            "initialize",
+            "wake",
+            "work",
+            "sleep",
+        ]
+        assert state_transitions[0]["from_stage"] is None
+        assert state_transitions[1]["from_stage"] == "initialize"
+        assert state_transitions[2]["from_stage"] == "wake"
+        assert state_transitions[3]["from_stage"] == "work"
+        assert [item["round"] for item in state_transitions] == [1, 2, 3, 4]
+
+        assert len(cost_snapshots) == 4
+        for snapshot in cost_snapshots:
+            assert snapshot["stage"] in {"initialize", "wake", "work", "sleep"}
+            assert snapshot["round"] in {1, 2, 3, 4}
+            assert snapshot["model_cost"] == pytest.approx(0.0)
+            assert snapshot["tool_cost"] == pytest.approx(0.0)
+            assert snapshot["total_cost"] == pytest.approx(0.0)
+            assert isinstance(snapshot["logical_duration_ms"], int)
+            assert snapshot["logical_duration_ms"] >= 0
     finally:
         await kernel.close()

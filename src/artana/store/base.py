@@ -13,6 +13,7 @@ class EventStore(Protocol):
         tenant_id: str,
         event_type: EventType,
         payload: EventPayload,
+        parent_step_key: str | None = None,
     ) -> KernelEvent:
         ...
 

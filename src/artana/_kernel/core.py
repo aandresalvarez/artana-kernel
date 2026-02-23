@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
@@ -37,8 +38,13 @@ from artana._kernel.workflow_runtime import (
 from artana.events import (
     ChatMessage,
     EventType,
+    EventPayload,
+    HarnessFailedPayload,
+    HarnessSleepPayload,
+    HarnessStagePayload,
     KernelEvent,
     PauseRequestedPayload,
+    ToolCompletedPayload,
     ReplayedWithDriftPayload,
     ResumeRequestedPayload,
     RunStartedPayload,
@@ -100,6 +106,25 @@ class ArtanaKernel:
             stack.append(CapabilityGuardMiddleware())
         return order_middleware(tuple(stack))
 
+    async def _append_event(
+        self,
+        *,
+        run_id: str,
+        tenant_id: str,
+        event_type: EventType,
+        payload: EventPayload,
+        parent_step_key: str | None = None,
+    ) -> KernelEvent:
+        append_kwargs = {
+            "run_id": run_id,
+            "tenant_id": tenant_id,
+            "event_type": event_type,
+            "payload": payload,
+        }
+        if parent_step_key is not None:
+            append_kwargs["parent_step_key"] = parent_step_key
+        return await self._store.append_event(**append_kwargs)
+
     async def start_run(
         self,
         *,
@@ -124,7 +149,7 @@ class ArtanaKernel:
                     "Failed to allocate a unique run_id after multiple attempts."
                 )
 
-        event = await self._store.append_event(
+        event = await self._append_event(
             run_id=run_id_value,
             tenant_id=tenant.tenant_id,
             event_type=EventType.RUN_STARTED,
@@ -159,6 +184,70 @@ class ArtanaKernel:
             run_id=run_id,
             summary_type=summary_type,
         )
+
+    async def explain_run(
+        self,
+        run_id: str,
+    ) -> dict[str, object]:
+        events = await self._store.get_events_for_run(run_id)
+        if not events:
+            raise ValueError(f"No events found for run_id={run_id!r}.")
+
+        drift_count = 0
+        last_stage: str | None = None
+        last_tool: str | None = None
+        failure_reason: str | None = None
+        failure_step: str | None = None
+        status = "completed"
+
+        for event in events:
+            if event.event_type == EventType.REPLAYED_WITH_DRIFT:
+                drift_count += 1
+            elif event.event_type == EventType.HARNESS_STAGE and isinstance(
+                event.payload, HarnessStagePayload
+            ):
+                last_stage = event.payload.stage
+            elif event.event_type == EventType.TOOL_COMPLETED and isinstance(
+                event.payload, ToolCompletedPayload
+            ):
+                last_tool = event.payload.tool_name
+            elif event.event_type == EventType.HARNESS_FAILED and isinstance(
+                event.payload, HarnessFailedPayload
+            ):
+                failure_reason = event.payload.error_type
+                failure_step = event.payload.last_step_key
+                status = "failed"
+            elif event.event_type == EventType.HARNESS_SLEEP and isinstance(
+                event.payload, HarnessSleepPayload
+            ):
+                status = event.payload.status
+            elif event.event_type == EventType.RUN_SUMMARY and isinstance(
+                event.payload, RunSummaryPayload
+            ):
+                if last_stage is None and event.payload.summary_type == "trace::round":
+                    try:
+                        payload_json = json.loads(event.payload.summary_json)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(payload_json, dict):
+                        stage_value = payload_json.get("stage")
+                        if isinstance(stage_value, str):
+                            last_stage = stage_value
+
+        if status == "completed" and failure_reason is not None:
+            status = "failed"
+
+        cost_total = await self._store.get_model_cost_sum_for_run(run_id)
+        return {
+            "status": status,
+            "last_stage": last_stage,
+            "last_tool": last_tool,
+            "drift_count": drift_count,
+            "drift_events": drift_count,
+            "failure_reason": failure_reason,
+            "failure_step": failure_step,
+            "cost_total": cost_total,
+        }
 
     def list_registered_tools(self) -> tuple[ToolDefinition, ...]:
         return tuple(self._tool_port.to_all_tool_definitions())
@@ -203,6 +292,7 @@ class ArtanaKernel:
         reason: str,
         context: BaseModel | None = None,
         step_key: str | None = None,
+        parent_step_key: str | None = None,
     ) -> PauseTicket:
         events = await self._store.get_events_for_run(run_id)
         if not events:
@@ -211,10 +301,11 @@ class ArtanaKernel:
             )
         validate_tenant_for_run(events=events, tenant=tenant)
         context_json = context.model_dump_json() if context is not None else None
-        event = await self._store.append_event(
+        event = await self._append_event(
             run_id=run_id,
             tenant_id=tenant.tenant_id,
             event_type=EventType.PAUSE_REQUESTED,
+            parent_step_key=parent_step_key,
             payload=PauseRequestedPayload(
                 reason=reason,
                 context_json=context_json,
@@ -240,6 +331,7 @@ class ArtanaKernel:
         step_key: str | None = None,
         replay_policy: ReplayPolicy = "strict",
         context_version: ContextVersion | None = None,
+        parent_step_key: str | None = None,
     ) -> StepModelResult[OutputT]:
         return await self.step_model(
             run_id=run_id,
@@ -251,6 +343,7 @@ class ArtanaKernel:
             visible_tool_names=visible_tool_names,
             replay_policy=replay_policy,
             context_version=context_version,
+            parent_step_key=parent_step_key,
         )
 
     async def step_model(
@@ -265,6 +358,7 @@ class ArtanaKernel:
         visible_tool_names: set[str] | None = None,
         replay_policy: ReplayPolicy = "strict",
         context_version: ContextVersion | None = None,
+        parent_step_key: str | None = None,
     ) -> StepModelResult[OutputT]:
         events = await self._store.get_events_for_run(run_id)
         if not events:
@@ -311,15 +405,13 @@ class ArtanaKernel:
         target_events = events
         forked_from_run_id: str | None = None
         normalized_replay_policy = replay_policy
+        drift_fields: tuple[str, ...] = ()
         if replay_policy == "fork_on_drift":
             drift_candidate = find_prompt_drift_candidate(
                 events=events,
                 prompt=prepared_invocation.prompt,
                 messages=prepared_invocation.messages,
                 model=prepared_invocation.model,
-                allowed_tool_names=sorted(
-                    tool.name for tool in prepared_invocation.allowed_tools
-                ),
                 allowed_tool_signatures=tool_signatures_from_definitions(
                     prepared_invocation.allowed_tools
                 ),
@@ -338,10 +430,11 @@ class ArtanaKernel:
                     tenant=tenant,
                 )
                 forked_from_run_id = run_id
-                await self._store.append_event(
+                await self._append_event(
                     run_id=run_id,
                     tenant_id=tenant.tenant_id,
                     event_type=EventType.REPLAYED_WITH_DRIFT,
+                    parent_step_key=parent_step_key,
                     payload=ReplayedWithDriftPayload(
                         step_key=step_key,
                         model=prepared_invocation.model,
@@ -356,6 +449,7 @@ class ArtanaKernel:
                         fork_run_id=target_run_id,
                     ),
                 )
+                drift_fields = drift_candidate.drift_fields
             normalized_replay_policy = "strict"
 
         model_result = await get_or_execute_model_step(
@@ -371,14 +465,16 @@ class ArtanaKernel:
             tool_definitions=prepared_invocation.allowed_tools,
             events=target_events,
             step_key=step_key,
+            parent_step_key=parent_step_key,
             replay_policy=normalized_replay_policy,
             context_version=context_version,
         )
         if model_result.replayed is False:
-            await self._store.append_event(
+            await self._append_event(
                 run_id=target_run_id,
                 tenant_id=tenant.tenant_id,
                 event_type=EventType.RUN_SUMMARY,
+                parent_step_key=parent_step_key,
                 payload=RunSummaryPayload(
                     summary_type="capability_decision",
                     summary_json=canonical_json_dumps(capability_decision_summary),
@@ -394,6 +490,7 @@ class ArtanaKernel:
             replayed=model_result.replayed,
             replayed_with_drift=model_result.replayed_with_drift,
             forked_from_run_id=forked_from_run_id,
+            drift_fields=drift_fields or model_result.drift_fields,
         )
 
     async def step_tool(
@@ -404,6 +501,7 @@ class ArtanaKernel:
         tool_name: str,
         arguments: BaseModel,
         step_key: str | None = None,
+        parent_step_key: str | None = None,
     ) -> StepToolResult:
         events = await self._store.get_events_for_run(run_id)
         if not events:
@@ -421,6 +519,7 @@ class ArtanaKernel:
             tool_name=tool_name,
             arguments_json=arguments_json,
             step_key=step_key,
+            parent_step_key=parent_step_key,
         )
         return StepToolResult(
             run_id=run_id,
@@ -438,6 +537,7 @@ class ArtanaKernel:
         tool_name: str,
         arguments: BaseModel,
         step_key: str | None = None,
+        parent_step_key: str | None = None,
     ) -> str:
         arguments_json = canonical_json_dumps(arguments.model_dump(mode="json"))
         return await reconcile_tool_with_replay(
@@ -449,6 +549,7 @@ class ArtanaKernel:
             tool_name=tool_name,
             arguments_json=arguments_json,
             step_key=step_key,
+            parent_step_key=parent_step_key,
         )
 
     async def resume(
@@ -457,16 +558,18 @@ class ArtanaKernel:
         run_id: str,
         tenant: TenantContext,
         human_input: BaseModel | None = None,
+        parent_step_key: str | None = None,
     ) -> RunRef:
         events = await self._store.get_events_for_run(run_id)
         if not events:
             raise ValueError(f"No events found for run_id={run_id!r}.")
         validate_tenant_for_run(events=events, tenant=tenant)
         human_input_json = human_input.model_dump_json() if human_input is not None else None
-        event = await self._store.append_event(
+        event = await self._append_event(
             run_id=run_id,
             tenant_id=tenant.tenant_id,
             event_type=EventType.RESUME_REQUESTED,
+            parent_step_key=parent_step_key,
             payload=ResumeRequestedPayload(human_input_json=human_input_json),
         )
         return RunHandle(run_id=event.run_id, tenant_id=event.tenant_id)
@@ -479,6 +582,7 @@ class ArtanaKernel:
         summary_type: str,
         summary_json: str,
         step_key: str | None = None,
+        parent_step_key: str | None = None,
     ) -> int:
         events = await self._store.get_events_for_run(run_id)
         if not events:
@@ -486,10 +590,11 @@ class ArtanaKernel:
                 f"No events found for run_id={run_id!r}; call start_run first."
             )
         validate_tenant_for_run(events=events, tenant=tenant)
-        event = await self._store.append_event(
+        event = await self._append_event(
             run_id=run_id,
             tenant_id=tenant.tenant_id,
             event_type=EventType.RUN_SUMMARY,
+            parent_step_key=parent_step_key,
             payload=RunSummaryPayload(
                 summary_type=summary_type,
                 summary_json=summary_json,
@@ -497,6 +602,29 @@ class ArtanaKernel:
             ),
         )
         return event.seq
+
+    async def append_harness_event(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        event_type: EventType,
+        payload: EventPayload,
+        parent_step_key: str | None = None,
+    ) -> KernelEvent:
+        events = await self._store.get_events_for_run(run_id)
+        if not events:
+            raise ValueError(
+                f"No events found for run_id={run_id!r}; call start_run first."
+            )
+        validate_tenant_for_run(events=events, tenant=tenant)
+        return await self._append_event(
+            run_id=run_id,
+            tenant_id=tenant.tenant_id,
+            event_type=event_type,
+            parent_step_key=parent_step_key,
+            payload=payload,
+        )
 
     async def close(self) -> None:
         await self._store.close()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 

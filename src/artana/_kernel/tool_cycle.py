@@ -19,7 +19,7 @@ from artana._kernel.types import (
     ToolExecutionFailedError,
 )
 from artana.canonicalization import canonicalize_json_object
-from artana.events import EventType, ToolRequestedPayload
+from artana.events import EventPayload, EventType, KernelEvent, ToolRequestedPayload
 from artana.middleware.base import KernelMiddleware
 from artana.models import TenantContext
 from artana.ports.tool import ToolPort
@@ -33,6 +33,26 @@ class ToolStepReplayResult:
     replayed: bool
 
 
+async def _append_event_with_parent(
+    store: EventStore,
+    *,
+    run_id: str,
+    tenant_id: str,
+    event_type: EventType,
+    payload: EventPayload,
+    parent_step_key: str | None = None,
+) -> KernelEvent:
+    append_kwargs = {
+        "run_id": run_id,
+        "tenant_id": tenant_id,
+        "event_type": event_type,
+        "payload": payload,
+    }
+    if parent_step_key is not None:
+        append_kwargs["parent_step_key"] = parent_step_key
+    return await store.append_event(**append_kwargs)
+
+
 async def execute_tool_step_with_replay(
     *,
     store: EventStore,
@@ -43,6 +63,7 @@ async def execute_tool_step_with_replay(
     tool_name: str,
     arguments_json: str,
     step_key: str | None = None,
+    parent_step_key: str | None = None,
 ) -> ToolStepReplayResult:
     normalized_arguments_json = canonicalize_json_object(arguments_json)
     prepared_arguments_json = canonicalize_json_object(
@@ -85,7 +106,6 @@ async def execute_tool_step_with_replay(
                 seq=completion.seq,
                 replayed=True,
             )
-
         await mark_pending_request_unknown(
             store=store,
             run_id=run_id,
@@ -93,6 +113,7 @@ async def execute_tool_step_with_replay(
             tool_name=tool_name,
             idempotency_key=requested.idempotency_key,
             request_event_id=resolution.request.event_id,
+            parent_step_key=parent_step_key,
         )
         raise ToolExecutionFailedError(
             f"Tool {tool_name!r} has an unresolved pending request and requires reconciliation."
@@ -108,10 +129,12 @@ async def execute_tool_step_with_replay(
         tool_port=tool_port,
         tool_name=tool_name,
     )
-    request_event = await store.append_event(
+    request_event = await _append_event_with_parent(
+        store=store,
         run_id=run_id,
         tenant_id=tenant.tenant_id,
         event_type=EventType.TOOL_REQUESTED,
+        parent_step_key=parent_step_key,
         payload=ToolRequestedPayload(
             tool_name=tool_name,
             arguments_json=prepared_arguments_json,
@@ -133,6 +156,7 @@ async def execute_tool_step_with_replay(
         request_event_id=request_event.event_id,
         tool_version=tool_version,
         schema_version=schema_version,
+        parent_step_key=parent_step_key,
         tenant=tenant,
         tenant_capabilities=tenant.capabilities,
         tenant_budget_usd_limit=tenant.budget_usd_limit,
@@ -154,6 +178,7 @@ async def reconcile_tool_with_replay(
     tool_name: str,
     arguments_json: str,
     step_key: str | None = None,
+    parent_step_key: str | None = None,
 ) -> str:
     normalized_arguments_json = canonicalize_json_object(arguments_json)
     prepared_arguments_json = canonicalize_json_object(
@@ -208,6 +233,7 @@ async def reconcile_tool_with_replay(
             request_event_id=resolution.request.event_id,
             tool_version=requested.tool_version,
             schema_version=requested.schema_version,
+            parent_step_key=parent_step_key,
             tenant=tenant,
             tenant_capabilities=tenant.capabilities,
             tenant_budget_usd_limit=tenant.budget_usd_limit,

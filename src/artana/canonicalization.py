@@ -26,21 +26,8 @@ def canonicalize_json_object(value: str) -> str:
     return canonical_json_dumps(parsed)
 
 
-def canonicalize_json_object_or_original(value: str) -> str:
-    """Canonicalize a JSON object string, or return the original input.
-
-    This is used when we need best-effort normalization without rejecting legacy
-    malformed/non-object payloads during replay matching.
-    """
-    try:
-        return canonicalize_json_object(value)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return value
-
-
 __all__ = [
     "CANONICAL_JSON_PROFILE",
     "canonical_json_dumps",
     "canonicalize_json_object",
-    "canonicalize_json_object_or_original",
 ]

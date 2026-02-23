@@ -367,8 +367,6 @@ factory.create(
 )
 ```
 
-`SubAgentFactory(tenant=...)` is still supported as a fallback for contexts where parent tenant budget metadata is unavailable.
-
 ### Workflow Context API
 For deterministic, step-by-step processes using pure Python.
 ```python

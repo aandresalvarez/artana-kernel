@@ -13,6 +13,11 @@ from artana.canonicalization import canonical_json_dumps
 class EventType(StrEnum):
     RUN_STARTED = "run_started"
     RESUME_REQUESTED = "resume_requested"
+    HARNESS_INITIALIZED = "harness_initialized"
+    HARNESS_WAKE = "harness_wake"
+    HARNESS_SLEEP = "harness_sleep"
+    HARNESS_FAILED = "harness_failed"
+    HARNESS_STAGE = "harness_stage"
     MODEL_REQUESTED = "model_requested"
     MODEL_COMPLETED = "model_completed"
     REPLAYED_WITH_DRIFT = "replayed_with_drift"
@@ -139,6 +144,39 @@ class RunSummaryPayload(BaseModel):
     step_key: str | None = None
 
 
+class HarnessInitializedPayload(BaseModel):
+    kind: Literal["harness_initialized"] = "harness_initialized"
+    harness_name: str | None = None
+    model: str | None = None
+
+
+class HarnessWakePayload(BaseModel):
+    kind: Literal["harness_wake"] = "harness_wake"
+    run_created: bool
+    reason: str | None = None
+
+
+class HarnessSleepPayload(BaseModel):
+    kind: Literal["harness_sleep"] = "harness_sleep"
+    status: Literal["completed", "failed"] = "completed"
+    execution_error_type: str | None = None
+    sleep_error_type: str | None = None
+
+
+class HarnessFailedPayload(BaseModel):
+    kind: Literal["harness_failed"] = "harness_failed"
+    error_type: str
+    message: str
+    last_step_key: str | None = None
+
+
+class HarnessStagePayload(BaseModel):
+    kind: Literal["harness_stage"] = "harness_stage"
+    stage: str
+    round: int | None = None
+    claims_count: int | None = None
+
+
 class RunStartedPayload(BaseModel):
     kind: Literal["run_started"] = "run_started"
 
@@ -164,6 +202,11 @@ class WorkflowStepCompletedPayload(BaseModel):
 EventPayload = (
     RunStartedPayload
     | ResumeRequestedPayload
+    | HarnessInitializedPayload
+    | HarnessWakePayload
+    | HarnessSleepPayload
+    | HarnessFailedPayload
+    | HarnessStagePayload
     | ModelRequestedPayload
     | ModelCompletedPayload
     | ReplayedWithDriftPayload
@@ -186,6 +229,7 @@ class KernelEvent(BaseModel):
     event_type: EventType
     prev_event_hash: str | None = None
     event_hash: str
+    parent_step_key: str | None = None
     timestamp: datetime = Field(default_factory=utc_now)
     payload: EventPayload
 
@@ -204,6 +248,7 @@ class KernelEvent(BaseModel):
             event_type=self.event_type,
             prev_event_hash=self.prev_event_hash,
             timestamp=self.timestamp,
+            parent_step_key=self.parent_step_key,
             payload=self.payload,
         )
         if expected_hash != self.event_hash:
@@ -262,18 +307,20 @@ def compute_event_hash(
     event_type: EventType,
     prev_event_hash: str | None,
     timestamp: datetime,
+    parent_step_key: str | None,
     payload: EventPayload,
 ) -> str:
-    joined = "|".join(
-        (
-            event_id,
-            run_id,
-            tenant_id,
-            str(seq),
-            event_type.value,
-            prev_event_hash or "",
-            timestamp.isoformat(),
-            payload_to_canonical_json(payload),
-        )
-    )
+    hash_fields = [
+        event_id,
+        run_id,
+        tenant_id,
+        str(seq),
+        event_type.value,
+        prev_event_hash or "",
+        timestamp.isoformat(),
+    ]
+    if parent_step_key is not None:
+        hash_fields.append(parent_step_key)
+    hash_fields.append(payload_to_canonical_json(payload))
+    joined = "|".join(hash_fields)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()

@@ -5,8 +5,8 @@ from dataclasses import dataclass, replace
 
 from artana._kernel.policies import apply_prepare_tool_result_middleware
 from artana._kernel.types import ReplayConsistencyError, ToolExecutionFailedError
-from artana.canonicalization import canonicalize_json_object_or_original
-from artana.events import EventType, ToolCompletedPayload
+from artana.canonicalization import canonicalize_json_object
+from artana.events import EventPayload, EventType, KernelEvent, ToolCompletedPayload
 from artana.json_utils import sha256_hex
 from artana.middleware.base import KernelMiddleware
 from artana.models import TenantContext
@@ -17,6 +17,26 @@ from artana.ports.tool import (
     ToolUnknownOutcomeError,
 )
 from artana.store.base import EventStore
+
+
+async def _append_event_with_parent(
+    store: EventStore,
+    *,
+    run_id: str,
+    tenant_id: str,
+    event_type: EventType,
+    payload: EventPayload,
+    parent_step_key: str | None = None,
+) -> KernelEvent:
+    append_kwargs = {
+        "run_id": run_id,
+        "tenant_id": tenant_id,
+        "event_type": event_type,
+        "payload": payload,
+    }
+    if parent_step_key is not None:
+        append_kwargs["parent_step_key"] = parent_step_key
+    return await store.append_event(**append_kwargs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +61,7 @@ async def complete_pending_tool_request(
     tenant: TenantContext,
     tenant_capabilities: frozenset[str] = frozenset(),
     tenant_budget_usd_limit: float | None = None,
+    parent_step_key: str | None = None,
 ) -> ToolCompletionResult:
     try:
         tool_result = await tool_port.call(
@@ -62,6 +83,7 @@ async def complete_pending_tool_request(
             store=store,
             run_id=run_id,
             tenant_id=tenant_id,
+            parent_step_key=parent_step_key,
             tool_name=tool_name,
             result=ToolExecutionResult(
                 outcome="unknown_outcome",
@@ -89,6 +111,7 @@ async def complete_pending_tool_request(
         store=store,
         run_id=run_id,
         tenant_id=tenant_id,
+        parent_step_key=parent_step_key,
         tool_name=tool_name,
         result=tool_result,
         request_event_id=request_event_id,
@@ -108,12 +131,15 @@ async def append_tool_completed_event(
     tool_name: str,
     result: ToolExecutionResult,
     request_event_id: str | None = None,
+    parent_step_key: str | None = None,
 ) -> int:
     request_id = result.request_id if result.request_id is not None else request_event_id
-    event = await store.append_event(
+    event = await _append_event_with_parent(
+        store=store,
         run_id=run_id,
         tenant_id=tenant_id,
         event_type=EventType.TOOL_COMPLETED,
+        parent_step_key=parent_step_key,
         payload=ToolCompletedPayload(
             tool_name=tool_name,
             result_json=result.result_json,
@@ -135,11 +161,13 @@ async def mark_pending_request_unknown(
     tool_name: str,
     idempotency_key: str,
     request_event_id: str | None,
+    parent_step_key: str | None = None,
 ) -> None:
     await append_tool_completed_event(
         store=store,
         run_id=run_id,
         tenant_id=tenant_id,
+        parent_step_key=parent_step_key,
         tool_name=tool_name,
         result=ToolExecutionResult(
             outcome="unknown_outcome",
@@ -181,6 +209,6 @@ def derive_idempotency_key(
     step_key: str | None = None,
 ) -> str:
     token = (
-        f"{run_id}:{tool_name}:{canonicalize_json_object_or_original(arguments_json)}:{step_key}"
+        f"{run_id}:{tool_name}:{canonicalize_json_object(arguments_json)}:{step_key}"
     )
     return sha256_hex(token)

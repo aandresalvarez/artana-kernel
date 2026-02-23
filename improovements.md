@@ -1,315 +1,456 @@
-Excellent question.
+Excellent.
+Let’s treat this like an RFC.
 
-Now we’re no longer discussing kernel architecture.
-
-We’re discussing **developer ergonomics**.
-
-This is where most frameworks fail.
-
-You can have the most beautiful event-sourced execution kernel in existence…
-…but if building a harness feels like assembling a nuclear reactor, nobody will use it.
-
-So let’s design the **developer experience (DX)** properly for Artana harnesses.
+Below is a structured architecture document you can share with your team.
 
 ---
 
-# 🧠 First Principle
+# RFC: Deep Traceability for Artana Harnesses
 
-From the Anthropic article:
-
-> A harness is structured discipline around long-running work.
-
-From Artana’s philosophy:
-
-> The kernel is the OS.
-> The harness is a userland program.
-
-So DX must make this true:
-
-> Creating a harness feels like subclassing a base class and filling in 3–5 clearly defined methods.
-
-Not writing orchestration loops manually.
+**Status:** Proposal
+**Audience:** Core Kernel & Harness Engineering
+**Goal:** Make harness execution fully observable, debuggable, replay-auditable, and production-traceable without breaking determinism.
 
 ---
 
-# 🎯 What Good DX Looks Like
+# 1. Executive Summary
 
-A developer should be able to write:
+Artana already provides:
 
-```python
-class MyResearchHarness(IncrementalTaskHarness):
-    async def define_tasks(self):
-        return [
-            TaskUnit(id="collect_data", description="Collect datasets"),
-            TaskUnit(id="analyze", description="Analyze patterns"),
-            TaskUnit(id="write_summary", description="Write final report"),
-        ]
-
-    async def work_on(self, task: TaskUnit):
-        # implement domain logic
-        ...
-```
-
-And that’s it.
-
-No replay handling.
-No event inspection.
-No summary plumbing.
-No tool lifecycle.
-
-All of that must be invisible.
-
----
-
-# 🏗 What You Need to Provide
-
-You already have:
-
-* Durable kernel
+* Deterministic event ledger
 * Replay safety
-* Summaries
-* Context versioning
+* Step-level `step_key`
+* Tool idempotency
 * Drift detection
-* Tool orchestration
-* Middleware policies
+* Budget enforcement
+* Structured summaries
 
-You now need a **thin harness SDK**.
+However, when a harness fails in production, developers currently need to manually inspect raw events.
+
+We propose introducing **Deep Harness Traceability**, a structured observability layer on top of the deterministic ledger.
+
+The objective is:
+
+> Every harness execution should be explainable in 30 seconds.
 
 ---
 
-# 🧩 The Minimal Developer-Facing API
+# 2. Problem Statement
 
-## 1️⃣ `BaseHarness`
+Current challenges:
+
+1. Raw event log is too low-level for fast debugging.
+2. Harness lifecycle phases are not explicitly marked in ledger.
+3. No structured trace boundaries per logical stage.
+4. Failures are captured implicitly (exceptions), not as structured trace artifacts.
+5. No hierarchy between harness → model → tool → workflow steps.
+6. No timeline-level view.
+7. No cost-per-stage visibility.
+8. No live trace streaming.
+
+We need traceability without:
+
+* Breaking replay determinism
+* Introducing side-channel state
+* Weakening audit guarantees
+* Polluting core kernel abstraction
+
+---
+
+# 3. Design Principles
+
+1. Deterministic first — tracing must be ledger-backed.
+2. Structured, not textual — no freeform logs.
+3. Step-boundary aware.
+4. Harness lifecycle visible.
+5. Cheap to query.
+6. Scalable for distributed workers.
+7. Zero runtime performance penalty in non-debug mode.
+
+---
+
+# 4. Proposed Features
+
+---
+
+# Feature 1 — Harness Lifecycle Events
+
+## Problem
+
+We currently have no first-class events for:
+
+* Harness initialization
+* Wake phase
+* Sleep phase
+* Structured failure boundaries
+
+## Proposal
+
+Add new event types:
 
 ```python
-class BaseHarness:
-    def __init__(self, kernel: ArtanaKernel, tenant: TenantContext):
-        self.kernel = kernel
-        self.tenant = tenant
-
-    async def run(self, run_id: str):
-        await self.on_initialize(run_id)
-        await self.on_wake(run_id)
-        result = await self.step(run_id)
-        await self.on_sleep(run_id)
-        return result
-
-    async def on_initialize(self, run_id: str): ...
-    async def on_wake(self, run_id: str): ...
-    async def step(self, run_id: str): ...
-    async def on_sleep(self, run_id: str): ...
+class EventType(StrEnum):
+    HARNESS_INITIALIZED
+    HARNESS_WAKE
+    HARNESS_SLEEP
+    HARNESS_FAILED
+    HARNESS_STAGE
 ```
 
-Most developers override only `step()`.
+### Example Event
 
-Advanced developers override lifecycle hooks.
+```json
+{
+  "event_type": "harness_stage",
+  "payload": {
+    "stage": "proposer",
+    "round": 2,
+    "claims_count": 12
+  }
+}
+```
+
+### Why?
+
+* Clear lifecycle segmentation
+* Faster debugging
+* Structured observability
+* No need to inspect raw model events
 
 ---
 
-## 2️⃣ `IncrementalTaskHarness`
+# Feature 2 — Structured Debug Trace Channel
 
-This is your Anthropic-style harness.
+Introduce a new summary type namespace:
+
+```
+summary_type="trace::<channel>"
+```
+
+Examples:
+
+* trace::round
+* trace::tool_validation
+* trace::cost_snapshot
+* trace::state_transition
+
+This avoids adding new event types while preserving structure.
+
+Example:
 
 ```python
-class IncrementalTaskHarness(BaseHarness):
-    SUMMARY_TYPE = "task_progress"
-
-    async def define_tasks(self) -> list[TaskUnit]:
-        raise NotImplementedError
-
-    async def work_on(self, task: TaskUnit):
-        raise NotImplementedError
+await harness.write_summary(
+    summary_type="trace::round",
+    payload={
+        "round": 3,
+        "confidence": 0.71,
+        "claims": 9,
+    },
+)
 ```
 
-Internally it:
+Benefits:
 
-* On initialize → writes task list summary
-* On wake → loads latest task summary
-* Picks first pending task
-* Calls `work_on`
-* Marks task done
-* Emits summary
-* On sleep → verifies consistency
+* Lightweight
+* Backward compatible
+* Fully ledger-backed
 
-Developers only implement:
+---
+
+# Feature 3 — Step Hierarchy Indexing
+
+Add structured trace hierarchy:
+
+```
+run
+ ├── harness lifecycle
+ │    ├── stage
+ │    │    ├── model call
+ │    │    ├── tool call
+ │    │    └── summary
+```
+
+Implementation:
+
+Add parent_step_key field to events.
+
+Example:
+
+```json
+{
+  "step_key": "round_2.proposer",
+  "parent_step_key": "round_2"
+}
+```
+
+This enables:
+
+* Tree reconstruction
+* Stage-level tracing
+* Visual trace viewer
+* Span grouping
+
+---
+
+# Feature 4 — Automatic Failure Boundary Emission
+
+Currently failures throw exceptions.
+
+Proposal:
+
+BaseHarness.run() should emit structured failure event before raising.
 
 ```python
-async def define_tasks(...)
-async def work_on(...)
+{
+  "event_type": "harness_failed",
+  "payload": {
+    "error_type": "ValidationError",
+    "message": "...",
+    "last_step_key": "round_3.repair"
+  }
+}
 ```
 
-That’s clean DX.
+Benefits:
+
+* No silent crash ambiguity
+* Exact failure boundary logged
+* Fast post-mortem
 
 ---
 
-# ✨ What the Developer Writes (Example)
+# Feature 5 — Deterministic Cost Breakdown
 
-### Example: Knowledge Graph Extraction Harness
+Add optional automatic cost aggregation per stage.
+
+Emit:
+
+```
+summary_type="trace::cost"
+```
+
+Payload:
+
+```json
+{
+  "stage": "round_2",
+  "model_cost": 0.012,
+  "tool_cost": 0.0,
+  "total_cost": 0.012
+}
+```
+
+Implementation:
+
+* Track cost_usd from MODEL_COMPLETED
+* Associate with current harness stage
+
+Benefits:
+
+* Cost visibility per debate round
+* Budget spike detection
+* Optimization guidance
+
+---
+
+# Feature 6 — Drift Trace Channel
+
+Currently drift is emitted as REPLAYED_WITH_DRIFT.
+
+Enhancement:
+
+Emit structured drift summary:
+
+```
+summary_type="trace::drift"
+```
+
+Payload:
+
+```json
+{
+  "step_key": "round_3.proposer",
+  "drift_fields": ["prompt"],
+  "forked": false
+}
+```
+
+This makes drift visually searchable.
+
+---
+
+# Feature 7 — Live Event Streaming Hook
+
+Extend EventStore to support optional on_event callback:
 
 ```python
-class KGExtractionHarness(IncrementalTaskHarness):
-
-    async def define_tasks(self):
-        return [
-            TaskUnit(id="chunk_text", description="Split article into chunks"),
-            TaskUnit(id="extract_entities", description="Extract entities"),
-            TaskUnit(id="extract_relations", description="Extract relations"),
-            TaskUnit(id="normalize", description="Normalize graph"),
-        ]
-
-    async def work_on(self, task: TaskUnit):
-        if task.id == "chunk_text":
-            await self.run_chunking()
-        elif task.id == "extract_entities":
-            await self.run_entity_extraction()
-        ...
+class EventStore:
+    def __init__(..., on_event: Callable[[KernelEvent], Awaitable[None]] | None = None)
 ```
 
-They never touch:
+This enables:
 
-* replay policy
-* summary events
-* drift handling
-* tool reconciliation
-* run summaries
+* WebSocket streaming
+* Console tracing
+* Prometheus metrics
+* OpenTelemetry spans
+* Debug CLI
 
-All hidden.
-
----
-
-# 🧠 Important DX Decisions
-
-## 🔹 1. Opinionated Defaults
-
-When developer creates harness:
+Example usage:
 
 ```python
-harness = KGExtractionHarness(kernel, tenant)
-await harness.run(run_id="kg_run_001")
+async def on_event(event):
+    print(event.event_type, event.seq)
+
+store = SQLiteStore("db", on_event=on_event)
 ```
 
-Defaults should be:
-
-* replay_policy = allow_prompt_drift
-* automatic summary emission
-* automatic run summary indexing
-* automatic wake reorientation
+No core logic changes required.
 
 ---
 
-## 🔹 2. Built-in Helper Methods
+# Feature 8 — Trace Query API
 
-Provide:
+Add high-level helper:
 
 ```python
-await self.read_summary("task_progress")
-await self.write_summary("task_progress", data)
-await self.list_tools()
-await self.run_model(...)
-await self.run_tool(...)
+await kernel.explain_run(run_id)
 ```
 
-So developer never calls `kernel.step_model` directly.
-
----
-
-## 🔹 3. Zero Event Log Awareness
-
-Developers should never have to:
-
-* Inspect `KernelEvent`
-* Understand `EventType`
-* Parse payload JSON
-* Handle replay manually
-
-That is kernel land.
-
----
-
-# 📦 Suggested Package Structure
-
-```
-artana/
-    harness/
-        base.py
-        incremental.py
-        supervisor.py
-```
-
-Export:
+Returns:
 
 ```python
-from artana.harness import BaseHarness, IncrementalTaskHarness
+{
+  "status": "failed",
+  "last_stage": "round_3.repair",
+  "last_tool": "verify_claim_tool",
+  "cost_total": 0.32,
+  "drift_events": 1,
+  "failure_reason": "ValidationError"
+}
 ```
 
-So usage becomes intuitive.
+This is built purely from ledger.
 
 ---
 
-# 🚨 The DX Failure You Must Avoid
+# Feature 9 — Trace Level Modes
 
-Do NOT require developers to:
+Add optional harness parameter:
 
 ```python
-await kernel.step_model(...)
-await kernel.append_run_summary(...)
-await kernel.get_events(...)
-await kernel.reconcile_tool(...)
+trace_level="minimal" | "stage" | "verbose"
 ```
 
-That’s power-user land.
+* minimal → only failures
+* stage → stage boundaries
+* verbose → every model/tool/summary
 
-Harness abstraction must protect them.
-
----
-
-# 🔥 The Big Insight
-
-Right now Artana is:
-
-> A very powerful execution kernel for experts.
-
-To reach the next level, it must become:
-
-> A layered system where 90% of developers never see the kernel.
-
-Kernel is infrastructure.
-Harness is product-facing.
-Domain harness is developer-facing.
+No change to determinism — only additional summaries emitted.
 
 ---
 
-# 🏆 What Makes This Better Than Anthropic
+# Feature 10 — Deterministic Timeline View
 
-Anthropic’s harness is specialized for coding.
+Introduce optional timestamp normalization:
 
-Your harness system can be:
+Add logical_duration_ms in summary:
 
-* Research harness
-* Financial modeling harness
-* Medical extraction harness
-* Multi-agent supervisor harness
-* ACO-style reasoning harness
+```json
+{
+  "stage": "round_2",
+  "duration_ms": 1840
+}
+```
 
-Because your kernel is generic.
+Measured inside harness, stored in ledger.
 
-That is the moat.
+Enables:
+
+* Latency profiling
+* Bottleneck detection
+* Production SLO tracking
 
 ---
 
-# 🧠 Final Answer
+# 5. Proposed Minimal Implementation Plan
 
-To make harness creation developer-friendly:
+Phase 1 (Low Risk):
 
-1. Introduce `BaseHarness`
-2. Provide `IncrementalTaskHarness`
-3. Hide replay and event sourcing
-4. Provide structured summary helpers
-5. Make 3–5 override points max
-6. Default everything else
+* Add harness_failed summary
+* Add trace::round channel
+* Add cost snapshot summary
+* Add explain_run helper
 
-If you do this correctly, developers will feel like:
+Phase 2 (Medium):
 
-> They are writing a small orchestrator class — not interacting with a distributed execution system.
+* Add parent_step_key support
+* Add live on_event hook
+* Add drift trace channel
+
+Phase 3 (Advanced):
+
+* OpenTelemetry integration
+* Prometheus metrics exporter
+* Web UI trace explorer
+* Multi-run correlation viewer
+
+---
+
+# 6. Backward Compatibility
+
+All features:
+
+* Ledger-based
+* Optional
+* Do not break replay
+* Do not modify core determinism logic
+* Do not change event hashing semantics
+
+---
+
+# 7. Example: Fully Traced Debate Round
+
+Ledger would contain:
+
+```
+RUN_STARTED
+HARNESS_INITIALIZED
+HARNESS_WAKE
+trace::round
+MODEL_REQUESTED (round_1.proposer)
+MODEL_COMPLETED
+MODEL_REQUESTED (round_1.critic)
+MODEL_COMPLETED
+trace::cost
+trace::drift (if any)
+HARNESS_SLEEP
+```
+
+A developer can answer:
+
+* Where did it fail?
+* Which model call?
+* Which tool?
+* Which stage?
+* How much did it cost?
+* Was there drift?
+* Was there replay?
+
+In under 30 seconds.
+
+---
+
+# 8. Final Outcome
+
+With these features, Artana becomes:
+
+> A fully auditable, traceable execution substrate for long-running intelligent systems.
+
+Not just deterministic.
+
+Not just replay-safe.
+
+But **deeply observable.**
 
  

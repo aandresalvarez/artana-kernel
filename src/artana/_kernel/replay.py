@@ -26,6 +26,7 @@ class ModelStepResult(Generic[OutputT]):
     tool_calls: tuple[ToolCall, ...]
     replayed: bool
     replayed_with_drift: bool = False
+    drift_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,7 @@ def deserialize_model_completed(
     output_schema: type[OutputT],
     replayed: bool,
     replayed_with_drift: bool = False,
+    drift_fields: tuple[str, ...] = (),
 ) -> ModelStepResult[OutputT]:
     payload = event.payload
     if not isinstance(payload, ModelCompletedPayload):
@@ -74,6 +76,7 @@ def deserialize_model_completed(
         ),
         replayed=replayed,
         replayed_with_drift=replayed_with_drift,
+        drift_fields=drift_fields,
     )
 
 
@@ -83,14 +86,12 @@ def find_prompt_drift_candidate(
     prompt: str,
     messages: tuple[ChatMessage, ...],
     model: str,
-    allowed_tool_names: list[str],
     allowed_tool_signatures: list[ToolSignatureRecord],
     step_key: str | None = None,
 ) -> PromptDriftCandidate | None:
     if step_key is None:
         return None
     expected_messages = list(messages)
-    expected_allowed_tools = sorted(allowed_tool_names)
     for index in range(len(events) - 1, -1, -1):
         event = events[index]
         if event.event_type != EventType.MODEL_REQUESTED:
@@ -104,7 +105,6 @@ def find_prompt_drift_candidate(
             continue
         _assert_allowed_tools_compatible(
             payload=payload,
-            expected_allowed_tools=expected_allowed_tools,
             expected_tool_signatures=allowed_tool_signatures,
         )
         prompt_matches = payload.prompt == prompt
@@ -127,13 +127,11 @@ def find_matching_model_cycle(
     prompt: str,
     messages: tuple[ChatMessage, ...],
     model: str,
-    allowed_tool_names: list[str],
     allowed_tool_signatures: list[ToolSignatureRecord],
     step_key: str | None = None,
     replay_policy: ReplayPolicy = "strict",
 ) -> ModelCycleLookup:
     expected_messages = list(messages)
-    expected_allowed_tools = sorted(allowed_tool_names)
 
     for index in range(len(events) - 1, -1, -1):
         event = events[index]
@@ -149,7 +147,6 @@ def find_matching_model_cycle(
 
         _assert_allowed_tools_compatible(
             payload=payload,
-            expected_allowed_tools=expected_allowed_tools,
             expected_tool_signatures=allowed_tool_signatures,
         )
         prompt_matches = payload.prompt == prompt
@@ -212,39 +209,24 @@ def validate_tenant_for_run(*, events: Sequence[KernelEvent], tenant: TenantCont
 def _assert_allowed_tools_compatible(
     *,
     payload: ModelRequestedPayload,
-    expected_allowed_tools: list[str],
     expected_tool_signatures: list[ToolSignatureRecord],
 ) -> None:
     expected_signatures = _sort_signatures(expected_tool_signatures)
     payload_signatures = _sort_signatures(payload.allowed_tool_signatures)
-    if payload_signatures:
-        expected_signature_tokens = [
-            _signature_token(signature) for signature in expected_signatures
-        ]
-        payload_signature_tokens = [
-            _signature_token(signature) for signature in payload_signatures
-        ]
-        expected_hash = compute_allowed_tools_hash(expected_signature_tokens)
-        if payload.allowed_tools_hash is not None and payload.allowed_tools_hash != expected_hash:
-            raise ReplayConsistencyError(
-                "Cannot resume run with changed allowed tool signatures for the same model step."
-            )
-        if payload_signature_tokens != expected_signature_tokens:
-            raise ReplayConsistencyError(
-                "Cannot resume run with changed allowed tool signatures for the same model step."
-            )
-        return
-
-    payload_allowed_tools = sorted(payload.allowed_tools)
-    expected_allowed_tools_hash = compute_allowed_tools_hash(expected_allowed_tools)
-    if payload.allowed_tools_hash is not None:
-        if payload.allowed_tools_hash != expected_allowed_tools_hash:
-            raise ReplayConsistencyError(
-                "Cannot resume run with changed allowed tools for the same model step."
-            )
-    if payload_allowed_tools != expected_allowed_tools:
+    expected_signature_tokens = [
+        _signature_token(signature) for signature in expected_signatures
+    ]
+    payload_signature_tokens = [
+        _signature_token(signature) for signature in payload_signatures
+    ]
+    expected_hash = compute_allowed_tools_hash(expected_signature_tokens)
+    if payload.allowed_tools_hash != expected_hash:
         raise ReplayConsistencyError(
-            "Cannot resume run with changed allowed tools for the same model step."
+            "Cannot resume run with changed allowed tool signatures for the same model step."
+        )
+    if payload_signature_tokens != expected_signature_tokens:
+        raise ReplayConsistencyError(
+            "Cannot resume run with changed allowed tool signatures for the same model step."
         )
 
 

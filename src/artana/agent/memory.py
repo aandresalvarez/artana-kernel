@@ -146,7 +146,3 @@ class SQLiteMemoryStore(MemoryStore):
 
     def _serialize_results(self, results: list[str]) -> str:
         return json.dumps(results, ensure_ascii=False)
-
-
-# Backwards-compatible alias used by examples and tests.
-MemoryStoreLike = MemoryStore

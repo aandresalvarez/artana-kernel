@@ -24,7 +24,7 @@ Each `model_requested` event stores:
   - `context_builder_version`
   - `compaction_version`
 
-Replay validates signatures first. Name-only hash fallback is used only for legacy events.
+Replay validates only signature-based hashes/tokens.
 
 ## Tool Determinism Invariants
 

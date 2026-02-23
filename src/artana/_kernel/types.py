@@ -42,6 +42,7 @@ class RunHandle:
 
 type RunRef = RunHandle
 type ReplayPolicy = Literal["strict", "allow_prompt_drift", "fork_on_drift"]
+type TraceLevel = Literal["minimal", "stage", "verbose"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +91,7 @@ class StepModelResult(Generic[OutputT]):
     replayed: bool
     replayed_with_drift: bool = False
     forked_from_run_id: str | None = None
+    drift_fields: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

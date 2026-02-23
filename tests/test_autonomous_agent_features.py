@@ -714,7 +714,7 @@ async def test_sub_agent_factory_spawns_child_run_with_lineage(tmp_path: Path) -
     model_port = ChildModelPort()
     kernel = ArtanaKernel(store=store, model_port=model_port)
     tenant = _tenant()
-    factory = SubAgentFactory(kernel=kernel, tenant=tenant)
+    factory = SubAgentFactory(kernel=kernel)
     factory.create(
         name="run_child_agent",
         output_schema=ChildResult,

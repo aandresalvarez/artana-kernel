@@ -11,11 +11,17 @@ from artana._kernel.replay import (
 from artana._kernel.types import ContextVersion, OutputT, ReplayPolicy
 from artana.canonicalization import (
     canonical_json_dumps,
-    canonicalize_json_object_or_original,
+    canonicalize_json_object,
 )
+from artana.json_utils import sha256_hex
+from artana.middleware.base import KernelMiddleware
+from artana.models import TenantContext
+from artana.ports.model import ModelPort, ModelRequest, ToolDefinition
+from artana.store.base import EventStore
 from artana.events import (
     ChatMessage,
     ContextVersionRecord,
+    EventPayload,
     EventType,
     KernelEvent,
     ModelCompletedPayload,
@@ -25,11 +31,26 @@ from artana.events import (
     ToolSignatureRecord,
     compute_allowed_tools_hash,
 )
-from artana.json_utils import sha256_hex
-from artana.middleware.base import KernelMiddleware
-from artana.models import TenantContext
-from artana.ports.model import ModelPort, ModelRequest, ToolDefinition
-from artana.store.base import EventStore
+
+
+async def _append_event_with_parent(
+    store: EventStore,
+    *,
+    run_id: str,
+    tenant_id: str,
+    event_type: EventType,
+    payload: EventPayload,
+    parent_step_key: str | None = None,
+) -> KernelEvent:
+    append_kwargs = {
+        "run_id": run_id,
+        "tenant_id": tenant_id,
+        "event_type": event_type,
+        "payload": payload,
+    }
+    if parent_step_key is not None:
+        append_kwargs["parent_step_key"] = parent_step_key
+    return await store.append_event(**append_kwargs)
 
 
 async def get_or_execute_model_step(
@@ -46,6 +67,7 @@ async def get_or_execute_model_step(
     tool_definitions: Sequence[ToolDefinition],
     events: Sequence[KernelEvent],
     step_key: str | None = None,
+    parent_step_key: str | None = None,
     replay_policy: ReplayPolicy = "strict",
     context_version: ContextVersion | None = None,
 ) -> ModelStepResult[OutputT]:
@@ -57,7 +79,6 @@ async def get_or_execute_model_step(
         prompt=prompt,
         messages=messages,
         model=model,
-        allowed_tool_names=normalized_tool_names,
         allowed_tool_signatures=tool_signatures,
         step_key=step_key,
         replay_policy=replay_policy,
@@ -67,10 +88,12 @@ async def get_or_execute_model_step(
 
     if completed_event is not None:
         if lookup.replayed_with_drift and request_event is not None:
-            await store.append_event(
+            await _append_event_with_parent(
+                store=store,
                 run_id=run_id,
                 tenant_id=tenant.tenant_id,
                 event_type=EventType.REPLAYED_WITH_DRIFT,
+                parent_step_key=parent_step_key,
                 payload=ReplayedWithDriftPayload(
                     step_key=step_key,
                     model=model,
@@ -80,18 +103,27 @@ async def get_or_execute_model_step(
                     replay_policy="allow_prompt_drift",
                 ),
             )
+            return deserialize_model_completed(
+                event=completed_event,
+                output_schema=output_schema,
+                replayed=True,
+                replayed_with_drift=lookup.replayed_with_drift,
+                drift_fields=lookup.drift_fields,
+            )
         return deserialize_model_completed(
             event=completed_event,
             output_schema=output_schema,
             replayed=True,
-            replayed_with_drift=lookup.replayed_with_drift,
+            replayed_with_drift=False,
         )
 
     if request_event is None:
-        await store.append_event(
+        await _append_event_with_parent(
+            store=store,
             run_id=run_id,
             tenant_id=tenant.tenant_id,
             event_type=EventType.MODEL_REQUESTED,
+            parent_step_key=parent_step_key,
             payload=ModelRequestedPayload(
                 model=model,
                 prompt=prompt,
@@ -121,10 +153,12 @@ async def get_or_execute_model_step(
             allowed_tools=tool_definitions,
         )
     )
-    completed_event = await store.append_event(
+    completed_event = await _append_event_with_parent(
+        store=store,
         run_id=run_id,
         tenant_id=tenant.tenant_id,
         event_type=EventType.MODEL_COMPLETED,
+        parent_step_key=parent_step_key,
         payload=ModelCompletedPayload(
             model=model,
             output_json=result.output.model_dump_json(),
@@ -134,9 +168,7 @@ async def get_or_execute_model_step(
             tool_calls=[
                 ToolCallRecord(
                     tool_name=tool_call.tool_name,
-                    arguments_json=canonicalize_json_object_or_original(
-                        tool_call.arguments_json
-                    ),
+                    arguments_json=canonicalize_json_object(tool_call.arguments_json),
                     tool_call_id=tool_call.tool_call_id,
                 )
                 for tool_call in result.tool_calls

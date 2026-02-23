@@ -211,3 +211,43 @@ async def test_get_latest_run_summary_returns_latest_by_summary_type(
         assert missing is None
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_on_event_callback_receives_appended_events(tmp_path: Path) -> None:
+    observed: list[tuple[int, str]] = []
+
+    async def on_event(event: object) -> None:
+        seq = getattr(event, "seq")
+        event_type = getattr(event, "event_type").value
+        observed.append((seq, event_type))
+
+    store = SQLiteStore(str(tmp_path / "state.db"), on_event=on_event)
+    try:
+        await store.append_event(
+            run_id="run_on_event",
+            tenant_id="tenant_on_event",
+            event_type=EventType.MODEL_REQUESTED,
+            payload=ModelRequestedPayload(
+                model="gpt-4o-mini",
+                prompt="hello",
+                messages=[ChatMessage(role="user", content="hello")],
+            ),
+        )
+        await store.append_event(
+            run_id="run_on_event",
+            tenant_id="tenant_on_event",
+            event_type=EventType.TOOL_REQUESTED,
+            payload=ToolRequestedPayload(
+                tool_name="noop",
+                arguments_json='{"index":"2"}',
+                idempotency_key="idemp-on-event-2",
+            ),
+        )
+
+        assert observed == [
+            (1, EventType.MODEL_REQUESTED.value),
+            (2, EventType.TOOL_REQUESTED.value),
+        ]
+    finally:
+        await store.close()

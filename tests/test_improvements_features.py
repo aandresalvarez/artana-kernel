@@ -74,25 +74,12 @@ class EchoModelPort:
         )
 
 
-class LegacyModelOnlyMiddleware:
-    async def prepare_model(self, invocation: object) -> object:
-        return invocation
-
-    async def before_model(self, *, run_id: str, tenant: TenantContext) -> None:
-        return None
-
-    async def after_model(
-        self,
-        *,
-        run_id: str,
-        tenant: TenantContext,
-        usage: ModelUsage,
-    ) -> None:
-        return None
-
-
 class EchoArgs(BaseModel):
     email: str
+
+
+class ParentTraceToolArgs(BaseModel):
+    value: str
 
 
 def _tenant() -> TenantContext:
@@ -282,38 +269,6 @@ async def test_pii_scrubber_applies_to_tool_request_and_result(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_legacy_middleware_without_tool_hooks_does_not_break_tools(
-    tmp_path: Path,
-) -> None:
-    store = SQLiteStore(str(tmp_path / "state.db"))
-    kernel = ArtanaKernel(
-        store=store,
-        model_port=EchoModelPort(),
-        middleware=[LegacyModelOnlyMiddleware()],
-    )
-    tenant = _tenant()
-
-    @kernel.tool()
-    async def echo_private(email: str) -> str:
-        return json.dumps({"echo": email, "status": "ok"})
-
-    try:
-        await kernel.start_run(tenant=tenant, run_id="run_legacy_middleware_tool")
-        result = await kernel.step_tool(
-            run_id="run_legacy_middleware_tool",
-            tenant=tenant,
-            tool_name="echo_private",
-            arguments=EchoArgs(email="alice@example.com"),
-            step_key="tool_step",
-        )
-        payload = json.loads(result.result_json)
-        assert payload["echo"] == "alice@example.com"
-        assert payload["status"] == "ok"
-    finally:
-        await kernel.close()
-
-
-@pytest.mark.asyncio
 async def test_autonomous_agent_emits_run_summary_event(tmp_path: Path) -> None:
     store = SQLiteStore(str(tmp_path / "state.db"))
     kernel = ArtanaKernel(store=store, model_port=AlwaysDoneModelPort())
@@ -427,5 +382,70 @@ async def test_step_model_emits_capability_decision_summary(tmp_path: Path) -> N
         assert decisions["restricted_transfer"]["reason"] == "filtered_missing_capability"
         assert "public_lookup" in summary_payload["final_allowed_tools"]
         assert "restricted_transfer" not in summary_payload["final_allowed_tools"]
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_parent_step_key_is_written_on_model_and_tool_events(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(store=store, model_port=EchoModelPort())
+    tenant = _tenant()
+    run_id = "run_parent_step_key"
+
+    @kernel.tool()
+    async def echo_tool(value: str) -> str:
+        return json.dumps({"value": value})
+
+    try:
+        await kernel.start_run(tenant=tenant, run_id=run_id)
+        model_result = await kernel.step_model(
+            run_id=run_id,
+            tenant=tenant,
+            model="gpt-4o-mini",
+            input=ModelInput.from_prompt("decide"),
+            output_schema=Decision,
+            step_key="model_step",
+            parent_step_key="trace::model",
+        )
+        assert model_result.output.approved is True
+
+        tool_result = await kernel.step_tool(
+            run_id=run_id,
+            tenant=tenant,
+            tool_name="echo_tool",
+            arguments=ParentTraceToolArgs(value="hello"),
+            step_key="tool_step",
+            parent_step_key="trace::tool",
+        )
+        assert tool_result.tool_name == "echo_tool"
+
+        events = await store.get_events_for_run(run_id)
+        model_requested = next(
+            event
+            for event in events
+            if event.event_type == EventType.MODEL_REQUESTED
+        )
+        model_completed = next(
+            event
+            for event in events
+            if event.event_type == EventType.MODEL_COMPLETED
+        )
+        tool_requested = next(
+            event
+            for event in events
+            if event.event_type == EventType.TOOL_REQUESTED
+        )
+        tool_completed = next(
+            event
+            for event in events
+            if event.event_type == EventType.TOOL_COMPLETED
+        )
+        assert model_requested.parent_step_key == "trace::model"
+        assert model_completed.parent_step_key == "trace::model"
+        assert model_requested.payload.step_key == "model_step"
+        assert tool_requested.parent_step_key == "trace::tool"
+        assert tool_completed.parent_step_key == "trace::tool"
+        assert tool_requested.payload.step_key == "tool_step"
     finally:
         await kernel.close()

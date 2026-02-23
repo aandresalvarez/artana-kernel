@@ -27,10 +27,7 @@ async def apply_prepare_tool_request_middleware(
 ) -> str:
     current = arguments_json
     for middleware_item in middleware:
-        prepare_tool_request = getattr(middleware_item, "prepare_tool_request", None)
-        if not callable(prepare_tool_request):
-            continue
-        current = await prepare_tool_request(
+        current = await middleware_item.prepare_tool_request(
             run_id=run_id,
             tenant=tenant,
             tool_name=tool_name,
@@ -49,10 +46,7 @@ async def apply_prepare_tool_result_middleware(
 ) -> str:
     current = result_json
     for middleware_item in middleware:
-        prepare_tool_result = getattr(middleware_item, "prepare_tool_result", None)
-        if not callable(prepare_tool_result):
-            continue
-        current = await prepare_tool_result(
+        current = await middleware_item.prepare_tool_result(
             run_id=run_id,
             tenant=tenant,
             tool_name=tool_name,

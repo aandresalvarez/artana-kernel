@@ -30,7 +30,6 @@ class ToolResolution:
 def resolve_tool_resolutions(events: Sequence[KernelEvent]) -> list[ToolResolution]:
     requested: list[ToolRequestRecord] = []
     completions_by_request_id: dict[str, ToolCompletionRecord] = {}
-    legacy_completions: list[ToolCompletionRecord] = []
 
     for event in events:
         if event.event_type == EventType.TOOL_REQUESTED:
@@ -54,9 +53,11 @@ def resolve_tool_resolutions(events: Sequence[KernelEvent]) -> list[ToolResoluti
                 payload=payload,
             )
             if payload.request_id is None:
-                legacy_completions.append(completion_record)
-            else:
-                completions_by_request_id[payload.request_id] = completion_record
+                raise ReplayConsistencyError(
+                    "tool_completed payload is missing request_id; "
+                    "legacy completions are unsupported."
+                )
+            completions_by_request_id[payload.request_id] = completion_record
 
     requested_ids = {record.event_id for record in requested}
     dangling_completion_ids = set(completions_by_request_id) - requested_ids
@@ -66,22 +67,13 @@ def resolve_tool_resolutions(events: Sequence[KernelEvent]) -> list[ToolResoluti
         )
 
     resolutions: list[ToolResolution] = []
-    legacy_index = 0
     for request_record in requested:
         completion = completions_by_request_id.get(request_record.event_id)
-        if completion is None and legacy_index < len(legacy_completions):
-            completion = legacy_completions[legacy_index]
-            legacy_index += 1
         resolutions.append(
             ToolResolution(
                 request=request_record,
                 completion=completion,
             )
-        )
-
-    if legacy_index != len(legacy_completions):
-        raise ReplayConsistencyError(
-            "Found legacy tool_completed events that exceed tool_requested events."
         )
 
     return resolutions

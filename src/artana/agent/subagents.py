@@ -22,13 +22,11 @@ class SubAgentFactory:
         self,
         *,
         kernel: ArtanaKernel,
-        tenant: TenantContext | None = None,
         context_builder: ContextBuilder | None = None,
         compaction: CompactionStrategy | None = None,
         memory_store: MemoryStore | None = None,
     ) -> None:
         self._kernel = kernel
-        self._tenant = tenant
         self._context_builder = context_builder
         self._compaction = compaction
         self._memory_store = memory_store
@@ -84,17 +82,9 @@ class SubAgentFactory:
                 capabilities=artana_context.tenant_capabilities,
                 budget_usd_limit=artana_context.tenant_budget_usd_limit,
             )
-        if self._tenant is None:
-            raise RuntimeError(
-                "SubAgentFactory requires tenant=... when parent tool context does not "
-                "include tenant budget metadata."
-            )
-        if self._tenant.tenant_id != artana_context.tenant_id:
-            raise RuntimeError(
-                "SubAgentFactory tenant mismatch: factory tenant_id does not match "
-                "the parent tool context tenant_id."
-            )
-        return self._tenant
+        raise RuntimeError(
+            "SubAgentFactory requires tenant budget metadata in tool execution context."
+        )
 
 
 __all__ = ["SubAgentFactory"]

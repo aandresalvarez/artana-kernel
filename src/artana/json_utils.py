@@ -6,7 +6,6 @@ from artana.canonicalization import (
     CANONICAL_JSON_PROFILE,
     canonical_json_dumps,
     canonicalize_json_object,
-    canonicalize_json_object_or_original,
 )
 
 
@@ -18,6 +17,5 @@ __all__ = [
     "CANONICAL_JSON_PROFILE",
     "canonical_json_dumps",
     "canonicalize_json_object",
-    "canonicalize_json_object_or_original",
     "sha256_hex",
 ]
