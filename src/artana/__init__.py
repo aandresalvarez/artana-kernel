@@ -1,4 +1,4 @@
-from artana.agent import ChatClient, KernelModelClient
+from artana.agent import AutonomousAgent, ChatClient, KernelModelClient
 from artana.agent_runtime import AgentRuntime, AgentRuntimeResult, AgentRuntimeState
 from artana.kernel import (
     ArtanaKernel,
@@ -22,6 +22,7 @@ from artana.store import SQLiteStore
 __all__ = [
     "ArtanaKernel",
     "AgentRuntime",
+    "AutonomousAgent",
     "AgentRuntimeResult",
     "AgentRuntimeState",
     "ChatClient",

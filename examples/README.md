@@ -55,3 +55,29 @@ Run:
 set -a; source .env; set +a
 uv run python examples/golden_example.py
 ```
+
+## 04 - Autonomous Agent
+
+Demonstrates the autonomous while-loop runtime:
+- model/tool replay-safe conversation memory in `AutonomousAgent`
+- durable `StepModelResult` replay with deterministic `step_key`s
+- automatic tool execution loop managed by the `AutonomousAgent`
+
+Run:
+
+```bash
+uv run python examples/04_autonomous_agent_research.py
+```
+
+## 05 - Hard Triplets Workflow
+
+Demonstrates strict workflow control:
+- explicit workflow steps with `WorkflowContext`
+- human-in-the-loop pause/resume
+- deterministic Python graph logic outside the model loop
+
+Run:
+
+```bash
+uv run python examples/05_hard_triplets_workflow.py
+```

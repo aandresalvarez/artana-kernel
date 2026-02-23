@@ -1,26 +1,25 @@
+
+
 # Artana Kernel (MVP)
 
 Artana is a policy-enforced, event-sourced execution kernel for AI systems. It provides durable, replay-safe, governed execution for LLM-driven workflows — without requiring a full distributed workflow platform.
 
 **Artana is not:**
 
-- An agent framework
-- A reasoning orchestrator
-- A workflow DSL
+- A cognitive reasoning framework (it does not enforce A* search or prompt strategies)
+- A workflow DSL (it does not invent new conditional or loop syntax)
 - A replacement for Temporal
 
 **Artana is:**
 
-- A domain-specific execution primitive for AI workloads.
+- A domain-specific execution primitive and OS-level hypervisor for AI workloads.
 
 ## Positioning
 
 Modern AI systems operate across three layers:
 
 ### Agent Layer
-
 (LangChain, PydanticAI, OpenAI Agents SDK)
-
 - Prompt orchestration
 - Tool selection
 - Structured outputs
@@ -29,9 +28,7 @@ Modern AI systems operate across three layers:
 These systems help models reason. They do not provide strong guarantees around durability, governance, replay semantics, or side-effect safety.
 
 ### Workflow Layer
-
 (Temporal and similar engines)
-
 - Durable execution
 - Deterministic replay
 - Distributed scheduling
@@ -39,18 +36,13 @@ These systems help models reason. They do not provide strong guarantees around d
 - Production-scale orchestration
 
 Temporal is a general-purpose workflow engine. It does not natively model:
-
 - Token budgeting
 - AI-specific governance
 - Prompt-level policy enforcement
 - LLM-aware execution semantics
 
-These must be built on top.
-
 ### Artana's Layer — AI Execution Kernel
-
 Artana sits between them. It provides:
-
 - Deterministic replay semantics for LLM + tool execution
 - Two-phase side-effect handling
 - Capability gating for AI tools
@@ -59,242 +51,125 @@ Artana sits between them. It provides:
 - Multi-tenant isolation
 - Replay-safe crash recovery
 
-Artana is the safety and durability layer your AI agent should run on. It complements Temporal. It strengthens agent frameworks.
+Artana is the safety and durability layer your AI agent should run on. It complements Temporal and strengthens agent frameworks.
 
 ## What This MVP Implements
 
 Initial implementation aligned with the Artana Kernel PRD:
 
-- Strictly typed kernel and event models (mypy --strict, no Any)
-- Event-sourced SQLite store (`SQLiteStore`):
-  - `append_event`
-  - `get_events_for_run`
-  - `verify_run_chain`
+- Strictly typed kernel and event models (`mypy --strict`, no `Any`)
+- Event-sourced SQLite store (`SQLiteStore`) with hash-chained cryptographic ledgers
 - Ports for model and tools:
   - `LiteLLMAdapter` (implements `ModelPort`)
   - `LocalToolRegistry` (implements `ToolPort`)
 - Core kernel APIs:
-  - `start_run` — kernel-issued run IDs for authoritative run lifecycle
-  - `load_run` — load an existing run reference
-  - `step_model` — deterministic model step execution
-  - `step_tool` — deterministic tool step execution
-  - `reconcile_tool` — resolve `unknown_outcome` tool requests using original idempotency key
-  - `pause` — request human-in-the-loop pause with optional context
-  - `resume` — append a resume boundary event with optional human input
-  - `run_workflow` — durable workflow with `WorkflowContext`, step serde, replay
-  - `KernelModelClient.chat(...)` (agent layer) — convenience wrapper around `step_model`
-  - `default_middleware_stack` — deterministic middleware ordering helper
-  - `KernelPolicy.enforced()` — startup guard requiring governance middleware
-- Tool registration via `@kernel.tool(requires_capability="...")` decorator
+  - `start_run` / `load_run` — authoritative run lifecycle
+  - `step_model` / `step_tool` — deterministic, atomic execution primitives
+  - `reconcile_tool` — resolve `unknown_outcome` tool requests safely
+  - `pause` / `resume` — human-in-the-loop durable interrupts
+- **The Agent Runtime:**
+  - `AutonomousAgent` — An out-of-the-box `Model -> Tool -> Model` loop that automatically executes tools and manages conversation memory on top of the Kernel.
+- **The Workflow Runtime:**
+  - `run_workflow` — Durable workflow with `WorkflowContext`, deterministic Python logic execution (`ctx.step`), and `ctx.pause`.
+- Tool registration via `@kernel.tool(requires_capability="...")`
 - Middleware stack: `PIIScrubberMiddleware`, `QuotaMiddleware`, `CapabilityGuardMiddleware`
-- `PIIScrubberMiddleware` is intentionally demo-level; use production DLP/classification controls for real PII handling.
-- Replay-safe two-phase tool execution
-- Deterministic crash recovery
-- Cryptographic audit hash-chain with verification
-- Async pytest coverage for: sequencing correctness, replay determinism, quota enforcement, middleware filtering/redaction, crash recovery, audit integrity
+- Replay-safe two-phase tool execution (protects against double-charging/executing on crash recovery)
 
 ## Core Guarantees
 
 ### Durable AI Execution
-
 All model and tool interactions are persisted as append-only events.
-
 **Replay:**
-
 - Never re-calls completed model steps
 - Never re-executes completed tool steps
-- Detects incomplete side-effects
-- Resumes deterministically
+- Detects incomplete side-effects and forces reconciliation
+- Resumes deterministically in milliseconds
 
 ### Two-Phase Tool Semantics
-
 Each tool invocation emits:
+1. `tool_requested` (Before execution)
+2. `tool_completed` (After execution)
 
-- `tool_requested`
-- `tool_completed`
-
-This prevents accidental double side-effects. Artana does not assume tools are safe. It enforces execution boundaries explicitly.
+If a worker dies between these events, Artana halts replay and demands reconciliation, ensuring side-effects (like DB writes or payments) are never accidentally duplicated.
 
 ### Governance by Default
-
 Every outbound call passes through middleware:
-
-- PII scrubbing
+- PII scrubbing (Demo implementation provided)
 - Budget reservation
 - Capability validation
 - Audit logging
 
-There is no bypass path.
-
-`PIIScrubberMiddleware` is intentionally simple regex redaction for examples and tests. It is not production-grade PII detection.
-
 ### Budget Enforcement
-
-Token usage is tracked via LiteLLM metadata. Execution is terminated if budgets are exceeded. Budgeting is enforced at runtime — not as reporting.
+Token usage is tracked via LiteLLM metadata. Execution is terminated if budgets are exceeded. Budgeting is enforced at runtime — not just as post-run reporting.
 
 ### Multi-Tenant Isolation
-
-All runs require:
-
+All runs require a `TenantContext`:
 - `tenant_id`
 - `capabilities`
 - `budget_usd_limit`
 
-All event logs are tenant-scoped.
+The Kernel automatically filters the tool list based on the tenant's capabilities *before* the LLM ever sees the prompt.
 
-### Tamper-Evident Audit Trail
+## Mental Models
 
-Events form a hash-chain ledger. Audit verification is built in.
+Artana gives you two ways to build, both backed by the exact same secure Kernel.
 
-## Mental Model
-
-Developers write normal Python:
+### 1. The Autonomous Agent (The "Steering Wheel")
+Use this when you want the LLM to dynamically decide which tools to use and how many times to loop until it reaches a final answer. The Kernel safely injects the tools the Tenant is allowed to use.
 
 ```python
-run = await kernel.start_run(tenant=tenant)
-step = await kernel.step_model(
-    run_id=run.run_id,
+agent = AutonomousAgent(kernel=kernel)
+
+report = await agent.run(
+    run_id="research_01",
     tenant=tenant,
-    model="gpt-4o-mini",
-    input=ModelInput.from_prompt("Should we transfer?"),
-    output_schema=Decision,
+    model="gpt-4o",
+    prompt="Find the CEO of Acme Corp.",
+    output_schema=CompanyReport
 )
-decision = step.output
 ```
 
-Artana ensures: durability, governance, side-effect safety, budget control, deterministic replay, auditability. You control orchestration. Artana controls execution integrity.
+### 2. The Durable Workflow (Manual Control)
+Use this when you need strict, deterministic pipelines with Human-In-The-Loop pauses and pure Python logic. The LLM is restricted to single extraction steps.
+
+```python
+async def my_workflow(ctx: WorkflowContext):
+    # 1. Atomic LLM call
+    facts = await chat.chat(..., step_key="extract")
+    
+    # 2. Deterministic Python logic (cached to DB)
+    derived = await ctx.step(name="math", action=run_math, serde=...)
+    
+    # 3. Durable Pause (Server can safely restart here)
+    await ctx.pause(reason="Human approval required", context=derived)
+    
+    return {"status": "saved"}
+
+result = await kernel.run_workflow(run_id="run_1", tenant=tenant, workflow=my_workflow)
+```
 
 ## Architecture
 
-Artana follows a strict Ports & Adapters model:
+Artana follows a strict Ports & Adapters model combined with an Event-Sourced Middleware stack:
 
-```
-Developer Code → Kernel → Middleware Stack → ModelPort / ToolPort → EventStore
-```
-
-No direct LiteLLM or DB calls from userland. All I/O is event-wrapped.
-
-### Code Structure
-
-```
-artana/
-├── __init__.py          # ArtanaKernel, TenantContext, WorkflowContext, SQLiteStore, etc.
-├── kernel.py            # Re-exports from _kernel
-├── models.py            # TenantContext
-├── events.py            # KernelEvent, EventType, payloads, compute_event_hash
-├── _kernel/
-│   ├── core.py          # ArtanaKernel
-│   ├── workflow_runtime.py  # run_workflow, WorkflowContext, StepSerde
-│   ├── replay.py        # replay matching + tenant validation helpers
-│   ├── model_cycle.py   # get_or_execute_model_step
-│   ├── tool_cycle.py    # replay-aware tool step execution
-│   ├── policies.py      # middleware pipeline + tool capability assertion helpers
-│   └── types.py         # ModelInput, StepModelResult, StepToolResult, KernelPolicy, RunHandle
-├── agent.py             # KernelModelClient (ChatClient compatibility alias)
-├── agent_runtime.py     # AgentRuntime loop abstraction over kernel primitives
-├── middleware/          # PIIScrubberMiddleware, QuotaMiddleware, CapabilityGuardMiddleware
-├── ports/
-│   ├── model.py        # LiteLLMAdapter, ModelPort
-│   ├── model_adapter.py
-│   ├── model_types.py
-│   └── tool.py         # LocalToolRegistry, ToolPort
-└── store/
-    ├── base.py         # EventStore protocol
-    └── sqlite.py       # SQLiteStore
+```text
+[ Developer's Python Code (Agent or Workflow) ]
+                 ↓
+[ Artana Kernel (The Orchestrator) ] 
+                 ↓
+[ Middleware Stack ] -> 1. PII Scrubber 
+                     -> 2. Quota Check 
+                     -> 3. Capability Guard
+                 ↓
+    [ Port Interfaces ]
+       ↙                 ↘
+[ ModelPort ]         [ ToolPort ]
+ (LiteLLM)         (Local Function Registry)
+       ↘                 ↙
+   [ EventStore (SQLiteStore) ]
 ```
 
-## Growth Path
-
-- **Phase 1 (MVP):** SQLite, single worker, strict replay semantics
-- **Phase 2:** Postgres backend, concurrency controls, snapshotting, observability
-- **Phase 3:** Optional integration with Temporal, distributed execution model, enterprise policy engines
-
-Artana is compatible with Temporal. It can run inside Temporal Activities. It can provide AI execution guarantees even in distributed workflow systems.
-
-## Quickstart
-
-```bash
-uv sync
-uv run pytest
-uv run mypy src
-```
-
-Strict typing and tests are mandatory. No `Any`. No hidden side-effects. No untracked execution.
-
-### Authoritative Mode (Recommended)
-
-For production-like usage, prefer:
-
-- `run = await kernel.start_run(tenant=tenant)` instead of caller-generated run IDs
-- `middleware=ArtanaKernel.default_middleware_stack()` to lock middleware order
-- `policy=KernelPolicy.enforced()` to fail fast if required middleware is missing
-- `LiteLLMAdapter(fail_on_unknown_cost=True)` to fail fast on unknown pricing metadata
-
-This turns governance and replay guarantees into startup/runtime contracts, not conventions.
-
-For side-effect tools, unknown outcomes are fail-closed: Artana halts replay and requires
-`kernel.reconcile_tool(...)` before continuing.
-
-### Minimal Usage
-
-```python
-from pydantic import BaseModel
-
-from artana import ArtanaKernel, KernelPolicy, ModelInput, TenantContext
-from artana.store import SQLiteStore
-from artana.ports.model import LiteLLMAdapter
-
-class Decision(BaseModel):
-    approved: bool
-    reason: str
-
-kernel = ArtanaKernel(
-    store=SQLiteStore(":memory:"),
-    model_port=LiteLLMAdapter(),
-    middleware=ArtanaKernel.default_middleware_stack(),
-    policy=KernelPolicy.enforced(),
-)
-tenant = TenantContext(
-    tenant_id="org_1",
-    capabilities=frozenset({"finance:read"}),
-    budget_usd_limit=1.0,
-)
-run = await kernel.start_run(tenant=tenant)
-
-step = await kernel.step_model(
-    run_id=run.run_id,
-    tenant=tenant,
-    model="gpt-4o-mini",
-    input=ModelInput.from_prompt("Should we approve?"),
-    output_schema=Decision,
-)
-decision = step.output
-```
-
-## Detailed API Reference (Latest)
-
-This section documents the current API surface.
-
-### Imports
-
-```python
-from pydantic import BaseModel
-
-from artana import (
-    AgentRuntime,
-    ArtanaKernel,
-    KernelModelClient,
-    KernelPolicy,
-    ModelInput,
-    TenantContext,
-    WorkflowContext,
-    json_step_serde,
-    pydantic_step_serde,
-)
-from artana.kernel import CapabilityDeniedError, ReplayConsistencyError, ToolExecutionFailedError
-from artana.ports.model import LiteLLMAdapter
-from artana.store import SQLiteStore
-```
+## Detailed API Reference
 
 ### Core Data Types
 
@@ -305,291 +180,94 @@ TenantContext(
     budget_usd_limit: float,  # > 0.0
 )
 
-KernelPolicy(mode: Literal["permissive", "enforced"] = "permissive")
 KernelPolicy.enforced() -> KernelPolicy
-
 ModelInput.from_prompt(prompt: str) -> ModelInput
-ModelInput.from_messages(messages: Sequence[ChatMessage], *, prompt: str | None = None) -> ModelInput
+ModelInput.from_messages(messages: Sequence[ChatMessage]) -> ModelInput
 ```
 
-`StepModelResult` fields:
-- `run_id: str`
-- `seq: int`
-- `output: BaseModel`
-- `usage: ModelUsage`
-- `tool_calls: tuple[ToolCall, ...]`
-- `replayed: bool`
-
-`StepToolResult` fields:
-- `run_id: str`
-- `seq: int`
-- `tool_name: str`
-- `result_json: str`
-- `replayed: bool`
-
-`PauseTicket` fields:
-- `run_id: str`
-- `ticket_id: str`
-- `seq: int`
-- `reason: str`
-
-### ArtanaKernel
-
-Constructor:
-
+### ArtanaKernel Initialization
 ```python
-ArtanaKernel(
-    *,
-    store: EventStore,
-    model_port: ModelPort,
-    tool_port: ToolPort | None = None,
-    middleware: Sequence[KernelMiddleware] | None = None,
-    policy: KernelPolicy | None = None,
+kernel = ArtanaKernel(
+    store=SQLiteStore("artana_state.db"),
+    model_port=LiteLLMAdapter(),
+    middleware=ArtanaKernel.default_middleware_stack(),
+    policy=KernelPolicy.enforced(),
 )
 ```
 
-Recommended deterministic middleware setup:
-
+### Tool Registration
 ```python
-ArtanaKernel.default_middleware_stack(
-    *,
-    pii: bool = True,
-    quota: bool = True,
-    capabilities: bool = True,
-) -> tuple[KernelMiddleware, ...]
+@kernel.tool(requires_capability="finance:write")
+async def transfer_funds(account_id: str, amount: str) -> str:
+    return "Success"
 ```
 
-Lifecycle:
-
+### Autonomous Agent API
+A lightweight wrapper over the kernel that manages conversation history and automatic tool execution.
 ```python
-await kernel.start_run(*, tenant: TenantContext, run_id: str | None = None) -> RunRef
-await kernel.load_run(*, run_id: str) -> RunRef
-await kernel.close() -> None
+from artana.agent import AutonomousAgent
+
+agent = AutonomousAgent(kernel=kernel)
+result = await agent.run(
+    run_id="run_123",
+    tenant=tenant,
+    model="gpt-4o",
+    system_prompt="You are a helpful agent.",
+    prompt="Do the task.",
+    output_schema=FinalDecision,
+    max_iterations=15
+)
 ```
 
-Model step:
-
-```python
-await kernel.step_model(
-    *,
-    run_id: str,
-    tenant: TenantContext,
-    model: str,
-    input: ModelInput,
-    output_schema: type[OutputT],
-    step_key: str | None = None,
-) -> StepModelResult[OutputT]
-```
-
-Notes:
-- If a matching model cycle already exists for `(run_id, step_key, request shape)`, result is replayed with `replayed=True`.
-- If no match exists, kernel appends `model_requested` then `model_completed`.
-
-Tool registration and execution:
-
-```python
-@kernel.tool(requires_capability: str | None = None)
-async def my_tool(...) -> str | ToolExecutionResult:
-    ...
-
-await kernel.step_tool(
-    *,
-    run_id: str,
-    tenant: TenantContext,
-    tool_name: str,
-    arguments: BaseModel,
-    step_key: str | None = None,
-) -> StepToolResult
-
-await kernel.reconcile_tool(
-    *,
-    run_id: str,
-    tenant: TenantContext,
-    tool_name: str,
-    arguments: BaseModel,
-    step_key: str | None = None,
-) -> str
-```
-
-Notes:
-- Tool execution is two-phase: `tool_requested` is appended before call, `tool_completed` after call.
-- Unknown outcomes are fail-closed (`ToolExecutionFailedError`) and must be reconciled via `reconcile_tool(...)`.
-- Stable `step_key` values are recommended for deterministic replay over time.
-
-Human-in-the-loop boundaries:
-
-```python
-await kernel.pause(
-    *,
-    run_id: str,
-    tenant: TenantContext,
-    reason: str,
-    context: BaseModel | None = None,
-    step_key: str | None = None,
-) -> PauseTicket
-
-await kernel.resume(
-    *,
-    run_id: str,
-    tenant: TenantContext,
-    human_input: BaseModel | None = None,
-) -> RunRef
-```
-
-Workflow runtime:
-
+### Workflow Context API
+For deterministic, step-by-step processes using pure Python.
 ```python
 await kernel.run_workflow(
-    *,
-    run_id: str | None,
-    tenant: TenantContext,
-    workflow: Callable[[WorkflowContext], Awaitable[WorkflowOutputT]],
-) -> WorkflowRunResult[WorkflowOutputT]
-```
-
-`WorkflowRunResult` fields:
-- `run_id: str`
-- `status: Literal["complete", "paused"]`
-- `output: WorkflowOutputT | None`
-- `pause_ticket: PauseTicket | None`
-
-Inside `WorkflowContext`:
-
-```python
-await ctx.step(
-    *,
-    name: str,
-    action: Callable[[], Awaitable[StepT]],
-    serde: StepSerde[StepT],
-) -> StepT
-
-await ctx.pause(
-    reason: str,
-    *,
-    context: BaseModel | None = None,
-    step_key: str | None = None,
-) -> PauseTicket  # raises internal pause interrupt and returns via WorkflowRunResult
-```
-
-### KernelModelClient
-
-```python
-chat = KernelModelClient(kernel=kernel)
-
-await chat.chat(
-    *,
-    run_id: str,
-    tenant: TenantContext,
-    model: str,
-    prompt: str,
-    output_schema: type[OutputT],
-    step_key: str | None = None,
-) -> StepModelResult[OutputT]
-```
-
-Notes:
-- `KernelModelClient.chat` auto-starts the run if `run_id` does not exist.
-- `chat(...)` delegates to `kernel.step_model(...)` and preserves replay behavior.
-- `ChatClient` remains available as a compatibility alias to `KernelModelClient`.
-
-### AgentRuntime
-
-```python
-runtime = AgentRuntime(kernel=kernel)
-```
-
-Notes:
-- `AgentRuntime` is an optional loop layer above `ArtanaKernel`.
-- Use `run_turn(...)` for one replay-safe model turn with message accumulation.
-- Use `run_until(...)` with a policy callback to stop/continue the loop.
-
-### Event Store
-
-`SQLiteStore` implements `EventStore`:
-
-```python
-SQLiteStore(
-    database_path: str,
-    *,
-    busy_timeout_ms: int = 5000,
-    max_retry_attempts: int = 5,
-    retry_backoff_seconds: float = 0.02,
-)
-
-await store.append_event(
-    *,
-    run_id: str,
-    tenant_id: str,
-    event_type: EventType,
-    payload: EventPayload,
-) -> KernelEvent
-
-await store.get_events_for_run(run_id: str) -> list[KernelEvent]
-await store.verify_run_chain(run_id: str) -> bool
-await store.close() -> None
-
-# Optional fast-path API used by QuotaMiddleware when available:
-await store.get_model_cost_sum_for_run(run_id: str) -> float
-```
-
-### Error Surface
-
-Common exceptions:
-- `CapabilityDeniedError`: tenant lacks required capability for requested tool.
-- `ToolExecutionFailedError`: tool failed, unknown outcome halt, or replayed non-success completion.
-- `ReplayConsistencyError`: replay invariants broken (mismatched event history).
-- `ValueError`: missing/unknown run, invalid lifecycle usage.
-
-### Real OpenAI Usage
-
-```bash
-set -a; source .env; set +a
-uv run python examples/02_real_litellm_chat.py
-```
-
-The script proves deterministic replay by calling `KernelModelClient.chat()` twice for the same `run_id` and asserting:
-
-- second response has `replayed=True`
-- event count does not grow on replay
-- output is identical to the first response
-
-### Golden Example
-
-```bash
-set -a; source .env; set +a
-uv run python examples/golden_example.py
-```
-
-The golden example is the canonical implementation of Artana invariants for:
-
-- kernel-issued run lifecycle (`start_run`)
-- enforced middleware governance
-- deterministic replay without duplicate events
-
-### Workflow Runtime
-
-Durable steps with replay:
-
-```python
-from artana import ArtanaKernel, TenantContext, WorkflowContext, json_step_serde
-
-async def fetch_data() -> dict:
-    return {"status": "ok"}
-
-async def my_workflow(ctx: WorkflowContext) -> dict:
-    data = await ctx.step(name="fetch", action=fetch_data, serde=json_step_serde())
-    return data
-
-result = await kernel.run_workflow(
-    run_id=None,
+    run_id="run_123",
     tenant=tenant,
-    workflow=my_workflow,
+    workflow=my_async_workflow_function,
 )
-# result.output, result.status ("complete" | "paused"), result.pause_ticket
+
+# Inside the workflow function:
+await ctx.step(name="step_1", action=my_func, serde=pydantic_step_serde(MyModel))
+await ctx.pause(reason="Needs review", step_key="approval_gate")
 ```
 
-See also: `examples/README.md`
+### Raw Kernel Primitives
+If you are building your own custom orchestration loop:
+```python
+await kernel.step_model(
+    run_id=run_id,
+    tenant=tenant,
+    model="gpt-4o",
+    input=ModelInput.from_prompt("..."),
+    output_schema=MySchema,
+    step_key="turn_1"
+)
 
----
+await kernel.step_tool(
+    run_id=run_id,
+    tenant=tenant,
+    tool_name="transfer_funds",
+    arguments=ArgsSchema(...),
+    step_key="tool_1"
+)
+```
 
-*Artana provides durable, policy-enforced AI execution semantics — as a lightweight kernel that complements both agent frameworks and workflow engines.*
+## Examples
+
+Run examples from the repository root:
+
+- **`01_durable_chat_replay.py`**: Basic capability-scoped tool execution and durable replay.
+- **`02_real_litellm_chat.py`**: Real OpenAI calls proving replay invariants without duplicate network requests.
+- **`03_fact_extraction_triplets.py`**: Single-step structured extraction.
+- **`04_autonomous_agent_research.py`**: Demonstrates the `AutonomousAgent` loop dynamically selecting tools to accomplish a goal.
+- **`05_hard_triplets_workflow.py`**: Demonstrates the strict `run_workflow` pattern interleaving LLM calls, deterministic Python math, and a durable Human-In-The-Loop pause.
+- **`golden_example.py`**: Canonical production-leaning example testing unknown tool outcomes and reconciliation.
+
+## Growth Path
+
+- **Phase 1 (MVP - Current):** SQLite, single worker, strict replay semantics, Autonomous Agent loop, Workflow contexts.
+- **Phase 2:** Postgres backend (for multi-worker concurrency), Snapshotting, Advanced Observability (Logfire tracing decorators).
+- **Phase 3:** Optional integration with Temporal, distributed execution model, enterprise policy engines (OPA).
+ 
