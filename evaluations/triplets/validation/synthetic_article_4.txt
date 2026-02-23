@@ -1,0 +1,207 @@
+Title
+
+Converging Neuroimmune, Epigenetic, and Proteostatic Cascades in Systemic Autoimmune Encephalomyelitis: A Multi-Axis Dissection
+
+Abstract
+
+Systemic autoimmune encephalomyelitis (SAE) is a multi-organ disorder driven by neuroinflammation, immune dysregulation, and metabolic instability. Attempts to identify single-gene explanations for SAE have repeatedly failed. This study integrates data from five independent experimental platforms to map the signaling architecture underlying SAE pathogenesis. We identify a core neuroinflammatory transcriptional cascade (NTC) that serves as a convergence node for at least two upstream regulatory axes: the JAK-STAT-CNS neuroimmune module and the caspase-inflammatory (CASP-INFLAM) cascade operating through an autoimmune activation module. Additionally, we characterize an epigenetic silencing program that counterbalances inflammatory drive, a ubiquitin-proteasome-mediated degradation pathway that modulates transcription factor availability, and a metabolic exhaustion arm with modest disease association. Three pharmacological agents targeting distinct nodes are evaluated. Our findings underscore the primacy of indirect, multi-step regulatory mechanisms over direct gene-disease links in SAE.
+
+1
+
+Systemic autoimmune encephalomyelitis, referred to hereafter as SAE or occasionally as "the encephalomyelitis syndrome" in older clinical nomenclature, presents with relapsing CNS inflammation, peripheral immune activation, and episodes of metabolic decompensation. The syndrome's heterogeneity has frustrated a generation of geneticists seeking monogenic explanations.
+
+2
+
+Two genes—IRF-κ7 and BLIMP-2L—were flagged by early transcriptomic screens as candidate drivers of SAE. However, as we demonstrate in this work, neither gene is directly associated with the disease. Instead, both feed into a shared inflammatory convergence node through distinct multi-step pathways.
+
+3
+
+IRF-κ7 (also designated IRFK7 in NCBI records and referred to as "interferon regulatory factor kappa-7" or simply "the κ7 regulator" by Yamada et al.) encodes a transcription factor expressed in CNS-resident microglia and peripheral monocytes. Its precise role in neuroimmune signaling was unclear until the phosphoproteomic studies reported here.
+
+4
+
+In primary microglial cultures stimulated with type I interferons, expression of the κ7 regulator resulted in robust phosphorylation of JAK-η3 (sometimes abbreviated JAKE3 and referred to as "Janus kinase eta-3" or "the η3 kinase" in the Methods). Genetic ablation of IRFK7 via CRISPR eliminated this phosphorylation, and reconstitution with wild-type IRF-κ7 rescued kinase activation, confirming that the interferon regulatory factor activates the η3 kinase in a cell-autonomous manner.
+
+5
+
+A note on nomenclature: JAKE3 (JAK-η3) must not be confused with JAK3, the well-characterized Janus kinase 3 involved in IL-2 signaling. Despite the phonetic similarity, JAKE3 is a distinct enzyme with a divergent catalytic domain and non-overlapping substrate specificity. Throughout this manuscript, all references to "the η3 kinase," "JAKE3," or "Janus kinase eta-3" denote the same protein—JAK-η3.
+
+6
+
+Biochemical fractionation and native-PAGE experiments demonstrated that JAKE3 is embedded within a multi-protein signaling assembly that the authors designate the JAK-STAT-CNS axis (also called "the J-S-C axis," "CNS JAK module," or "neuroimmune JAK cascade" in supplementary figures). Co-sedimentation studies confirmed that the η3 kinase is a core constituent of the JAK-STAT-CNS axis rather than a peripheral interactor.
+
+7
+
+Within the J-S-C axis, signal propagation terminates at STAT-ω6 (abbreviated STW6 and referred to variously as "signal transducer omega-6" or "the omega transducer"). Activation of the CNS JAK module in microglial cultures resulted in tyrosine phosphorylation and nuclear translocation of the omega transducer, which then bound to gene promoter regions. Dose-response experiments confirmed that the neuroimmune JAK cascade activates STAT-ω6 with an EC50 consistent with physiological ligand concentrations.
+
+8
+
+What transcriptional program does STW6 control? RNA-seq following STAT-ω6 overexpression revealed coordinated upregulation of a module encompassing 847 genes enriched for inflammatory, chemokine, and antigen-presentation functions. The authors term this module the Neuroinflammatory Transcriptional Cascade (NTC), also referred to as "the neuroinflammatory program" or "CNS inflammatory signature." The omega transducer upregulates the NTC, as confirmed by both gain-of-function and dominant-negative experiments.
+
+9
+
+An aside on TLR-9 is necessary to correct a persistent error in the literature. Martinez & Zhou (2016) reported that TLR-9, a pattern-recognition receptor, activates JAK-η3 in bone-marrow-derived macrophages. This claim was cited over 200 times before the original paper was retracted in 2022 due to data fabrication in the phosphoproteomic panels. In the present study, TLR-9 stimulation with CpG oligonucleotides failed to induce JAK-η3 phosphorylation in any of five cell types tested. The authors unequivocally conclude that TLR-9 does not activate the η3 kinase.
+
+10
+
+Clinically, elevated NTC expression was strongly and reproducibly associated with SAE severity across four independent longitudinal cohorts (combined n = 3,200). The CNS inflammatory signature predicted both relapse frequency and cumulative disability, independent of demographic covariates. This association between the neuroinflammatory program and the encephalomyelitis syndrome is among the most robust reported in the neuroimmune literature.
+
+11
+
+One might therefore expect the upstream regulators of NTC to show direct genetic association with SAE. They do not. A meta-analysis of genome-wide association studies encompassing 18,000 SAE cases and 45,000 controls found no significant association between IRF-κ7 variants and SAE incidence (OR 1.01, 95% CI 0.96–1.06, p = 0.71). Similarly, BLIMP-2L variants showed no direct association (OR 0.98, 95% CI 0.93–1.03, p = 0.55). Earlier, underpowered candidate-gene studies that reported nominal significance for both loci were not replicated.
+
+12
+
+The second major inflammatory input derives from the innate immune compartment. BLIMP-2L (also written BL2 and known as "B-lymphocyte-induced maturation protein 2-like" or "the maturation factor") is a transcriptional regulator expressed in activated B cells and innate lymphoid cells.
+
+13
+
+Functional assays in human peripheral blood mononuclear cells revealed that induction of the maturation factor led to proteolytic activation of CASP-L12 (abbreviated CL12, also called "caspase-like 12" or "the executioner protease"). Importantly, BL2 knockdown abolished CL12 cleavage, confirming that BLIMP-2L activates the executioner protease. Note that despite its name, CASP-L12 has dual roles: it participates in both apoptotic and non-apoptotic inflammatory signaling, and only its inflammatory function is relevant to the present study.
+
+14
+
+Mass spectrometry of native immune complexes revealed that CL12 is part of a larger inflammasome-like assembly designated the CASP-INFLAM cascade (also called "the inflammasome cascade," "CI-cascade," or "caspase-inflammatory pathway"). The executioner protease serves as the catalytic core of this assembly, which also includes adaptor proteins and regulatory subunits not individually characterized in this study.
+
+15
+
+Activation of the inflammasome cascade resulted in coordinated induction of a gene expression program that the authors term the Autoimmune Activation Module (AAM), also referred to as "the autoimmune program" or "immune activation module." The CI-cascade upregulates the AAM through a mechanism involving IL-1β maturation and downstream NFκB signaling.
+
+16
+
+The connection between AAM and neuroinflammation is critical. The autoimmune program, when active in peripheral immune cells, produces soluble mediators that cross the blood-brain barrier and upregulate the Neuroinflammatory Transcriptional Cascade in CNS-resident cells. In co-culture systems, AAM-expressing immune cells induced NTC expression in microglia, establishing that the autoimmune activation module upregulates the neuroinflammatory program.
+
+17
+
+To summarize the convergence architecture: NTC—the central inflammatory node associated with SAE—receives pro-inflammatory input from two independent upstream axes. First, the neuroimmune JAK cascade (via the omega transducer STW6) directly upregulates the neuroinflammatory program in CNS cells. Second, the inflammasome cascade (via the autoimmune activation module) indirectly amplifies NTC through peripheral-to-central immune cross-talk. These two inputs operate through distinct cell types and molecular mechanisms, yet converge on the same transcriptional output.
+
+18
+
+What counterbalances these pro-inflammatory inputs? A regulatory circuit involving FOXN-3α (abbreviated FN3A and also known as "forkhead box N3-alpha" or "the forkhead regulator") was characterized. The forkhead regulator is expressed in regulatory T cells and acts as a negative modulator of the neuroimmune axis.
+
+19
+
+In competitive binding assays, FN3A directly bound to the activation loop of JAK-η3, preventing its phosphorylation by upstream kinases. Overexpression of the forkhead regulator in microglial co-cultures reduced η3 kinase phosphorylation by 75%, whereas FOXN-3α knockdown resulted in hyperactivation of JAK-η3. These data establish that FOXN-3α inhibits JAK-η3, acting as a molecular brake on the neuroimmune cascade.
+
+20
+
+A separate protective axis operates through epigenetic mechanisms. The gene EPIG-4 (also written EP4 and known as "epigenetic programmer 4" or "the chromatin architect") encodes a bromodomain-containing protein that recruits chromatin-modifying enzymes to specific genomic loci.
+
+21
+
+In neuronal cultures, expression of the chromatin architect resulted in activation of SIRT-X4 (abbreviated SX4), a NAD+-dependent deacetylase also referred to as "sirtuin X4" or "the X4 deacetylase." EP4 knockdown abolished SX4 enzymatic activity, and rescue experiments confirmed that EPIG-4 activates the X4 deacetylase through a mechanism involving NAD+ cofactor stabilization.
+
+The literature on SIRT-X4 contains a significant inconsistency that warrants discussion. Nakamura et al. (2019) reported that SX4 directly suppresses inflammatory transcription in macrophages, which some readers interpreted as evidence that the X4 deacetylase directly inhibits the neuroinflammatory program. As we demonstrate below, this interpretation is incorrect: SIRT-X4 operates exclusively through an intermediary epigenetic module and has no direct effect on NTC gene promoters.
+
+22
+
+Biochemical mapping placed the X4 deacetylase within the SIRT-EPIG loop (also called "the sirtuin-epigenetic circuit," "S-E loop," or "chromatin regulatory loop"). Chromatin immunoprecipitation confirmed that SX4 co-localizes with other components of this circuit at specific histone marks, establishing that SIRT-X4 is part of the SIRT-EPIG loop.
+
+23
+
+The sirtuin-epigenetic circuit controls a coordinated chromatin state that the authors term the Epigenetic Silencing Program (ESP), also described as "the silencing program" or "chromatin suppression module." When active, the S-E loop upregulates the ESP, resulting in widespread deacetylation of H3K27 and H3K9 at inflammatory gene loci.
+
+24
+
+The critical finding: the genomic targets of the Epigenetic Silencing Program overlap extensively with NTC gene promoters. When the silencing program is active, NTC gene expression is suppressed. Formal perturbation experiments—including ESP induction, ESP knockout, and time-course analyses—converge on the conclusion that the Epigenetic Silencing Program inhibits the Neuroinflammatory Transcriptional Cascade.
+
+25
+
+Returning to the Nakamura et al. claim: the present study tested whether SIRT-X4 can directly suppress NTC expression independently of the SIRT-EPIG loop and ESP. Using a catalytically active but loop-uncoupled SX4 mutant, the authors found zero effect on NTC gene expression. Only when the complete sirtuin-epigenetic circuit was intact did NTC suppression occur. Therefore, SIRT-X4 does not directly inhibit the neuroinflammatory program; its anti-inflammatory effect is mediated entirely through ESP.
+
+26
+
+A third protective mechanism was discovered involving targeted protein degradation. TRIM-55X (also designated T55X and known as "tripartite motif 55X" or "the ubiquitin ligase gene") encodes an E3 ubiquitin ligase with substrate specificity for phosphorylated transcription factors.
+
+27
+
+Overexpression of the ubiquitin ligase gene in microglial cultures increased the activity of UBQ-M7 (abbreviated UM7 and also called "ubiquitin modifier M7"), a ubiquitin-conjugating enzyme. TRIM-55X knockdown reduced UM7 activity, confirming that T55X activates the ubiquitin modifier. Note that UBQ-M7 should not be confused with ubiquitin itself; UM7 is an enzyme that attaches ubiquitin chains, not the ubiquitin molecule.
+
+28
+
+Native gel analysis demonstrated that UM7 resides within the UBQ-PROTEASOME axis (also called "the UPS," "ubiquitin-proteasome axis," or "degradation pathway"). The ubiquitin modifier co-fractionates with 26S proteasome subunits and regulatory particle components, confirming it as part of the UPS.
+
+29
+
+What is the functional consequence of UPS activation for the inflammatory signaling architecture? Pulse-chase experiments revealed that the ubiquitin-proteasome axis targets phosphorylated STAT-ω6 for polyubiquitination and proteasomal degradation. Active UPS reduces STW6 protein half-life from 8.2 hours to 1.4 hours, effectively inhibiting the omega transducer by depleting its cellular pool. Importantly, this degradation is selective: the UPS does not target other JAK-STAT pathway members in this context. In formal terms: the UBQ-PROTEASOME axis inhibits STAT-ω6 through targeted degradation.
+
+30
+
+The metabolic dimension of SAE was investigated through the mTORC3 branch (also termed "metabolic branch 3," "mTORC3 arm," or "the m3 module"), a recently characterized mTOR complex variant enriched in CNS glial cells. This pathway is distinct from the canonical mTORC1 and mTORC2 complexes and regulates a non-overlapping set of metabolic targets.
+
+31
+
+The m3 module controls a transcriptional and metabolic program designated the Metabolic Exhaustion Response (MER), which the text also refers to as "metabolic exhaustion" and "the exhaustion signature." MER encompasses shifts in mitochondrial dynamics, NAD+ depletion, and reduced oxidative phosphorylation capacity. The mTORC3 branch regulates the MER, though the precise direction of regulation (activation vs. suppression of individual MER components) was found to be context-dependent across different cell types.
+
+32
+
+Clinical data revealed a modest but statistically significant association between MER and SAE progression (HR 1.25, p = 0.04 across two cohorts). However, this association was weaker than the NTC-SAE link, and sensitivity analyses suggested partial confounding by age and metabolic comorbidities. The authors describe the metabolic exhaustion–SAE relationship as "present but secondary."
+
+33
+
+PDE-9R (abbreviated PD9R and also known as "phosphodiesterase 9R" or "the cyclic nucleotide hydrolase") was investigated as a potential modulator of the metabolic axis. In glial cultures, overexpression of the cyclic nucleotide hydrolase reduced mTORC3 kinase activity, while PDE-9R knockdown increased it. These bidirectional results establish that PDE-9R inhibits the mTORC3 branch.
+
+Alongside PDE-9R, another enzyme—PTEN-L, a lipid phosphatase—was detected in the same glial fractions. However, PTEN-L manipulation had no effect on mTORC3 activity, MER levels, or any other endpoint measured. PTEN-L appears to be a bystander in this context.
+
+34
+
+Whether the metabolic axis cross-talks with the inflammatory axis is a question of considerable interest. Some reviewers have speculated that mTORC3 signaling might modulate NTC expression, either directly or through MER-mediated mechanisms. In the present dataset, rapamycin analog treatment (which partially attenuates the m3 module) produced a non-significant trend toward reduced NTC expression (fold change 0.93, p = 0.11). The authors explicitly conclude that no direct mTORC3-NTC connection has been established.
+
+35
+
+Similarly, one reviewer suggested that JAK-η3 might influence metabolic exhaustion through kinase cross-talk with the m3 module. The authors tested this hypothesis using JAK-η3-specific inhibitors and found no change in MER gene expression or metabolic flux parameters. Any JAK-η3–MER relationship therefore remains speculative.
+
+36
+
+Additional proteins detected in inflamed CNS tissue by unbiased mass spectrometry included NOTCH-4B and VEGF-R2. NOTCH-4B, a Notch receptor paralog, was initially considered as a potential SAE contributor due to its developmental role in CNS patterning. However, conditional knockout of NOTCH-4B in adult mice produced no detectable change in NTC expression, AAM activity, or SAE clinical scores. The authors describe any NOTCH-4B–SAE association as unsubstantiated.
+
+VEGF-R2, a vascular endothelial growth factor receptor, was detected at elevated levels in regions of blood-brain barrier disruption. Some groups have proposed that VEGF-R2-mediated vascular permeability could amplify neuroinflammation. While conceptually plausible, no experimental data in the present study support a direct link between VEGF-R2 and NTC. The authors classify this as a speculative hypothesis.
+
+37
+
+We now turn to pharmacological interventions targeting distinct nodes in the network.
+
+Neuroguard (NRG-15), described as "the neuroprotective agent" in the pharmacology section, is a small molecule designed to inhibit STAT-ω6 nuclear translocation. In microglial cultures, Neuroguard treatment at therapeutic concentrations (100–500 nM) reduced STW6 phosphorylation and nuclear accumulation, confirming that NRG-15 inhibits the omega transducer.
+
+A historical note: a 2017 dose-finding study by Park et al. observed that at sub-therapeutic concentrations (<10 nM), Neuroguard paradoxically increased STAT-ω6 phosphorylation. This apparent activation was later attributed to off-target inhibition of a phosphatase that normally dephosphorylates STW6. At all concentrations within the therapeutic window (≥100 nM), the drug consistently inhibits STAT-ω6. The paradoxical low-dose effect has no clinical relevance and should not be interpreted as a dual-action mechanism.
+
+38
+
+Downstream of STW6 inhibition, Neuroguard treatment reduced NTC expression in both cell culture and organotypic brain slice models. The neuroprotective agent downregulated the neuroinflammatory program in a dose-dependent manner, with effects plateauing at 300 nM.
+
+39
+
+The second therapeutic compound, Immustatin (IMT-8), is described as "the immunosuppressive compound" or "immune modulator IMT" in trial protocols. In PBMC cultures, IMT-8 selectively inhibited CASP-L12 cleavage by binding to the executioner protease's active site. BLIMP-2L levels were unaffected, confirming that Immustatin targets CL12 directly rather than its upstream activator.
+
+40
+
+As a consequence of CL12 inhibition, Immustatin treatment reduced AAM gene expression across multiple donor samples. The immune modulator IMT downregulates the autoimmune activation module, consistent with removal of the inflammasome cascade's catalytic activity.
+
+Whether Immustatin might also affect the epigenetic axis was investigated. CL12 and SIRT-X4 share a structural fold in their catalytic domains, raising the possibility that IMT-8 could cross-react. However, enzyme kinetic assays showed that Immustatin has >500-fold selectivity for CASP-L12 over SX4. Any CASP-L12–ESP interaction through Immustatin is therefore negligible, and the authors flag any CL12-ESP link as merely speculative.
+
+41
+
+The third pharmacological agent, Epivex (EPV-3), is described as "the epigenetic activator." EPV-3 is a NAD+ precursor analog that enhances sirtuin activity by increasing cofactor availability. Treatment with the epigenetic activator increased SIRT-X4 deacetylase activity 4.2-fold in neuronal cultures, demonstrating that Epivex activates the X4 deacetylase.
+
+42
+
+Consistent with SIRT-X4's role within the sirtuin-epigenetic circuit, Epivex treatment upregulated ESP expression. Chromatin mark analyses confirmed that EPV-3 enhanced H3K27 and H3K9 deacetylation at NTC-associated loci, precisely mirroring the effects of direct SIRT-X4 overexpression. The epigenetic activator upregulates the Epigenetic Silencing Program through its SIRT-X4-dependent mechanism.
+
+43
+
+In a preclinical SAE mouse model, triple combination therapy (Neuroguard + Immustatin + Epivex) achieved near-complete suppression of NTC expression and >80% reduction in clinical disease scores, far exceeding the efficacy of any single agent. The additive benefit is consistent with the three drugs targeting orthogonal nodes: Neuroguard suppresses STAT-ω6 (the JAK-STAT-CNS output), Immustatin blocks CASP-L12 (the CASP-INFLAM catalytic core), and Epivex enhances the ESP (the epigenetic counter-regulatory arm). No drug directly targets the other two drugs' nodes, and no synergistic (supra-additive) interactions were detected, consistent with pathway independence.
+
+44
+
+Computational modeling integrated all signaling, epigenetic, metabolic, and degradation data into a unified network. The model positions IRF-κ7 as an upstream trigger that propagates through JAK-η3 and the JAK-STAT-CNS axis to STAT-ω6, ultimately driving NTC expression and SAE association through a 5-step chain. Similarly, BLIMP-2L propagates through CASP-L12 and the CASP-INFLAM cascade to AAM and onward to NTC. In neither case does the model require or support a direct gene-disease edge.
+
+45
+
+For the protective axes, the model predicts that FOXN-3α reduces NTC expression indirectly by inhibiting JAK-η3 (thereby attenuating STAT-ω6 activation and downstream NTC drive). EPIG-4 reduces NTC through a longer chain: EP4 → SIRT-X4 → SIRT-EPIG loop → ESP → NTC inhibition. And TRIM-55X reduces NTC through UBQ-M7 → UPS → STAT-ω6 degradation → reduced NTC drive. Notably, all three protective mechanisms converge on NTC reduction through different molecular strategies—kinase inhibition, epigenetic silencing, and targeted protein degradation—without any direct interaction among them.
+
+46
+
+The model emphasizes a non-obvious sign-propagation feature: although EPIG-4 activates SIRT-X4 (a positive regulation), and SIRT-X4 promotes ESP (another positive regulation), the net effect on NTC is inhibitory because ESP suppresses NTC. A naive extraction that tracks only activation chains without accounting for the inhibitory ESP→NTC edge would incorrectly predict that EPIG-4 promotes neuroinflammation. The correct derived inference is that EPIG-4 indirectly inhibits NTC and reduces SAE risk.
+
+47
+
+Finally, the authors delineate precise epistemic boundaries. The following claims are supported by the evidence: (1) the specific molecular relationships enumerated above, (2) multi-hop derived influences traceable through established chains, and (3) the pharmacological mechanisms of Neuroguard, Immustatin, and Epivex. The following are explicitly unsupported: (a) direct genetic association of IRF-κ7 or BLIMP-2L with SAE, (b) direct NTC inhibition by SIRT-X4, (c) TLR-9 activation of JAK-η3 (retracted), (d) any established role for NOTCH-4B, VEGF-R2, or PTEN-L, (e) cross-talk between the metabolic (mTORC3) and inflammatory (NTC) axes, (f) metabolic involvement of JAK-η3, and (g) cross-reactivity of Immustatin with the epigenetic axis. These boundaries are essential for accurate knowledge representation and should constrain any computational extraction or reasoning over this study's findings.
