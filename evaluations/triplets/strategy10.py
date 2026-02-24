@@ -590,7 +590,9 @@ def _prompt_fingerprint(prompt: str) -> str:
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
 
 
-def _edge_counts_from_extraction(extracted: FreeExtractionResult | ReviewedExtractionResult) -> dict[str, int]:
+def _edge_counts_from_extraction(
+    extracted: FreeExtractionResult | ReviewedExtractionResult,
+) -> dict[str, int]:
     return {
         "fact_edges": len(extracted.fact_edges),
         "derived_edges": len(extracted.derived_edges),

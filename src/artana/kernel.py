@@ -7,12 +7,12 @@ from artana._kernel.types import (
     PauseTicket,
     ReplayConsistencyError,
     ReplayPolicy,
-    TraceLevel,
     RunHandle,
     RunRef,
     StepModelResult,
     StepToolResult,
     ToolExecutionFailedError,
+    TraceLevel,
 )
 from artana._kernel.workflow_runtime import (
     JsonValue,

@@ -37,18 +37,18 @@ from artana._kernel.workflow_runtime import (
 )
 from artana.events import (
     ChatMessage,
-    EventType,
     EventPayload,
+    EventType,
     HarnessFailedPayload,
     HarnessSleepPayload,
     HarnessStagePayload,
     KernelEvent,
     PauseRequestedPayload,
-    ToolCompletedPayload,
     ReplayedWithDriftPayload,
     ResumeRequestedPayload,
     RunStartedPayload,
     RunSummaryPayload,
+    ToolCompletedPayload,
 )
 from artana.json_utils import canonical_json_dumps, sha256_hex
 from artana.middleware import order_middleware

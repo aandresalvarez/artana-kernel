@@ -4,8 +4,8 @@ import json
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from time import monotonic
 from dataclasses import dataclass
+from time import monotonic
 from typing import Generic, TypeVar
 
 from pydantic import BaseModel
@@ -19,18 +19,18 @@ from artana.events import (
     EventType,
     HarnessFailedPayload,
     HarnessInitializedPayload,
-    HarnessStagePayload,
     HarnessSleepPayload,
+    HarnessStagePayload,
     HarnessWakePayload,
 )
 from artana.kernel import (
     ArtanaKernel,
     ContextVersion,
     ModelInput,
-    TraceLevel,
     ReplayPolicy,
     StepModelResult,
     StepToolResult,
+    TraceLevel,
 )
 from artana.models import TenantContext
 from artana.ports.model import ToolDefinition
@@ -706,7 +706,9 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
                         "replayed": model_result.replayed,
                         "replayed_with_drift": model_result.replayed_with_drift,
                         "forked_from_run_id": model_result.forked_from_run_id,
-                        "tool_calls": [tool_call.tool_name for tool_call in model_result.tool_calls],
+                        "tool_calls": [
+                            tool_call.tool_name for tool_call in model_result.tool_calls
+                        ],
                         "cost_usd": model_result.usage.cost_usd,
                     },
                     step_key=f"trace_model_{required_step_key}",

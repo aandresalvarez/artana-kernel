@@ -42,12 +42,11 @@ This will include only files with allowed extensions from the specified director
 while skipping folders like `venv`, `.streamlit`, and others.
 """
 
-import os
 import argparse
 import fnmatch
-from collections import defaultdict
+import os
 import sys
-
+from collections import defaultdict
 
 # Hardcoded folders to always exclude (exact matches only)
 DEFAULT_EXCLUDE_FOLDERS = {
@@ -329,7 +328,8 @@ def process_target_folder(
         md_lines.append(f"## Folder: {folder_path}\n")
         if found_venv:
             md_lines.append(
-                "> ℹ️ *Note: Contains a virtual environment folder (e.g., `venv`, `.venv`). Contents are excluded.*\n"
+                "> ℹ️ *Note: Contains a virtual environment folder "
+                "(e.g., `venv`, `.venv`). Contents are excluded.*\n"
             )
         for filename in sorted(files):
             file_path = os.path.join(root, filename)
@@ -415,7 +415,10 @@ def main():
         type=str,
         nargs="+",
         default=[os.getcwd()],
-        help="Target folder(s) to extract from. Default is current directory. Can specify multiple folders.",
+        help=(
+            "Target folder(s) to extract from. "
+            "Default is current directory. Can specify multiple folders."
+        ),
     )
     parser.add_argument(
         "--output-file",
@@ -436,7 +439,10 @@ def main():
         "-x",
         action="append",
         default=[],
-        help="Specific folder paths to exclude (relative to target folder). Can be specified multiple times. Example: -x tests/ -x docs/",
+        help=(
+            "Specific folder paths to exclude (relative to target folder). "
+            "Can be specified multiple times. Example: -x tests/ -x docs/"
+        ),
     )
     args = parser.parse_args()
 
@@ -491,8 +497,11 @@ def main():
     write_markdown_file(output_path, md_lines)
     print(f"✅ Markdown file generated: {output_path}")
     if len(target_folders) > 1:
+        included_folders = ", ".join(
+            os.path.basename(folder) for folder in target_folders
+        )
         print(
-            f"   Included {len(target_folders)} folders: {', '.join(os.path.basename(folder) for folder in target_folders)}"
+            f"   Included {len(target_folders)} folders: {included_folders}"
         )
 
 

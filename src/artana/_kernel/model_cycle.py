@@ -13,11 +13,6 @@ from artana.canonicalization import (
     canonical_json_dumps,
     canonicalize_json_object,
 )
-from artana.json_utils import sha256_hex
-from artana.middleware.base import KernelMiddleware
-from artana.models import TenantContext
-from artana.ports.model import ModelPort, ModelRequest, ToolDefinition
-from artana.store.base import EventStore
 from artana.events import (
     ChatMessage,
     ContextVersionRecord,
@@ -31,6 +26,11 @@ from artana.events import (
     ToolSignatureRecord,
     compute_allowed_tools_hash,
 )
+from artana.json_utils import sha256_hex
+from artana.middleware.base import KernelMiddleware
+from artana.models import TenantContext
+from artana.ports.model import ModelPort, ModelRequest, ToolDefinition
+from artana.store.base import EventStore
 
 
 async def _append_event_with_parent(

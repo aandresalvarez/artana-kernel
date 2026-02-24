@@ -35,7 +35,8 @@ class ExtractedFacts(BaseModel):
 EXTRACTION_INSTRUCTIONS = """Extract factual triplets from the article below.
 Each triplet has:
 - subject: the entity or concept that the fact is about
-- predicate: a short verb phrase describing the relation (e.g. "is connected to", "works at", "located in")
+- predicate: a short verb phrase describing the relation
+  (e.g. "is connected to", "works at", "located in")
 - object: the other entity or value
 
 Output only valid facts that are explicitly stated or clearly implied. One triplet per fact.
