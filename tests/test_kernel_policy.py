@@ -8,8 +8,10 @@ from pydantic import BaseModel
 
 from artana import KernelModelClient
 from artana.kernel import ArtanaKernel, KernelPolicy
+from artana.middleware import SafetyPolicyMiddleware
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage
+from artana.safety import SafetyPolicyConfig
 from artana.store import SQLiteStore
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
@@ -109,6 +111,19 @@ def test_enforced_policy_requires_guard_middleware(tmp_path: Path) -> None:
         )
 
 
+def test_enforced_v2_policy_requires_safety_middleware(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state_v2.db"))
+    model_port = CountingModelPort()
+
+    with pytest.raises(ValueError, match="SafetyPolicyMiddleware"):
+        ArtanaKernel(
+            store=store,
+            model_port=model_port,
+            middleware=ArtanaKernel.default_middleware_stack(),
+            policy=KernelPolicy.enforced_v2(),
+        )
+
+
 @pytest.mark.asyncio
 async def test_default_middleware_stack_satisfies_enforced_policy(
     tmp_path: Path,
@@ -125,6 +140,34 @@ async def test_default_middleware_stack_satisfies_enforced_policy(
     try:
         result = await KernelModelClient(kernel=kernel).step(
             run_id="run_policy_ok",
+            prompt="approve?",
+            model="gpt-4o-mini",
+            tenant=_tenant(),
+            output_schema=Decision,
+        )
+        assert result.replayed is False
+        assert model_port.calls == 1
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_default_middleware_stack_satisfies_enforced_v2_policy(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state_v2_ok.db"))
+    model_port = CountingModelPort()
+    safety = SafetyPolicyMiddleware(config=SafetyPolicyConfig())
+    kernel = ArtanaKernel(
+        store=store,
+        model_port=model_port,
+        middleware=ArtanaKernel.default_middleware_stack(safety=safety),
+        policy=KernelPolicy.enforced_v2(),
+    )
+
+    try:
+        result = await KernelModelClient(kernel=kernel).step(
+            run_id="run_policy_v2_ok",
             prompt="approve?",
             model="gpt-4o-mini",
             tenant=_tenant(),

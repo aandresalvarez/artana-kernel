@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import asyncpg  # type: ignore[import-untyped]
 import pytest
 
 from artana.events import (
@@ -13,6 +15,7 @@ from artana.events import (
     ModelCompletedPayload,
     ModelRequestedPayload,
     RunSummaryPayload,
+    ToolCompletedPayload,
     ToolRequestedPayload,
 )
 from artana.store import PostgresStore
@@ -201,3 +204,125 @@ async def test_summary_and_cost_queries_match_expected_payloads(store: PostgresS
         ]
     finally:
         await callback_store.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_columns_and_aggregates_are_queryable(store: PostgresStore) -> None:
+    run_id = _run_id("run_pg_policy")
+    request = await store.append_event(
+        run_id=run_id,
+        tenant_id="tenant_pg_policy",
+        event_type=EventType.TOOL_REQUESTED,
+        payload=ToolRequestedPayload(
+            tool_name="send_invoice",
+            arguments_json='{"billing_period":"2026-02"}',
+            idempotency_key=f"idemp-{run_id}-1",
+            step_key="invoice_1",
+            semantic_idempotency_key="send_invoice:tenant_pg_policy:2026-02",
+            amount_usd=42.5,
+        ),
+    )
+    await store.append_event(
+        run_id=run_id,
+        tenant_id="tenant_pg_policy",
+        event_type=EventType.TOOL_COMPLETED,
+        payload=ToolCompletedPayload(
+            tool_name="send_invoice",
+            result_json='{"ok":true}',
+            outcome="success",
+            request_id=request.event_id,
+        ),
+    )
+
+    count_for_run = await store.get_tool_request_count_for_run(
+        run_id=run_id,
+        tool_name="send_invoice",
+    )
+    assert count_for_run == 1
+
+    count_for_tenant = await store.get_tool_request_count_for_tenant_since(
+        tenant_id="tenant_pg_policy",
+        tool_name="send_invoice",
+        since=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    assert count_for_tenant == 1
+
+    latest = await store.get_latest_tool_semantic_outcome(
+        tenant_id="tenant_pg_policy",
+        tool_name="send_invoice",
+        semantic_idempotency_key="send_invoice:tenant_pg_policy:2026-02",
+    )
+    assert latest is not None
+    assert latest.run_id == run_id
+    assert latest.outcome == "success"
+    assert latest.request_step_key == "invoice_1"
+    assert latest.request_arguments_json == '{"billing_period":"2026-02"}'
+
+    await asyncio.sleep(0.001)
+    second_run_id = _run_id("run_pg_policy")
+    second_request = await store.append_event(
+        run_id=second_run_id,
+        tenant_id="tenant_pg_policy",
+        event_type=EventType.TOOL_REQUESTED,
+        payload=ToolRequestedPayload(
+            tool_name="send_invoice",
+            arguments_json='{"billing_period":"2026-02"}',
+            idempotency_key=f"idemp-{second_run_id}-1",
+            step_key="invoice_2",
+            semantic_idempotency_key="send_invoice:tenant_pg_policy:2026-02",
+        ),
+    )
+    await store.append_event(
+        run_id=second_run_id,
+        tenant_id="tenant_pg_policy",
+        event_type=EventType.TOOL_COMPLETED,
+        payload=ToolCompletedPayload(
+            tool_name="send_invoice",
+            result_json='{"ok":false}',
+            outcome="unknown_outcome",
+            request_id=second_request.event_id,
+        ),
+    )
+    latest_after_second = await store.get_latest_tool_semantic_outcome(
+        tenant_id="tenant_pg_policy",
+        tool_name="send_invoice",
+        semantic_idempotency_key="send_invoice:tenant_pg_policy:2026-02",
+    )
+    assert latest_after_second is not None
+    assert latest_after_second.run_id == second_run_id
+    assert latest_after_second.outcome == "unknown_outcome"
+    assert latest_after_second.request_step_key == "invoice_2"
+
+    schema_connection = await asyncpg.connect(_dsn_for_tests())
+    try:
+        column_rows = await schema_connection.fetch(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'kernel_events'
+            """
+        )
+        columns = {str(row["column_name"]) for row in column_rows}
+        assert {
+            "tool_name",
+            "tool_outcome",
+            "tool_request_id",
+            "tool_semantic_key",
+            "tool_amount_usd",
+        }.issubset(columns)
+
+        index_rows = await schema_connection.fetch(
+            """
+            SELECT indexname
+            FROM pg_indexes
+            WHERE tablename = 'kernel_events'
+            """
+        )
+        indexes = {str(row["indexname"]) for row in index_rows}
+        assert {
+            "idx_kernel_events_tenant_tool_time",
+            "idx_kernel_events_run_tool_seq",
+            "idx_kernel_events_tool_semantic",
+        }.issubset(indexes)
+    finally:
+        await schema_connection.close()

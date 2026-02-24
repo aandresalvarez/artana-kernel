@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,7 @@ from artana.events import (
     ModelCompletedPayload,
     ModelRequestedPayload,
     RunSummaryPayload,
+    ToolCompletedPayload,
     ToolRequestedPayload,
 )
 from artana.store import SQLiteStore
@@ -249,5 +252,117 @@ async def test_on_event_callback_receives_appended_events(tmp_path: Path) -> Non
             (1, EventType.MODEL_REQUESTED.value),
             (2, EventType.TOOL_REQUESTED.value),
         ]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_columns_and_aggregates_are_queryable(tmp_path: Path) -> None:
+    database_path = tmp_path / "state.db"
+    store = SQLiteStore(str(database_path))
+    try:
+        request = await store.append_event(
+            run_id="run_policy",
+            tenant_id="tenant_policy",
+            event_type=EventType.TOOL_REQUESTED,
+            payload=ToolRequestedPayload(
+                tool_name="send_invoice",
+                arguments_json='{"billing_period":"2026-02"}',
+                idempotency_key="idemp-policy-1",
+                step_key="invoice_1",
+                semantic_idempotency_key="send_invoice:tenant_policy:2026-02",
+                amount_usd=42.5,
+            ),
+        )
+        await store.append_event(
+            run_id="run_policy",
+            tenant_id="tenant_policy",
+            event_type=EventType.TOOL_COMPLETED,
+            payload=ToolCompletedPayload(
+                tool_name="send_invoice",
+                result_json='{"ok":true}',
+                outcome="success",
+                request_id=request.event_id,
+            ),
+        )
+
+        count_for_run = await store.get_tool_request_count_for_run(
+            run_id="run_policy",
+            tool_name="send_invoice",
+        )
+        assert count_for_run == 1
+
+        count_for_tenant = await store.get_tool_request_count_for_tenant_since(
+            tenant_id="tenant_policy",
+            tool_name="send_invoice",
+            since=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+        assert count_for_tenant == 1
+
+        latest = await store.get_latest_tool_semantic_outcome(
+            tenant_id="tenant_policy",
+            tool_name="send_invoice",
+            semantic_idempotency_key="send_invoice:tenant_policy:2026-02",
+        )
+        assert latest is not None
+        assert latest.run_id == "run_policy"
+        assert latest.outcome == "success"
+        assert latest.request_step_key == "invoice_1"
+        assert latest.request_arguments_json == '{"billing_period":"2026-02"}'
+
+        await asyncio.sleep(0.001)
+        second_request = await store.append_event(
+            run_id="run_policy_second",
+            tenant_id="tenant_policy",
+            event_type=EventType.TOOL_REQUESTED,
+            payload=ToolRequestedPayload(
+                tool_name="send_invoice",
+                arguments_json='{"billing_period":"2026-02"}',
+                idempotency_key="idemp-policy-2",
+                step_key="invoice_2",
+                semantic_idempotency_key="send_invoice:tenant_policy:2026-02",
+            ),
+        )
+        await store.append_event(
+            run_id="run_policy_second",
+            tenant_id="tenant_policy",
+            event_type=EventType.TOOL_COMPLETED,
+            payload=ToolCompletedPayload(
+                tool_name="send_invoice",
+                result_json='{"ok":false}',
+                outcome="unknown_outcome",
+                request_id=second_request.event_id,
+            ),
+        )
+        latest_after_second = await store.get_latest_tool_semantic_outcome(
+            tenant_id="tenant_policy",
+            tool_name="send_invoice",
+            semantic_idempotency_key="send_invoice:tenant_policy:2026-02",
+        )
+        assert latest_after_second is not None
+        assert latest_after_second.run_id == "run_policy_second"
+        assert latest_after_second.outcome == "unknown_outcome"
+        assert latest_after_second.request_step_key == "invoice_2"
+
+        with sqlite3.connect(database_path) as connection:
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(kernel_events)")
+            }
+            assert {
+                "tool_name",
+                "tool_outcome",
+                "tool_request_id",
+                "tool_semantic_key",
+                "tool_amount_usd",
+            }.issubset(columns)
+            indexes = {
+                str(row[1]) for row in connection.execute("PRAGMA index_list(kernel_events)")
+            }
+            assert {
+                "idx_kernel_events_tenant_tool_time",
+                "idx_kernel_events_run_tool_seq",
+                "idx_kernel_events_tool_semantic",
+            }.issubset(indexes)
     finally:
         await store.close()

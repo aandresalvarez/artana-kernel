@@ -83,14 +83,37 @@ Initial implementation aligned with the Artana Kernel PRD:
   - `run_workflow` — Durable workflow with `WorkflowContext`, deterministic Python logic execution (`ctx.step`), and `ctx.pause`.
 - Tool registration via `@kernel.tool(requires_capability="...")`
 - Middleware stack: `PIIScrubberMiddleware`, `QuotaMiddleware`, `CapabilityGuardMiddleware`
+- Optional OS-grade Safety Policy V2 (`KernelPolicy.enforced_v2()` + `SafetyPolicyMiddleware`) for:
+  - typed intent plans before side-effect tools
+  - semantic idempotency dedupe
+  - per-tool limits (run + tenant window + amount)
+  - human/critic approval gates
+  - deterministic invariants
 - Replay-safe two-phase tool execution (protects against double-charging/executing on crash recovery)
 - Tool signature hashing (`name + version + schema hash`) for replay compatibility checks
 - Context version tracking in `model_requested` events (`system_prompt_hash`, context builder, compaction)
 - Agent `run_summary` events for lightweight autonomous observability
 - Kernel `capability_decision` run summaries for per-tool allow/filter reasoning
+- Kernel policy APIs for safety workflows:
+  - `record_intent_plan(...)`
+  - `approve_tool_call(...)`
+- Extended kernel syscalls for orchestration/scheduling:
+  - `get_run_status(...)`, `list_active_runs(...)`, `resume_point(...)`
+  - `checkpoint(...)`
+  - `set_artifact(...)`, `get_artifact(...)`, `list_artifacts(...)`
+  - `block_run(...)`, `unblock_run(...)`
+  - `stream_events(...)`
+  - `acquire_run_lease(...)`, `renew_run_lease(...)`, `release_run_lease(...)`
+  - `explain_tool_allowlist(...)`
+  - `canonicalize_tool_args(...)`, `tool_fingerprint(...)`
+- Tool request payload extensions for policy traceability:
+  - `semantic_idempotency_key`
+  - `intent_id`
+  - `amount_usd`
 - Kernel contracts reference: `docs/kernel_contracts.md`
 - Deep traceability reference: `docs/deep_traceability.md`
 - Generated behavior index reference: `docs/kernel_behavior_index.json`
+- OS-grade safety and harness chapter: `docs/Chapter6.md`
 
 ## Core Guarantees
 
@@ -240,9 +263,10 @@ Artana follows a strict Ports & Adapters model combined with an Event-Sourced Mi
                  ↓
 [ Artana Kernel (The Orchestrator) ] 
                  ↓
-[ Middleware Stack ] -> 1. PII Scrubber 
-                     -> 2. Quota Check 
+[ Middleware Stack ] -> 1. PII Scrubber
+                     -> 2. Quota Check
                      -> 3. Capability Guard
+                     -> 4. Safety Policy (optional, required for enforced_v2)
                  ↓
     [ Port Interfaces ]
        ↙                 ↘
@@ -264,6 +288,7 @@ TenantContext(
 )
 
 KernelPolicy.enforced() -> KernelPolicy
+KernelPolicy.enforced_v2() -> KernelPolicy
 ModelInput.from_prompt(prompt: str) -> ModelInput
 ModelInput.from_messages(messages: Sequence[ChatMessage]) -> ModelInput
 ```
@@ -285,6 +310,46 @@ kernel = ArtanaKernel(
     model_port=LiteLLMAdapter(),
     middleware=ArtanaKernel.default_middleware_stack(),
     policy=KernelPolicy.enforced(),
+)
+```
+
+Use `KernelPolicy.enforced()` for baseline enforcement. Use
+`KernelPolicy.enforced_v2()` + `SafetyPolicyMiddleware` when tools can create
+external side effects (payments, emails, deletes, transfers).
+
+Opt-in OS-grade safety policy:
+```python
+from artana import (
+    ArtanaKernel,
+    IntentRequirement,
+    KernelPolicy,
+    SafetyPolicyConfig,
+    SemanticIdempotencyRequirement,
+    ToolLimitPolicy,
+    ToolSafetyPolicy,
+)
+from artana.middleware import SafetyPolicyMiddleware
+
+safety = SafetyPolicyMiddleware(
+    config=SafetyPolicyConfig(
+        tools={
+            "send_invoice": ToolSafetyPolicy(
+                intent=IntentRequirement(require_intent=True),
+                semantic_idempotency=SemanticIdempotencyRequirement(
+                    template="send_invoice:{tenant_id}:{billing_period}",
+                    required_fields=("billing_period",),
+                ),
+                limits=ToolLimitPolicy(max_calls_per_run=1),
+            )
+        }
+    )
+)
+
+kernel = ArtanaKernel(
+    store=SQLiteStore("artana_state.db"),
+    model_port=LiteLLMAdapter(),
+    middleware=ArtanaKernel.default_middleware_stack(safety=safety),
+    policy=KernelPolicy.enforced_v2(),
 )
 ```
 
@@ -413,6 +478,77 @@ await kernel.step_tool(
     arguments=ArgsSchema(...),
     step_key="tool_1"
 )
+```
+
+Additional orchestration syscalls:
+```python
+status = await kernel.get_run_status(run_id=run_id)
+resume_point = await kernel.resume_point(run_id=run_id)
+active = await kernel.list_active_runs(tenant_id=tenant.tenant_id)
+
+await kernel.checkpoint(
+    run_id=run_id,
+    tenant=tenant,
+    name="phase_collect",
+    payload={"round": 1, "done": True},
+)
+
+await kernel.set_artifact(
+    run_id=run_id,
+    tenant=tenant,
+    key="report",
+    value={"version": 2},
+)
+report = await kernel.get_artifact(run_id=run_id, key="report")
+
+await kernel.block_run(
+    run_id=run_id,
+    tenant=tenant,
+    reason="Waiting for external approval",
+    unblock_key="approval_123",
+)
+await kernel.unblock_run(
+    run_id=run_id,
+    tenant=tenant,
+    unblock_key="approval_123",
+)
+```
+
+### Safety Workflow APIs
+Use these with `SafetyPolicyMiddleware` when a tool requires intent planning or approvals.
+
+```python
+from artana import IntentPlanRecord
+
+await kernel.record_intent_plan(
+    run_id=run_id,
+    tenant=tenant,
+    intent=IntentPlanRecord(
+        intent_id="intent_2026_02",
+        goal="Send February invoice",
+        why="Billing cycle closed",
+        success_criteria="Invoice sent exactly once",
+        assumed_state="Customer account is active",
+        applies_to_tools=("send_invoice",),
+    ),
+)
+
+await kernel.approve_tool_call(
+    run_id=run_id,
+    tenant=tenant,
+    approval_key="<deterministic_approval_key>",
+    mode="human",
+    reason="Finance manager approved",
+)
+```
+
+Tool gateway helpers:
+```python
+canonical_args_json, schema_hash = kernel.canonicalize_tool_args(
+    tool_name="transfer_funds",
+    arguments={"account_id": "acc_1", "amount": 12.5},
+)
+fingerprint = kernel.tool_fingerprint(tool_name="transfer_funds")
 ```
 
 ## Examples

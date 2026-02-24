@@ -10,6 +10,9 @@ This chapter demonstrates:
 * Deployment topology
 * Production safety checklist
 
+Most blocks in this chapter are composable deployment snippets for existing
+worker/orchestrator contexts, not standalone scripts.
+
 ---
 
 # 🏗️ Step 1 — Multi-Tenant Isolation (First-Class Concept)
@@ -79,13 +82,14 @@ This enables horizontal scaling.
 Each worker process:
 
 ```python
-from artana import ArtanaKernel, PostgresStore
+from artana import ArtanaKernel, KernelPolicy, PostgresStore
 from artana.ports.model_adapter import LiteLLMAdapter
 
 kernel = ArtanaKernel(
     store=PostgresStore("postgresql://user:pass@db:5432/artana"),  # shared DB
     model_port=LiteLLMAdapter(...),
     middleware=ArtanaKernel.default_middleware_stack(),
+    policy=KernelPolicy.enforced(),
 )
 ```
 
@@ -112,9 +116,21 @@ task_queue = asyncio.Queue()
 async def worker():
     while True:
         run_id, tenant = await task_queue.get()
+        worker_id = "worker-1"
+        leased = await kernel.acquire_run_lease(
+            run_id=run_id,
+            worker_id=worker_id,
+            ttl_seconds=30,
+        )
+        if not leased:
+            task_queue.task_done()
+            continue
         harness = DeploymentHarness(kernel=kernel, tenant=tenant)
-        await harness.run(run_id)
-        task_queue.task_done()
+        try:
+            await harness.run(run_id)
+        finally:
+            await kernel.release_run_lease(run_id=run_id, worker_id=worker_id)
+            task_queue.task_done()
 ```
 
 Key insight:
@@ -282,11 +298,13 @@ Production metrics to track:
 
 Production kernel should:
 
-* Use KernelPolicy.enforced()
+* Use `KernelPolicy.enforced()` at minimum
+* Use `KernelPolicy.enforced_v2()` + `SafetyPolicyMiddleware` for side-effect tools
 * Enable PII scrubber
 * Enforce quota
 * Enforce capability guard
 * Validate tool idempotency
+* Configure safety policy (intent, semantic dedupe, limits, approvals, invariants) where needed
 * Monitor drift
 
 Optional:
@@ -303,11 +321,19 @@ Optional:
 Minimal production instantiation:
 
 ```python
+from artana import ArtanaKernel, KernelPolicy
+from artana.middleware import SafetyPolicyMiddleware
+from artana.ports.model_adapter import LiteLLMAdapter
+from artana.safety import SafetyPolicyConfig
+from artana.store import PostgresStore
+
+safety = SafetyPolicyMiddleware(config=SafetyPolicyConfig(tools={...}))
+
 kernel = ArtanaKernel(
     store=PostgresStore("postgresql://..."),
     model_port=LiteLLMAdapter(...),
-    middleware=ArtanaKernel.default_middleware_stack(),
-    policy=KernelPolicy.enforced(),
+    middleware=ArtanaKernel.default_middleware_stack(safety=safety),
+    policy=KernelPolicy.enforced_v2(),
 )
 ```
 
@@ -350,7 +376,8 @@ Before deploying:
 * [ ] All tools idempotent
 * [ ] step_key stable
 * [ ] replay_policy chosen intentionally
-* [ ] KernelPolicy.enforced enabled
+* [ ] KernelPolicy.enforced/enforced_v2 configured intentionally
+* [ ] Run lease strategy defined for multi-worker runners
 * [ ] Budget limits configured
 * [ ] Ledger verification tested
 * [ ] Drift handling strategy decided

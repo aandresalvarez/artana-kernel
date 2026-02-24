@@ -108,20 +108,28 @@ Payload includes:
 - `drift_fields`
 - `forked`
 
-### 7. Live event streaming hook
+### 7. Live event callbacks + streaming
 
-`SQLiteStore` supports an optional async callback:
+Both stores support an optional async callback on append:
 
 ```python
-from artana.store import SQLiteStore
+from artana.store import PostgresStore, SQLiteStore
 
 async def on_event(event):
     print(event.seq, event.event_type.value)
 
 store = SQLiteStore("artana_state.db", on_event=on_event)
+pg_store = PostgresStore("postgresql://user:pass@localhost:5432/artana", on_event=on_event)
 ```
 
 The callback runs after each successful append.
+
+Kernel also exposes store-agnostic event streaming:
+
+```python
+async for event in kernel.stream_events(run_id="run_1", since_seq=0, follow=True):
+    print(event.seq, event.event_type.value)
+```
 
 ### 8. Trace query API
 
@@ -170,6 +178,7 @@ Behavior:
 - `ArtanaKernel.get_latest_summary(...)` (compat helper)
 - `ArtanaKernel.append_run_summary(..., parent_step_key=...)`
 - `ArtanaKernel.append_harness_event(..., parent_step_key=...)`
+- `ArtanaKernel.stream_events(run_id, since_seq=0, follow=False, ...)`
 
 ### Harness
 
@@ -181,6 +190,7 @@ Behavior:
 ### Store
 
 - `SQLiteStore(..., on_event=...)`
+- `PostgresStore(..., on_event=...)`
 
 ## Typical tracing flow
 
@@ -210,3 +220,4 @@ Traceability behavior is covered in:
 - `tests/test_harness_layer.py`
 - `tests/test_improvements_features.py`
 - `tests/test_sqlite_store.py`
+- `tests/test_postgres_store.py`

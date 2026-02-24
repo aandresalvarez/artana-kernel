@@ -111,6 +111,9 @@ class ToolRequestedPayload(BaseModel):
     tool_version: str = "1.0.0"
     schema_version: str = "1"
     step_key: str | None = None
+    semantic_idempotency_key: str | None = None
+    intent_id: str | None = None
+    amount_usd: float | None = Field(default=None, ge=0.0)
 
 
 class ToolCompletedPayload(BaseModel):

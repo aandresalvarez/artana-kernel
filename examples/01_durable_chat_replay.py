@@ -41,6 +41,7 @@ class DemoModelPort:
                 ToolCall(
                     tool_name="submit_transfer",
                     arguments_json='{"account_id":"acc_1","amount":"10"}',
+                    tool_call_id="submit_transfer_call_1",
                 ),
             ),
         )

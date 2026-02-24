@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 
 from artana.agent.memory import MemoryStore
+from artana.canonicalization import canonical_json_dumps
+from artana.json_utils import sha256_hex
 from artana.kernel import ArtanaKernel
+from artana.models import TenantContext
 from artana.ports.tool import ToolCallable, ToolExecutionContext
+from artana.safety import IntentPlanRecord
 
 
 class RuntimeToolManager:
@@ -19,6 +23,7 @@ class RuntimeToolManager:
         core_memory_replace: str,
         core_memory_search: str,
         query_event_history: str,
+        record_intent_plan: str = "record_intent_plan",
     ) -> None:
         self._kernel = kernel
         self._memory_store = memory_store
@@ -28,6 +33,7 @@ class RuntimeToolManager:
         self._core_memory_replace = core_memory_replace
         self._core_memory_search = core_memory_search
         self._query_event_history = query_event_history
+        self._record_intent_plan = record_intent_plan
         self._registered = False
 
     def ensure_registered(self) -> None:
@@ -115,6 +121,61 @@ class RuntimeToolManager:
             name=self._query_event_history,
             function=query_event_history,
             requires_capability="self_reflection",
+        )
+
+        async def record_intent_plan(
+            goal: str,
+            why: str,
+            success_criteria: str,
+            assumed_state: str,
+            applies_to_tools: list[str] | None,
+            intent_id: str | None,
+            artana_context: ToolExecutionContext,
+        ) -> str:
+            payload = {
+                "goal": goal,
+                "why": why,
+                "success_criteria": success_criteria,
+                "assumed_state": assumed_state,
+                "applies_to_tools": applies_to_tools or [],
+            }
+            resolved_intent_id = intent_id
+            if resolved_intent_id is None:
+                resolved_intent_id = sha256_hex(canonical_json_dumps(payload))
+            tenant_budget = artana_context.tenant_budget_usd_limit
+            if tenant_budget is None:
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "error": "missing_tenant_budget",
+                        "detail": "tenant_budget_usd_limit missing in ToolExecutionContext",
+                    },
+                    ensure_ascii=False,
+                )
+            await self._kernel.record_intent_plan(
+                run_id=artana_context.run_id,
+                tenant=TenantContext(
+                    tenant_id=artana_context.tenant_id,
+                    capabilities=artana_context.tenant_capabilities,
+                    budget_usd_limit=tenant_budget,
+                ),
+                intent=IntentPlanRecord(
+                    intent_id=resolved_intent_id,
+                    goal=goal,
+                    why=why,
+                    success_criteria=success_criteria,
+                    assumed_state=assumed_state,
+                    applies_to_tools=tuple(applies_to_tools or []),
+                ),
+            )
+            return json.dumps(
+                {"ok": True, "intent_id": resolved_intent_id},
+                ensure_ascii=False,
+            )
+
+        self._register_runtime_tool(
+            name=self._record_intent_plan,
+            function=record_intent_plan,
         )
 
         self._registered = True
@@ -217,6 +278,7 @@ class RuntimeToolManager:
             self._core_memory_replace,
             self._core_memory_search,
             self._query_event_history,
+            self._record_intent_plan,
         }
 
     def _register_runtime_tool(

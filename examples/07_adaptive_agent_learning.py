@@ -75,6 +75,7 @@ class AdaptiveFinanceModelPort:
                     ToolCall(
                         tool_name="submit_financial_extract",
                         arguments_json='{"date":"02/23/2026"}',
+                        tool_call_id="submit_extract_legacy_date",
                     ),
                 ),
             )
@@ -94,6 +95,7 @@ class AdaptiveFinanceModelPort:
                     ToolCall(
                         tool_name="submit_financial_extract",
                         arguments_json='{"date":"2026-02-23"}',
+                        tool_call_id="submit_extract_iso_date",
                     ),
                 ),
             )
@@ -109,26 +111,23 @@ class AdaptiveFinanceModelPort:
 
 
 def _has_iso_learning(messages: list[ChatMessage]) -> bool:
-    if not messages:
-        return False
-    return "WIN_PATTERN: Always format dates as YYYY-MM-DD." in messages[0].content
+    marker = "Always format dates as YYYY-MM-DD."
+    return any(marker in message.content for message in messages)
 
 
 def _extract_tool_payload(messages: list[ChatMessage]) -> dict[str, object] | None:
-    prefix = "submit_financial_extract: "
     for message in reversed(messages):
         if message.role != "tool":
             continue
-        if not message.content.startswith(prefix):
-            continue
-        payload_text = message.content.removeprefix(prefix)
+        payload_text = message.content
+        if payload_text.startswith("submit_financial_extract: "):
+            payload_text = payload_text.removeprefix("submit_financial_extract: ")
         try:
             payload = json.loads(payload_text)
         except json.JSONDecodeError:
-            return None
+            continue
         if isinstance(payload, dict):
             return payload
-        return None
     return None
 
 

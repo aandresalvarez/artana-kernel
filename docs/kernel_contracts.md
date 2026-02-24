@@ -12,6 +12,29 @@ validated in CI.
 - `allow_prompt_drift`: if prompt/messages drift for the same `(model, step_key, tool signatures)`, replay the prior completion and append `replayed_with_drift`.
 - `fork_on_drift`: if drift is detected for the same `(model, step_key, tool signatures)`, fork into `run_id::fork::<hash>` and execute there.
 
+## Kernel Policy Modes
+
+- `permissive`: no required middleware.
+- `enforced`: requires `PIIScrubberMiddleware`, `QuotaMiddleware`, and `CapabilityGuardMiddleware`.
+- `enforced_v2`: requires all `enforced` middleware plus `SafetyPolicyMiddleware`.
+
+## Run Lifecycle Contracts
+
+Kernel orchestration syscalls now include:
+
+- `get_run_status(run_id)`
+- `list_active_runs(tenant_id, ...)`
+- `resume_point(run_id)`
+- `block_run(...)`
+- `unblock_run(...)`
+
+Status semantics:
+
+- `active`: run is not terminal and not currently paused.
+- `paused`: latest unresolved `pause_requested` exists.
+- `failed`: harness-level failure recorded.
+- `completed`: harness sleep recorded with completed status.
+
 ## Model Request Invariants
 
 Each `model_requested` event stores:
@@ -31,6 +54,59 @@ Replay validates only signature-based hashes/tokens.
 - Tool arguments are canonicalized as sorted JSON objects before matching and storage.
 - Tool idempotency key input is `(run_id, tool_name, seq)`.
 - Tool request events persist `tool_version` and `schema_version`.
+- `tool_requested` payload optionally persists:
+  - `semantic_idempotency_key`
+  - `intent_id`
+  - `amount_usd`
+
+Tool gateway metadata is part of tool definitions:
+
+- `risk_level` (`low|medium|high|critical`)
+- `sandbox_profile` (optional string)
+
+Kernel exposes:
+
+- `canonicalize_tool_args(tool_name, args)`
+- `tool_fingerprint(tool_name)`
+
+## Safety Policy Invariants
+
+When `SafetyPolicyMiddleware` is configured for a tool, `prepare_tool_request` evaluates rules in this order:
+
+1. intent requirement
+2. semantic idempotency
+3. tool limits/rate checks
+4. approval gates
+5. deterministic invariants
+
+Each decision appends `run_summary` with:
+- `summary_type=policy_decision`
+- JSON payload containing:
+  - `tool_name`
+  - `fingerprint`
+  - `outcome` (`allow` or `deny`)
+  - `rule_id`
+  - `reason`
+
+### Semantic Idempotency
+
+- Semantic keys are derived deterministically from configured templates.
+- Duplicate prior `success` outcomes are blocked (`semantic_duplicate`).
+- Prior `unknown_outcome` for the same semantic key is blocked until reconciliation (`semantic_requires_reconciliation`).
+
+### Approval Gates
+
+- Approval records are run summaries under `summary_type=policy::approval::<approval_key>`.
+- Human mode raises `ApprovalRequiredError` until approval is recorded.
+- Critic mode uses deterministic kernel model steps with key prefix `critic::<tool>::`.
+- Critic denials raise `PolicyViolationError(code="critic_denied")`.
+
+### Intent Plans
+
+- Intent records are run summaries under `summary_type=policy::intent_plan`.
+- `record_intent_plan(...)` stores typed `IntentPlanRecord` payloads.
+- Missing or stale intent plans for configured tools raise
+  `PolicyViolationError(code="missing_intent_plan")`.
 
 ## Tool IO Policy Hooks
 
@@ -41,9 +117,56 @@ Kernel middleware now includes tool hooks:
 
 Hooks run in middleware order, enabling policy enforcement on tool input/output in addition to model prompt/messages.
 
+## Checkpoints and Artifacts
+
+Kernel-native checkpoint syscall:
+
+- `checkpoint(run_id, tenant, name, payload, ...)`
+
+Current persistence representation:
+
+- checkpoint writes `run_summary` with `summary_type=checkpoint::<name>`
+
+Kernel artifact syscalls:
+
+- `set_artifact(run_id, tenant, key, value, ...)`
+- `get_artifact(run_id, key)`
+- `list_artifacts(run_id)`
+
+Current persistence representation:
+
+- artifact writes `run_summary` with `summary_type=artifact::<key>`
+- payload envelope: `{"value": ...}` (optional schema metadata can be attached)
+
 ## Agent Observability
 
 The autonomous agent emits `run_summary` events for model and tool steps.
 These summaries are queryable via `query_event_history`.
 Kernel model steps also emit `run_summary` entries with `summary_type=capability_decision`
 that explain why each tool was allowed or filtered.
+
+## Harness and Artifact Contracts
+
+Artana exposes first-class harness APIs:
+
+- `HarnessContext`
+- `BaseHarness`
+- `IncrementalTaskHarness`
+- `TaskUnit`
+- `SupervisorHarness`
+
+Artifacts in harnesses are persisted as run summaries with `summary_type=artifact::<key>`.
+`set_artifact(...)` writes `{"value": ...}` payloads and `get_artifact(...)` resolves the latest value.
+
+## Event Streaming and Leases
+
+Store-agnostic event streaming contract:
+
+- `stream_events(run_id, since_seq=0, follow=False, ...) -> AsyncIterator[KernelEvent]`
+
+Run-lease contracts for multi-worker schedulers:
+
+- `acquire_run_lease(run_id, worker_id, ttl_seconds)`
+- `renew_run_lease(run_id, worker_id, ttl_seconds)`
+- `release_run_lease(run_id, worker_id)`
+- `get_run_lease(run_id)`

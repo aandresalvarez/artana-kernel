@@ -7,7 +7,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-from artana.agent import AutonomousAgent
+from artana.agent import AutonomousAgent, ContextBuilder
 from artana.events import ChatMessage
 from artana.kernel import ArtanaKernel, KernelPolicy
 from artana.models import TenantContext
@@ -42,6 +42,7 @@ class ResearchModelPort:
                 ToolCall(
                     tool_name="search_web",
                     arguments_json=json.dumps({"query": "Acme Corp CEO and latest news."}),
+                    tool_call_id="search_web_call_1",
                 ),
             )
             return ModelResult(
@@ -64,20 +65,18 @@ class ResearchModelPort:
 
 
 def _extract_tool_result(messages: list[ChatMessage]) -> dict[str, object] | None:
-    prefix = "Result from search_web: "
     for message in reversed(messages):
         if message.role != "tool":
             continue
-        if not message.content.startswith(prefix):
-            continue
-        raw_payload = message.content.removeprefix(prefix)
+        raw_payload = message.content
+        if raw_payload.startswith("Result from search_web: "):
+            raw_payload = raw_payload.removeprefix("Result from search_web: ")
         try:
             payload = json.loads(raw_payload)
         except json.JSONDecodeError:
-            return None
+            continue
         if isinstance(payload, dict):
             return payload
-        return None
     return None
 
 
@@ -118,7 +117,10 @@ async def main() -> None:
         capabilities=frozenset(),
         budget_usd_limit=1.0,
     )
-    agent = AutonomousAgent(kernel=kernel)
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(progressive_skills=False),
+    )
 
     try:
         report = await agent.run(

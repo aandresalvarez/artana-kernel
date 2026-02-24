@@ -41,6 +41,15 @@ def payload_to_canonical_json(payload: EventPayload) -> str:
                     continue
                 if tool_call.get("tool_call_id") is None:
                     tool_call.pop("tool_call_id", None)
+    if payload_dict.get("kind") == "tool_requested":
+        if payload_dict.get("step_key") is None:
+            payload_dict.pop("step_key", None)
+        if payload_dict.get("semantic_idempotency_key") is None:
+            payload_dict.pop("semantic_idempotency_key", None)
+        if payload_dict.get("intent_id") is None:
+            payload_dict.pop("intent_id", None)
+        if payload_dict.get("amount_usd") is None:
+            payload_dict.pop("amount_usd", None)
     return canonical_json_dumps(payload_dict)
 
 
@@ -75,4 +84,3 @@ def compute_event_hash(
     hash_fields.append(payload_to_canonical_json(payload))
     joined = "|".join(hash_fields)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
-

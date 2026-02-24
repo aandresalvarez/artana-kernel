@@ -381,6 +381,40 @@ class QueryHistoryModelPort:
         )
 
 
+class RecordIntentPlanModelPort:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(
+        self, request: ModelRequest[OutputModelT]
+    ) -> ModelResult[OutputModelT]:
+        self.calls += 1
+        if self.calls == 1:
+            output = request.output_schema.model_validate({"done": False})
+            return ModelResult(
+                output=output,
+                usage=ModelUsage(prompt_tokens=5, completion_tokens=2, cost_usd=0.01),
+                tool_calls=(
+                    ToolCall(
+                        tool_name="record_intent_plan",
+                        arguments_json=(
+                            '{"goal":"Send invoice","why":"Billing cycle closed",'
+                            '"success_criteria":"Invoice dispatched exactly once",'
+                            '"assumed_state":"Customer is active",'
+                            '"applies_to_tools":["send_invoice"],'
+                            '"intent_id":"intent_runtime_1"}'
+                        ),
+                        tool_call_id="call_intent_1",
+                    ),
+                ),
+            )
+        output = request.output_schema.model_validate({"done": True})
+        return ModelResult(
+            output=output,
+            usage=ModelUsage(prompt_tokens=5, completion_tokens=2, cost_usd=0.01),
+        )
+
+
 class CustomContextBuilder(ContextBuilder):
     async def build_messages(
         self,
@@ -1020,6 +1054,40 @@ async def test_runtime_query_event_history_tool_is_callable(tmp_path: Path) -> N
         assert query_results
         assert query_results[0].get("ok") is True
         assert isinstance(query_results[0].get("events"), list)
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_record_intent_plan_tool_is_callable(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = RecordIntentPlanModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(progressive_skills=False),
+    )
+
+    try:
+        result = await agent.run(
+            run_id="run_record_intent",
+            tenant=_tenant(),
+            model="gpt-4o-mini",
+            prompt="prepare intent plan",
+            output_schema=AgentResult,
+            max_iterations=3,
+        )
+        assert result.done is True
+
+        summary = await kernel.get_latest_run_summary(
+            run_id="run_record_intent",
+            summary_type="policy::intent_plan",
+        )
+        assert summary is not None
+        payload = json.loads(summary.summary_json)
+        assert payload.get("intent_id") == "intent_runtime_1"
+        assert payload.get("goal") == "Send invoice"
+        assert payload.get("applies_to_tools") == ["send_invoice"]
     finally:
         await kernel.close()
 

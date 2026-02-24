@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import asyncpg  # type: ignore[import-untyped]
@@ -15,9 +15,11 @@ from artana.events import (
     EventType,
     KernelEvent,
     RunSummaryPayload,
+    ToolCompletedPayload,
+    ToolRequestedPayload,
     compute_event_hash,
 )
-from artana.store.base import EventStore
+from artana.store.base import EventStore, RunLeaseRecord, ToolSemanticOutcomeRecord
 
 _PAYLOAD_ADAPTER: TypeAdapter[EventPayload] = TypeAdapter(EventPayload)
 
@@ -189,6 +191,328 @@ class PostgresStore(EventStore):
             f"Invalid total_cost row type for model cost aggregate: {type(total_cost_obj)!r}"
         )
 
+    async def get_tool_request_count_for_run(self, *, run_id: str, tool_name: str) -> int:
+        pool = await self._ensure_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT COUNT(*) AS total_count
+                FROM kernel_events
+                WHERE run_id = $1
+                  AND event_type = $2
+                  AND tool_name = $3
+                """,
+                run_id,
+                EventType.TOOL_REQUESTED.value,
+                tool_name,
+            )
+        if row is None:
+            return 0
+        return _coerce_count(row["total_count"])
+
+    async def get_tool_request_count_for_tenant_since(
+        self,
+        *,
+        tenant_id: str,
+        tool_name: str,
+        since: datetime,
+    ) -> int:
+        pool = await self._ensure_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT COUNT(*) AS total_count
+                FROM kernel_events
+                WHERE tenant_id = $1
+                  AND event_type = $2
+                  AND tool_name = $3
+                  AND timestamp >= $4
+                """,
+                tenant_id,
+                EventType.TOOL_REQUESTED.value,
+                tool_name,
+                since,
+            )
+        if row is None:
+            return 0
+        return _coerce_count(row["total_count"])
+
+    async def get_latest_tool_semantic_outcome(
+        self,
+        *,
+        tenant_id: str,
+        tool_name: str,
+        semantic_idempotency_key: str,
+    ) -> ToolSemanticOutcomeRecord | None:
+        pool = await self._ensure_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT
+                    c.run_id AS run_id,
+                    c.tool_request_id AS request_id,
+                    c.tool_outcome AS outcome,
+                    r.payload_json AS request_payload_json
+                FROM kernel_events c
+                JOIN kernel_events r
+                    ON c.tool_request_id = r.event_id
+                WHERE c.event_type = $1
+                  AND r.event_type = $2
+                  AND r.tenant_id = $3
+                  AND r.tool_name = $4
+                  AND r.tool_semantic_key = $5
+                ORDER BY c.timestamp DESC, c.seq DESC
+                LIMIT 1
+                """,
+                EventType.TOOL_COMPLETED.value,
+                EventType.TOOL_REQUESTED.value,
+                tenant_id,
+                tool_name,
+                semantic_idempotency_key,
+            )
+        if row is None:
+            return None
+        run_id_obj: object = row["run_id"]
+        request_id_obj: object = row["request_id"]
+        outcome_obj: object = row["outcome"]
+        request_payload_json_obj: object = row["request_payload_json"]
+        if not isinstance(run_id_obj, str):
+            raise TypeError(f"Invalid run_id row type: {type(run_id_obj)!r}")
+        if not isinstance(request_id_obj, str):
+            raise TypeError(f"Invalid request_id row type: {type(request_id_obj)!r}")
+        if not isinstance(outcome_obj, str):
+            raise TypeError(f"Invalid outcome row type: {type(outcome_obj)!r}")
+        if not isinstance(request_payload_json_obj, str):
+            raise TypeError(
+                "Invalid request_payload_json row type: "
+                f"{type(request_payload_json_obj)!r}"
+            )
+        request_payload = _load_request_payload(request_payload_json_obj)
+        return ToolSemanticOutcomeRecord(
+            run_id=run_id_obj,
+            request_id=request_id_obj,
+            outcome=outcome_obj,
+            request_step_key=request_payload.step_key,
+            request_arguments_json=request_payload.arguments_json,
+        )
+
+    async def list_run_ids(
+        self,
+        *,
+        tenant_id: str | None = None,
+        since: datetime | None = None,
+    ) -> list[str]:
+        pool = await self._ensure_pool()
+        where_clauses: list[str] = []
+        params: list[object] = []
+        if tenant_id is not None:
+            params.append(tenant_id)
+            where_clauses.append(f"tenant_id = ${len(params)}")
+        if since is not None:
+            params.append(since)
+            where_clauses.append(f"timestamp >= ${len(params)}")
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+        async with pool.acquire() as connection:
+            rows = await connection.fetch(
+                f"""
+                SELECT run_id, MAX(timestamp) AS latest_timestamp
+                FROM kernel_events
+                {where_sql}
+                GROUP BY run_id
+                ORDER BY latest_timestamp DESC
+                """,
+                *params,
+            )
+        run_ids: list[str] = []
+        for row in rows:
+            run_id_obj: object = row["run_id"]
+            if not isinstance(run_id_obj, str):
+                raise TypeError(f"Invalid run_id row type: {type(run_id_obj)!r}")
+            run_ids.append(run_id_obj)
+        return run_ids
+
+    async def stream_events(
+        self,
+        run_id: str,
+        *,
+        since_seq: int = 0,
+        follow: bool = False,
+        poll_interval_seconds: float = 0.5,
+        idle_timeout_seconds: float | None = None,
+    ) -> AsyncIterator[KernelEvent]:
+        if since_seq < 0:
+            raise ValueError("since_seq must be >= 0.")
+        if poll_interval_seconds <= 0:
+            raise ValueError("poll_interval_seconds must be > 0.")
+        if idle_timeout_seconds is not None and idle_timeout_seconds <= 0:
+            raise ValueError("idle_timeout_seconds must be > 0 when provided.")
+        last_seq = since_seq
+        idle_started_at = datetime.now(timezone.utc)
+        while True:
+            events = await self.get_events_for_run(run_id)
+            emitted = False
+            for event in events:
+                if event.seq <= last_seq:
+                    continue
+                emitted = True
+                last_seq = event.seq
+                yield event
+            if not follow:
+                return
+            if emitted:
+                idle_started_at = datetime.now(timezone.utc)
+            elif idle_timeout_seconds is not None:
+                if datetime.now(timezone.utc) - idle_started_at >= timedelta(
+                    seconds=idle_timeout_seconds
+                ):
+                    return
+            await asyncio.sleep(poll_interval_seconds)
+
+    async def acquire_run_lease(
+        self,
+        *,
+        run_id: str,
+        worker_id: str,
+        ttl_seconds: int,
+    ) -> bool:
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be > 0.")
+        pool = await self._ensure_pool()
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    """
+                    SELECT worker_id, lease_expires_at
+                    FROM run_leases
+                    WHERE run_id = $1
+                    FOR UPDATE
+                    """,
+                    run_id,
+                )
+                if row is None:
+                    await connection.execute(
+                        """
+                        INSERT INTO run_leases (run_id, worker_id, lease_expires_at, updated_at)
+                        VALUES ($1, $2, $3, $4)
+                        """,
+                        run_id,
+                        worker_id,
+                        expires_at,
+                        now,
+                    )
+                    return True
+                current_worker_obj: object = row["worker_id"]
+                current_expiry_obj: object = row["lease_expires_at"]
+                if not isinstance(current_worker_obj, str):
+                    raise TypeError(
+                        f"Invalid worker_id row type: {type(current_worker_obj)!r}"
+                    )
+                if not isinstance(current_expiry_obj, datetime):
+                    raise TypeError(
+                        f"Invalid lease_expires_at row type: {type(current_expiry_obj)!r}"
+                    )
+                current_expiry = current_expiry_obj
+                if current_expiry.tzinfo is None:
+                    current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+                if current_worker_obj != worker_id and current_expiry > now:
+                    return False
+                await connection.execute(
+                    """
+                    UPDATE run_leases
+                    SET worker_id = $2, lease_expires_at = $3, updated_at = $4
+                    WHERE run_id = $1
+                    """,
+                    run_id,
+                    worker_id,
+                    expires_at,
+                    now,
+                )
+                return True
+
+    async def renew_run_lease(
+        self,
+        *,
+        run_id: str,
+        worker_id: str,
+        ttl_seconds: int,
+    ) -> bool:
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be > 0.")
+        pool = await self._ensure_pool()
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+        async with pool.acquire() as connection:
+            status = await connection.execute(
+                """
+                UPDATE run_leases
+                SET lease_expires_at = $3, updated_at = $4
+                WHERE run_id = $1
+                  AND worker_id = $2
+                  AND lease_expires_at > $4
+                """,
+                run_id,
+                worker_id,
+                expires_at,
+                now,
+            )
+        return status.endswith("1")
+
+    async def release_run_lease(
+        self,
+        *,
+        run_id: str,
+        worker_id: str,
+    ) -> bool:
+        pool = await self._ensure_pool()
+        async with pool.acquire() as connection:
+            status = await connection.execute(
+                """
+                DELETE FROM run_leases
+                WHERE run_id = $1
+                  AND worker_id = $2
+                """,
+                run_id,
+                worker_id,
+            )
+        return status.endswith("1")
+
+    async def get_run_lease(self, *, run_id: str) -> RunLeaseRecord | None:
+        pool = await self._ensure_pool()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT run_id, worker_id, lease_expires_at
+                FROM run_leases
+                WHERE run_id = $1
+                LIMIT 1
+                """,
+                run_id,
+            )
+        if row is None:
+            return None
+        run_id_obj: object = row["run_id"]
+        worker_id_obj: object = row["worker_id"]
+        expiry_obj: object = row["lease_expires_at"]
+        if not isinstance(run_id_obj, str):
+            raise TypeError(f"Invalid run_id row type: {type(run_id_obj)!r}")
+        if not isinstance(worker_id_obj, str):
+            raise TypeError(f"Invalid worker_id row type: {type(worker_id_obj)!r}")
+        if not isinstance(expiry_obj, datetime):
+            raise TypeError(f"Invalid lease_expires_at row type: {type(expiry_obj)!r}")
+        expiry = expiry_obj
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return RunLeaseRecord(
+            run_id=run_id_obj,
+            worker_id=worker_id_obj,
+            lease_expires_at=expiry,
+        )
+
     async def verify_run_chain(self, run_id: str) -> bool:
         try:
             events = await self.get_events_for_run(run_id)
@@ -256,15 +580,36 @@ class PostgresStore(EventStore):
                     event_type TEXT NOT NULL,
                     prev_event_hash TEXT,
                     event_hash TEXT NOT NULL,
+                    parent_step_key TEXT,
                     timestamp TIMESTAMPTZ NOT NULL,
                     payload_json TEXT NOT NULL,
+                    tool_name TEXT,
+                    tool_outcome TEXT,
+                    tool_request_id TEXT,
+                    tool_semantic_key TEXT,
+                    tool_amount_usd DOUBLE PRECISION,
                     PRIMARY KEY (run_id, seq)
                 )
                 """
             )
             await connection.execute(
-                "ALTER TABLE kernel_events "
-                "ADD COLUMN IF NOT EXISTS parent_step_key TEXT"
+                "ALTER TABLE kernel_events ADD COLUMN IF NOT EXISTS parent_step_key TEXT"
+            )
+            await connection.execute(
+                "ALTER TABLE kernel_events ADD COLUMN IF NOT EXISTS tool_name TEXT"
+            )
+            await connection.execute(
+                "ALTER TABLE kernel_events ADD COLUMN IF NOT EXISTS tool_outcome TEXT"
+            )
+            await connection.execute(
+                "ALTER TABLE kernel_events ADD COLUMN IF NOT EXISTS tool_request_id TEXT"
+            )
+            await connection.execute(
+                "ALTER TABLE kernel_events ADD COLUMN IF NOT EXISTS tool_semantic_key TEXT"
+            )
+            await connection.execute(
+                "ALTER TABLE kernel_events ADD COLUMN IF NOT EXISTS "
+                "tool_amount_usd DOUBLE PRECISION"
             )
             await connection.execute(
                 """
@@ -276,6 +621,40 @@ class PostgresStore(EventStore):
                 """
                 CREATE INDEX IF NOT EXISTS idx_kernel_events_run_type_seq
                 ON kernel_events (run_id, event_type, seq DESC)
+                """
+            )
+            await connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_kernel_events_tenant_tool_time
+                ON kernel_events (tenant_id, tool_name, timestamp DESC)
+                """
+            )
+            await connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_kernel_events_run_tool_seq
+                ON kernel_events (run_id, tool_name, seq DESC)
+                """
+            )
+            await connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_kernel_events_tool_semantic
+                ON kernel_events (tenant_id, tool_name, tool_semantic_key, seq DESC)
+                """
+            )
+            await connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS run_leases (
+                    run_id TEXT PRIMARY KEY,
+                    worker_id TEXT NOT NULL,
+                    lease_expires_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL
+                )
+                """
+            )
+            await connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_run_leases_expiry
+                ON run_leases (lease_expires_at)
                 """
             )
 
@@ -323,12 +702,22 @@ class PostgresStore(EventStore):
                     timestamp=timestamp,
                     payload=payload,
                 )
+                (
+                    tool_name,
+                    tool_outcome,
+                    tool_request_id,
+                    tool_semantic_key,
+                    tool_amount_usd,
+                ) = _tool_columns_from_payload(payload)
                 await connection.execute(
                     """
                     INSERT INTO kernel_events (
                         run_id, seq, event_id, tenant_id, event_type, prev_event_hash,
-                        event_hash, parent_step_key, timestamp, payload_json
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        event_hash, parent_step_key, timestamp, payload_json, tool_name,
+                        tool_outcome, tool_request_id, tool_semantic_key, tool_amount_usd
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+                    )
                     """,
                     event.run_id,
                     event.seq,
@@ -340,6 +729,11 @@ class PostgresStore(EventStore):
                     event.parent_step_key,
                     event.timestamp,
                     json.dumps(event.payload.model_dump(mode="json")),
+                    tool_name,
+                    tool_outcome,
+                    tool_request_id,
+                    tool_semantic_key,
+                    tool_amount_usd,
                 )
                 return event
 
@@ -378,6 +772,46 @@ class PostgresStore(EventStore):
         if delay > 1.0:
             return 1.0
         return float(delay)
+
+
+def _tool_columns_from_payload(
+    payload: EventPayload,
+) -> tuple[str | None, str | None, str | None, str | None, float | None]:
+    if isinstance(payload, ToolRequestedPayload):
+        return (
+            payload.tool_name,
+            None,
+            None,
+            payload.semantic_idempotency_key,
+            payload.amount_usd,
+        )
+    if isinstance(payload, ToolCompletedPayload):
+        return (
+            payload.tool_name,
+            payload.outcome,
+            payload.request_id,
+            None,
+            None,
+        )
+    return None, None, None, None, None
+
+
+def _coerce_count(value: object) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    raise TypeError(f"Invalid count row type: {type(value)!r}")
+
+
+def _load_request_payload(raw_json: str) -> ToolRequestedPayload:
+    payload_dict_raw = json.loads(raw_json)
+    if not isinstance(payload_dict_raw, dict):
+        raise TypeError("Stored request payload_json did not decode to an object.")
+    payload = _PAYLOAD_ADAPTER.validate_python(payload_dict_raw)
+    if not isinstance(payload, ToolRequestedPayload):
+        raise TypeError(f"Expected ToolRequestedPayload, got {type(payload)!r}.")
+    return payload
 
 
 def _event_from_record(row: asyncpg.Record) -> KernelEvent:

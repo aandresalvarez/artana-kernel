@@ -10,7 +10,8 @@ Artana is built in **three layers**:
 
 This guide walks you from deterministic steps → tools → workflows → agents → harnesses.
 
-All examples are runnable.
+Standalone scripts in this chapter are runnable. Short snippet blocks are
+in-context API references and assume surrounding variables.
 
 ---
 
@@ -118,6 +119,11 @@ class Decision(BaseModel):
     ok: bool
 
 
+class TransferArgs(BaseModel):
+    amount: int
+    to_user: str
+
+
 class DemoModelPort:
     async def complete(self, request: ModelRequest[Decision]) -> ModelResult[Decision]:
         return ModelResult(
@@ -156,7 +162,7 @@ async def main():
         run_id="tool_run",
         tenant=tenant,
         tool_name="transfer_money",
-        arguments=BaseModel.model_validate({"amount": 10, "to_user": "alice"}),
+        arguments=TransferArgs(amount=10, to_user="alice"),
         step_key="transfer_step",
     )
 
@@ -177,7 +183,7 @@ If the process crashes, you resume safely.
 
 ```python
 import asyncio
-from artana.kernel import ArtanaKernel, WorkflowContext
+from artana.kernel import ArtanaKernel, WorkflowContext, json_step_serde
 from artana.models import TenantContext
 from artana.store import SQLiteStore
 
@@ -198,7 +204,7 @@ async def main():
         step1 = await ctx.step(
             name="compute_value",
             action=lambda: asyncio.sleep(0, result=42),
-            serde=ctx.json_step_serde(),
+            serde=json_step_serde(),
         )
 
         if step1 == 42:
@@ -232,6 +238,7 @@ from pydantic import BaseModel
 from artana.agent import AutonomousAgent
 from artana.kernel import ArtanaKernel
 from artana.models import TenantContext
+from artana.ports.model import ModelRequest, ModelResult, ModelUsage
 from artana.store import SQLiteStore
 
 
@@ -240,8 +247,11 @@ class Report(BaseModel):
 
 
 class DemoModelPort:
-    async def complete(self, request):
-        return type(request).output_schema.model_validate({"text": "Demo report"})
+    async def complete(self, request: ModelRequest[Report]) -> ModelResult[Report]:
+        return ModelResult(
+            output=Report(text="Demo report"),
+            usage=ModelUsage(prompt_tokens=4, completion_tokens=3, cost_usd=0.0),
+        )
 
 
 async def main():
@@ -361,12 +371,18 @@ Compose harnesses safely.
 ```python
 from artana.harness import SupervisorHarness
 
-supervisor = SupervisorHarness(kernel)
+class ResearchSupervisor(SupervisorHarness):
+    async def step(self, *, context):
+        child = ResearchHarness(kernel=self.kernel, tenant=context.tenant)
+        return await self.run_child(
+            harness=child,
+            run_id=f"{context.run_id}::child",
+            tenant=context.tenant,
+            model=context.model,
+        )
 
-result = await supervisor.run_child(
-    harness=ResearchHarness(kernel),
-    run_id="child_run"
-)
+supervisor = ResearchSupervisor(kernel=kernel, tenant=tenant)
+result = await supervisor.run(run_id="supervisor_run")
 ```
 
 ---

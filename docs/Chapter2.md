@@ -10,7 +10,8 @@ This chapter focuses on production patterns:
 * Middleware enforcement
 * Ledger & observability
 
-All examples are runnable and reflect the current API.
+Standalone scripts in this chapter are runnable. Snippet blocks are in-context
+API references and may assume existing `kernel`, `tenant`, or harness state.
 
 ---
 
@@ -39,6 +40,17 @@ class ResearchHarness(IncrementalTaskHarness):
         print("Research task executed:", task.id)
 
 
+class SwarmSupervisor(SupervisorHarness):
+    async def step(self, *, context):
+        child = ResearchHarness(kernel=self.kernel, tenant=context.tenant)
+        return await self.run_child(
+            harness=child,
+            run_id=f"{context.run_id}::research",
+            tenant=context.tenant,
+            model=context.model,
+        )
+
+
 async def main():
     kernel = ArtanaKernel(
         store=SQLiteStore("chapter2_step1.db"),
@@ -51,13 +63,8 @@ async def main():
         budget_usd_limit=5.0,
     )
 
-    supervisor = SupervisorHarness(kernel=kernel, tenant=tenant)
-    child_harness = ResearchHarness(kernel=kernel, tenant=tenant)
-
-    result = await supervisor.run_child(
-        harness=child_harness,
-        run_id="swarm_run_01"
-    )
+    supervisor = SwarmSupervisor(kernel=kernel, tenant=tenant)
+    result = await supervisor.run(run_id="swarm_run_01")
 
     print("Child task states:", result)
     await kernel.close()
@@ -241,7 +248,8 @@ Order is enforced automatically:
 1. PII scrub
 2. Quota
 3. Capability guard
-4. Custom middleware
+4. Safety policy (if configured)
+5. Custom middleware
 
 ---
 
@@ -250,13 +258,17 @@ Order is enforced automatically:
 Every run is a verifiable ledger.
 
 ```python
+from artana.store import SQLiteStore
+
 events = await kernel.get_events(run_id="pipeline_run_001")
 
 for event in events:
     print(event.seq, event.event_type)
 
-verified = await kernel._store.verify_run_chain("pipeline_run_001")
+store = SQLiteStore("chapter2_step5.db")
+verified = await store.verify_run_chain("pipeline_run_001")
 print("Chain valid:", verified)
+await store.close()
 ```
 
 You can audit:

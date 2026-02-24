@@ -26,6 +26,8 @@ class ToolDefinition:
     tool_version: str = "1.0.0"
     schema_version: str = "1"
     schema_hash: str = ""
+    risk_level: str = "medium"
+    sandbox_profile: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

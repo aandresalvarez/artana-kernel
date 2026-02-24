@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Sequence
-from typing import Protocol, TypeVar, runtime_checkable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from datetime import datetime, timezone
+from typing import Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -18,17 +19,24 @@ from artana._kernel.tool_cycle import (
     reconcile_tool_with_replay,
 )
 from artana._kernel.types import (
+    ApprovalRequiredError,
     ContextVersion,
     KernelPolicy,
     ModelInput,
     OutputT,
     PauseTicket,
+    PolicyViolationError,
     ReplayPolicy,
+    ResumePoint,
     RunHandle,
+    RunLease,
+    RunLifecycleStatus,
     RunRef,
+    RunStatus,
     StepModelResult,
     StepToolResult,
     ToolCallable,
+    ToolFingerprint,
 )
 from artana._kernel.workflow_runtime import (
     WorkflowContext,
@@ -50,18 +58,31 @@ from artana.events import (
     RunSummaryPayload,
     ToolCompletedPayload,
 )
-from artana.json_utils import canonical_json_dumps, sha256_hex
+from artana.json_utils import canonical_json_dumps, canonicalize_json_object, sha256_hex
 from artana.middleware import order_middleware
 from artana.middleware.base import KernelMiddleware, ModelInvocation
 from artana.middleware.capability_guard import CapabilityGuardMiddleware
 from artana.middleware.pii_scrubber import PIIScrubberMiddleware
 from artana.middleware.quota import QuotaMiddleware
+from artana.middleware.safety_policy import SafetyPolicyMiddleware
 from artana.models import TenantContext
 from artana.ports.model import ModelPort, ToolDefinition
 from artana.ports.tool import LocalToolRegistry, ToolPort
-from artana.store.base import EventStore, SupportsModelCostAggregation
+from artana.safety import IntentPlanRecord
+from artana.store.base import (
+    EventStore,
+    SupportsEventStreaming,
+    SupportsModelCostAggregation,
+    SupportsRunIndexing,
+    SupportsRunLeasing,
+)
 
 WorkflowOutputT = TypeVar("WorkflowOutputT")
+
+
+class _CriticDecision(BaseModel):
+    approved: bool
+    reason: str
 
 
 @runtime_checkable
@@ -96,6 +117,7 @@ class ArtanaKernel:
         pii: bool = True,
         quota: bool = True,
         capabilities: bool = True,
+        safety: SafetyPolicyMiddleware | None = None,
     ) -> tuple[KernelMiddleware, ...]:
         stack: list[KernelMiddleware] = []
         if pii:
@@ -104,6 +126,8 @@ class ArtanaKernel:
             stack.append(QuotaMiddleware())
         if capabilities:
             stack.append(CapabilityGuardMiddleware())
+        if safety is not None:
+            stack.append(safety)
         return order_middleware(tuple(stack))
 
     async def _append_event(
@@ -267,6 +291,418 @@ class ArtanaKernel:
             "cost_total": cost_total,
         }
 
+    async def get_run_status(self, *, run_id: str) -> RunStatus:
+        events = await self._store.get_events_for_run(run_id)
+        if not events:
+            raise ValueError(f"No events found for run_id={run_id!r}.")
+        status, blocked_on, failure_reason = _derive_run_status(events)
+        last_event = events[-1]
+        return RunStatus(
+            run_id=run_id,
+            tenant_id=events[0].tenant_id,
+            status=status,
+            last_event_seq=last_event.seq,
+            last_event_type=last_event.event_type.value,
+            updated_at=last_event.timestamp,
+            blocked_on=blocked_on,
+            failure_reason=failure_reason,
+        )
+
+    async def list_active_runs(
+        self,
+        *,
+        tenant_id: str,
+        status: RunLifecycleStatus | None = None,
+        since: datetime | None = None,
+    ) -> tuple[RunStatus, ...]:
+        if not isinstance(self._store, SupportsRunIndexing):
+            raise RuntimeError(
+                "list_active_runs requires a store implementing SupportsRunIndexing."
+            )
+        run_ids = await self._store.list_run_ids(tenant_id=tenant_id, since=since)
+        statuses: list[RunStatus] = []
+        for run_id in run_ids:
+            run_status = await self.get_run_status(run_id=run_id)
+            if run_status.tenant_id != tenant_id:
+                continue
+            if since is not None and run_status.updated_at < since:
+                continue
+            if status is None:
+                if run_status.status not in {"active", "paused"}:
+                    continue
+            elif run_status.status != status:
+                continue
+            statuses.append(run_status)
+        return tuple(statuses)
+
+    async def resume_point(self, *, run_id: str) -> ResumePoint:
+        events = await self._store.get_events_for_run(run_id)
+        if not events:
+            raise ValueError(f"No events found for run_id={run_id!r}.")
+        _, blocked_on, _ = _derive_run_status(events)
+        return ResumePoint(
+            run_id=run_id,
+            last_event_seq=events[-1].seq,
+            last_step_key=_latest_step_key(events),
+            blocked_on=blocked_on,
+        )
+
+    async def checkpoint(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        name: str,
+        payload: object,
+        step_key: str | None = None,
+        parent_step_key: str | None = None,
+    ) -> int:
+        if name.strip() == "":
+            raise ValueError("Checkpoint name must be non-empty.")
+        return await self.append_run_summary(
+            run_id=run_id,
+            tenant=tenant,
+            summary_type=f"checkpoint::{name}",
+            summary_json=json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            step_key=step_key,
+            parent_step_key=parent_step_key,
+        )
+
+    async def set_artifact(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        key: str,
+        value: object,
+        schema_version: str | None = None,
+        step_key: str | None = None,
+        parent_step_key: str | None = None,
+    ) -> int:
+        if key.strip() == "":
+            raise ValueError("Artifact key must be non-empty.")
+        payload: dict[str, object] = {"value": value}
+        if schema_version is not None:
+            payload["schema_version"] = schema_version
+        return await self.append_run_summary(
+            run_id=run_id,
+            tenant=tenant,
+            summary_type=f"artifact::{key}",
+            summary_json=json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            step_key=step_key,
+            parent_step_key=parent_step_key,
+        )
+
+    async def get_artifact(
+        self,
+        *,
+        run_id: str,
+        key: str,
+    ) -> object | None:
+        summary = await self.get_latest_run_summary(
+            run_id=run_id,
+            summary_type=f"artifact::{key}",
+        )
+        if summary is None:
+            return None
+        try:
+            payload: object = json.loads(summary.summary_json)
+        except json.JSONDecodeError:
+            return summary.summary_json
+        if isinstance(payload, dict) and "value" in payload:
+            return payload.get("value")
+        return payload
+
+    async def list_artifacts(self, *, run_id: str) -> dict[str, object]:
+        events = await self._store.get_events_for_run(run_id)
+        latest_by_key: dict[str, RunSummaryPayload] = {}
+        for event in events:
+            if event.event_type != EventType.RUN_SUMMARY:
+                continue
+            payload = event.payload
+            if not isinstance(payload, RunSummaryPayload):
+                continue
+            if not payload.summary_type.startswith("artifact::"):
+                continue
+            artifact_key = payload.summary_type.split("artifact::", 1)[1]
+            latest_by_key[artifact_key] = payload
+        resolved: dict[str, object] = {}
+        for key, payload in latest_by_key.items():
+            try:
+                parsed: object = json.loads(payload.summary_json)
+            except json.JSONDecodeError:
+                resolved[key] = payload.summary_json
+                continue
+            if isinstance(parsed, dict) and "value" in parsed:
+                resolved[key] = parsed.get("value")
+            else:
+                resolved[key] = parsed
+        return resolved
+
+    async def block_run(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        reason: str,
+        unblock_key: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+        step_key: str | None = None,
+        parent_step_key: str | None = None,
+    ) -> PauseTicket:
+        context = _BlockRunContext(
+            unblock_key=unblock_key,
+            metadata_json=(
+                json.dumps(dict(metadata), ensure_ascii=False, sort_keys=True)
+                if metadata is not None
+                else None
+            ),
+        )
+        return await self.pause(
+            run_id=run_id,
+            tenant=tenant,
+            reason=reason,
+            context=context,
+            step_key=step_key,
+            parent_step_key=parent_step_key,
+        )
+
+    async def unblock_run(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        unblock_key: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+        parent_step_key: str | None = None,
+    ) -> RunRef:
+        events = await self._store.get_events_for_run(run_id)
+        if not events:
+            raise ValueError(f"No events found for run_id={run_id!r}.")
+        validate_tenant_for_run(events=events, tenant=tenant)
+        pending_pause = _pending_pause_event(events)
+        if pending_pause is None:
+            raise ValueError(f"Run {run_id!r} is not currently blocked or paused.")
+        if unblock_key is not None and not _pause_matches_unblock_key(
+            pending_pause=pending_pause,
+            unblock_key=unblock_key,
+        ):
+            raise ValueError(
+                f"Run {run_id!r} pause context does not match unblock_key={unblock_key!r}."
+            )
+        if unblock_key is not None or metadata is not None:
+            await self.append_run_summary(
+                run_id=run_id,
+                tenant=tenant,
+                summary_type=(
+                    f"run_unblocked::{unblock_key}"
+                    if unblock_key is not None
+                    else "run_unblocked"
+                ),
+                summary_json=json.dumps(
+                    {
+                        "unblock_key": unblock_key,
+                        "metadata": dict(metadata) if metadata is not None else None,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                step_key=(
+                    f"unblock_{unblock_key}" if unblock_key is not None else "run_unblocked"
+                ),
+                parent_step_key=parent_step_key,
+            )
+        resume_payload = (
+            _UnblockRunInput(
+                unblock_key=unblock_key,
+                metadata_json=(
+                    json.dumps(dict(metadata), ensure_ascii=False, sort_keys=True)
+                    if metadata is not None
+                    else None
+                ),
+            )
+            if unblock_key is not None or metadata is not None
+            else None
+        )
+        return await self.resume(
+            run_id=run_id,
+            tenant=tenant,
+            human_input=resume_payload,
+            parent_step_key=parent_step_key,
+        )
+
+    async def explain_tool_allowlist(
+        self,
+        *,
+        tenant: TenantContext,
+        model: str = "tool_allowlist_explain",
+        run_id: str = "__tool_allowlist_explain__",
+        visible_tool_names: set[str] | None = None,
+        prompt: str = "Explain tool allowlist for this tenant.",
+        messages: Sequence[ChatMessage] | None = None,
+    ) -> dict[str, object]:
+        resolved_messages: tuple[ChatMessage, ...]
+        if messages is None:
+            resolved_messages = (ChatMessage(role="user", content=prompt),)
+        else:
+            resolved_messages = tuple(messages)
+            if len(resolved_messages) == 0:
+                resolved_messages = (ChatMessage(role="user", content=prompt),)
+        resolved_prompt = (
+            prompt if prompt.strip() != "" else _derive_prompt_from_messages(resolved_messages)
+        )
+        registered_tools = tuple(self._tool_port.to_all_tool_definitions())
+        capability_map = self._tool_port.capability_map()
+        visible_filter = set(visible_tool_names) if visible_tool_names is not None else None
+        all_tools = registered_tools
+        if visible_filter is not None:
+            all_tools = tuple(tool for tool in all_tools if tool.name in visible_filter)
+            capability_map = {
+                name: capability
+                for name, capability in capability_map.items()
+                if name in visible_filter
+            }
+        initial_invocation = ModelInvocation(
+            run_id=run_id,
+            tenant=tenant,
+            model=model,
+            prompt=resolved_prompt,
+            messages=resolved_messages,
+            allowed_tools=all_tools,
+            tool_capability_by_name=capability_map,
+        )
+        prepared_invocation = await apply_prepare_model_middleware(
+            self._middleware,
+            initial_invocation,
+        )
+        return _build_capability_decision_summary(
+            tenant=tenant,
+            model=prepared_invocation.model,
+            step_key=None,
+            registered_tools=registered_tools,
+            capability_map=self._tool_port.capability_map(),
+            visible_tool_names=visible_filter,
+            middleware_allowed_tools=prepared_invocation.allowed_tools,
+        )
+
+    async def stream_events(
+        self,
+        *,
+        run_id: str,
+        since_seq: int = 0,
+        follow: bool = False,
+        poll_interval_seconds: float = 0.5,
+        idle_timeout_seconds: float | None = None,
+    ) -> AsyncIterator[KernelEvent]:
+        if isinstance(self._store, SupportsEventStreaming):
+            async for event in self._store.stream_events(
+                run_id,
+                since_seq=since_seq,
+                follow=follow,
+                poll_interval_seconds=poll_interval_seconds,
+                idle_timeout_seconds=idle_timeout_seconds,
+            ):
+                yield event
+            return
+        events = await self._store.get_events_for_run(run_id)
+        for event in events:
+            if event.seq <= since_seq:
+                continue
+            yield event
+
+    async def acquire_run_lease(
+        self,
+        *,
+        run_id: str,
+        worker_id: str,
+        ttl_seconds: int,
+    ) -> bool:
+        if not isinstance(self._store, SupportsRunLeasing):
+            raise RuntimeError(
+                "acquire_run_lease requires a store implementing SupportsRunLeasing."
+            )
+        return await self._store.acquire_run_lease(
+            run_id=run_id,
+            worker_id=worker_id,
+            ttl_seconds=ttl_seconds,
+        )
+
+    async def renew_run_lease(
+        self,
+        *,
+        run_id: str,
+        worker_id: str,
+        ttl_seconds: int,
+    ) -> bool:
+        if not isinstance(self._store, SupportsRunLeasing):
+            raise RuntimeError(
+                "renew_run_lease requires a store implementing SupportsRunLeasing."
+            )
+        return await self._store.renew_run_lease(
+            run_id=run_id,
+            worker_id=worker_id,
+            ttl_seconds=ttl_seconds,
+        )
+
+    async def release_run_lease(
+        self,
+        *,
+        run_id: str,
+        worker_id: str,
+    ) -> bool:
+        if not isinstance(self._store, SupportsRunLeasing):
+            raise RuntimeError(
+                "release_run_lease requires a store implementing SupportsRunLeasing."
+            )
+        return await self._store.release_run_lease(run_id=run_id, worker_id=worker_id)
+
+    async def get_run_lease(self, *, run_id: str) -> RunLease | None:
+        if not isinstance(self._store, SupportsRunLeasing):
+            raise RuntimeError(
+                "get_run_lease requires a store implementing SupportsRunLeasing."
+            )
+        lease = await self._store.get_run_lease(run_id=run_id)
+        if lease is None:
+            return None
+        return RunLease(
+            run_id=lease.run_id,
+            worker_id=lease.worker_id,
+            lease_expires_at=lease.lease_expires_at,
+        )
+
+    def canonicalize_tool_args(
+        self,
+        *,
+        tool_name: str,
+        arguments: BaseModel | Mapping[str, object] | str,
+    ) -> tuple[str, str]:
+        tool_by_name = {tool.name: tool for tool in self.list_registered_tools()}
+        tool = tool_by_name.get(tool_name)
+        if tool is None:
+            raise KeyError(f"Tool {tool_name!r} is not registered.")
+        if isinstance(arguments, str):
+            canonical_arguments_json = canonicalize_json_object(arguments)
+        elif isinstance(arguments, BaseModel):
+            canonical_arguments_json = canonical_json_dumps(arguments.model_dump(mode="json"))
+        else:
+            canonical_arguments_json = canonical_json_dumps(dict(arguments))
+            canonical_arguments_json = canonicalize_json_object(canonical_arguments_json)
+        return canonical_arguments_json, tool.schema_hash
+
+    def tool_fingerprint(self, *, tool_name: str) -> ToolFingerprint:
+        tool_by_name = {tool.name: tool for tool in self.list_registered_tools()}
+        tool = tool_by_name.get(tool_name)
+        if tool is None:
+            raise KeyError(f"Tool {tool_name!r} is not registered.")
+        return ToolFingerprint(
+            tool_name=tool.name,
+            tool_version=tool.tool_version,
+            schema_version=tool.schema_version,
+            schema_hash=tool.schema_hash,
+            risk_level=_normalize_risk_level(tool.risk_level),
+            sandbox_profile=tool.sandbox_profile,
+        )
+
     def list_registered_tools(self) -> tuple[ToolDefinition, ...]:
         return tuple(self._tool_port.to_all_tool_definitions())
 
@@ -290,6 +726,8 @@ class ArtanaKernel:
         requires_capability: str | None = None,
         tool_version: str = "1.0.0",
         schema_version: str = "1",
+        risk_level: str = "medium",
+        sandbox_profile: str | None = None,
     ) -> Callable[[ToolCallable], ToolCallable]:
         def decorator(function: ToolCallable) -> ToolCallable:
             self._tool_port.register(
@@ -297,6 +735,8 @@ class ArtanaKernel:
                 requires_capability=requires_capability,
                 tool_version=tool_version,
                 schema_version=schema_version,
+                risk_level=risk_level,
+                sandbox_profile=sandbox_profile,
             )
             return function
 
@@ -528,24 +968,82 @@ class ArtanaKernel:
             )
         validate_tenant_for_run(events=events, tenant=tenant)
         arguments_json = canonical_json_dumps(arguments.model_dump(mode="json"))
-        result = await execute_tool_step_with_replay(
-            store=self._store,
-            tool_port=self._tool_port,
-            middleware=self._middleware,
-            run_id=run_id,
-            tenant=tenant,
-            tool_name=tool_name,
-            arguments_json=arguments_json,
-            step_key=step_key,
-            parent_step_key=parent_step_key,
-        )
-        return StepToolResult(
-            run_id=run_id,
-            seq=result.seq,
-            tool_name=tool_name,
-            result_json=result.result_json,
-            replayed=result.replayed,
-        )
+        critic_attempted = False
+        while True:
+            try:
+                result = await execute_tool_step_with_replay(
+                    store=self._store,
+                    tool_port=self._tool_port,
+                    middleware=self._middleware,
+                    run_id=run_id,
+                    tenant=tenant,
+                    tool_name=tool_name,
+                    arguments_json=arguments_json,
+                    step_key=step_key,
+                    parent_step_key=parent_step_key,
+                )
+                return StepToolResult(
+                    run_id=run_id,
+                    seq=result.seq,
+                    tool_name=tool_name,
+                    result_json=result.result_json,
+                    replayed=result.replayed,
+                )
+            except ApprovalRequiredError as exc:
+                if exc.mode == "human":
+                    await self._pause_for_approval_if_needed(
+                        run_id=run_id,
+                        tenant=tenant,
+                        tool_name=tool_name,
+                        approval_key=exc.approval_key,
+                        parent_step_key=parent_step_key,
+                    )
+                    raise
+                if exc.mode != "critic":
+                    raise
+                if critic_attempted:
+                    raise RuntimeError(
+                        "Critic approval loop detected: middleware still requests critic "
+                        "approval after a critic decision."
+                    )
+                critic_attempted = True
+                decision = await self._run_critic_gate(
+                    run_id=run_id,
+                    tenant=tenant,
+                    tool_name=tool_name,
+                    arguments_json=(
+                        exc.arguments_json
+                        if exc.arguments_json is not None
+                        else canonicalize_json_object(arguments_json)
+                    ),
+                    approval_key=exc.approval_key,
+                    critic_model=exc.critic_model,
+                    fingerprint=exc.fingerprint,
+                    parent_step_key=parent_step_key,
+                )
+                if not decision.approved:
+                    raise PolicyViolationError(
+                        code="critic_denied",
+                        message=(
+                            f"Critic gate denied tool {tool_name!r}: "
+                            f"{decision.reason}"
+                        ),
+                        tool_name=tool_name,
+                        fingerprint=exc.fingerprint,
+                    )
+                await self.approve_tool_call(
+                    run_id=run_id,
+                    tenant=tenant,
+                    approval_key=exc.approval_key,
+                    mode="critic",
+                    reason=decision.reason,
+                    step_key=(
+                        f"approval_critic_{tool_name}"
+                        if step_key is None
+                        else f"{step_key}_approval_critic"
+                    ),
+                    parent_step_key=parent_step_key,
+                )
 
     async def reconcile_tool(
         self,
@@ -621,6 +1119,53 @@ class ArtanaKernel:
         )
         return event.seq
 
+    async def record_intent_plan(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        intent: IntentPlanRecord,
+        step_key: str | None = None,
+        parent_step_key: str | None = None,
+    ) -> int:
+        return await self.append_run_summary(
+            run_id=run_id,
+            tenant=tenant,
+            summary_type="policy::intent_plan",
+            summary_json=intent.model_dump_json(),
+            step_key=step_key,
+            parent_step_key=parent_step_key,
+        )
+
+    async def approve_tool_call(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        approval_key: str,
+        mode: str,
+        reason: str,
+        step_key: str | None = None,
+        parent_step_key: str | None = None,
+    ) -> int:
+        return await self.append_run_summary(
+            run_id=run_id,
+            tenant=tenant,
+            summary_type=f"policy::approval::{approval_key}",
+            summary_json=json.dumps(
+                {
+                    "approved": True,
+                    "mode": mode,
+                    "reason": reason,
+                    "approved_at": datetime.now(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            step_key=step_key,
+            parent_step_key=parent_step_key,
+        )
+
     async def append_harness_event(
         self,
         *,
@@ -683,7 +1228,7 @@ class ArtanaKernel:
         return await self._store.get_events_for_run(run_id)
 
     def _validate_policy_requirements(self) -> None:
-        if self._policy.mode != "enforced":
+        if self._policy.mode not in {"enforced", "enforced_v2"}:
             return
 
         required: tuple[type[KernelMiddleware], ...] = (
@@ -691,13 +1236,15 @@ class ArtanaKernel:
             QuotaMiddleware,
             CapabilityGuardMiddleware,
         )
+        if self._policy.mode == "enforced_v2":
+            required = required + (SafetyPolicyMiddleware,)
         for middleware_type in required:
             if not any(
                 isinstance(middleware_item, middleware_type)
                 for middleware_item in self._middleware
             ):
                 raise ValueError(
-                    "KernelPolicy(mode='enforced') requires middleware "
+                    f"KernelPolicy(mode={self._policy.mode!r}) requires middleware "
                     f"{middleware_type.__name__}."
                 )
         if not any(
@@ -706,8 +1253,100 @@ class ArtanaKernel:
             for middleware_item in self._middleware
         ):
             raise ValueError(
-                "KernelPolicy(mode='enforced') requires tool IO policy middleware hooks."
+                f"KernelPolicy(mode={self._policy.mode!r}) requires tool IO policy "
+                "middleware hooks."
             )
+
+    async def _pause_for_approval_if_needed(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        approval_key: str,
+        parent_step_key: str | None,
+    ) -> None:
+        events = await self._store.get_events_for_run(run_id)
+        validate_tenant_for_run(events=events, tenant=tenant)
+        for event in reversed(events):
+            if event.event_type != EventType.PAUSE_REQUESTED:
+                continue
+            payload = event.payload
+            if not isinstance(payload, PauseRequestedPayload):
+                continue
+            if payload.context_json is None:
+                continue
+            try:
+                context_payload: object = json.loads(payload.context_json)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(context_payload, dict):
+                continue
+            if context_payload.get("approval_key") != approval_key:
+                continue
+            return
+        await self.pause(
+            run_id=run_id,
+            tenant=tenant,
+            reason=f"Approval required for tool {tool_name!r}.",
+            context=_ApprovalPauseContext(
+                approval_key=approval_key,
+                tool_name=tool_name,
+            ),
+            step_key=f"approval_human_{tool_name}",
+            parent_step_key=parent_step_key,
+        )
+
+    async def _run_critic_gate(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        tool_name: str,
+        arguments_json: str,
+        approval_key: str,
+        critic_model: str | None,
+        fingerprint: str | None,
+        parent_step_key: str | None,
+    ) -> _CriticDecision:
+        if critic_model is None:
+            raise RuntimeError("Critic approval requires critic_model.")
+        messages = (
+            ChatMessage(
+                role="system",
+                content=(
+                    "You are a strict safety critic. Approve only if the requested tool "
+                    "execution is safe and policy-compliant."
+                ),
+            ),
+            ChatMessage(
+                role="user",
+                content=(
+                    f"tool_name={tool_name}\n"
+                    f"approval_key={approval_key}\n"
+                    f"fingerprint={fingerprint}\n"
+                    f"arguments_json={arguments_json}\n"
+                    "Return JSON with keys approved (bool) and reason (string)."
+                ),
+            ),
+        )
+        result = await self.step_model(
+            run_id=run_id,
+            tenant=tenant,
+            model=critic_model,
+            input=ModelInput.from_messages(messages),
+            output_schema=_CriticDecision,
+            step_key=f"critic::{tool_name}::{approval_key[:12]}",
+            visible_tool_names=set(),
+            replay_policy="strict",
+            parent_step_key=parent_step_key,
+        )
+        return result.output
+
+
+class _ApprovalPauseContext(BaseModel):
+    approval_key: str
+    tool_name: str
 
 
 def _normalize_model_input(model_input: ModelInput) -> tuple[str, tuple[ChatMessage, ...]]:
@@ -805,3 +1444,109 @@ def _build_capability_decision_summary(
         "final_allowed_tools": sorted(final_allowed_names),
         "decisions": decisions,
     }
+
+
+class _BlockRunContext(BaseModel):
+    unblock_key: str | None = None
+    metadata_json: str | None = None
+
+
+class _UnblockRunInput(BaseModel):
+    unblock_key: str | None = None
+    metadata_json: str | None = None
+
+
+def _pending_pause_event(events: Sequence[KernelEvent]) -> KernelEvent | None:
+    pending_pause: KernelEvent | None = None
+    for event in events:
+        if event.event_type == EventType.PAUSE_REQUESTED:
+            pending_pause = event
+            continue
+        if event.event_type == EventType.RESUME_REQUESTED and pending_pause is not None:
+            pending_pause = None
+    return pending_pause
+
+
+def _pause_matches_unblock_key(*, pending_pause: KernelEvent, unblock_key: str) -> bool:
+    payload = pending_pause.payload
+    if not isinstance(payload, PauseRequestedPayload):
+        return False
+    if payload.context_json is None:
+        return False
+    try:
+        context_payload: object = json.loads(payload.context_json)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(context_payload, dict):
+        return False
+    context_unblock_key = context_payload.get("unblock_key")
+    return isinstance(context_unblock_key, str) and context_unblock_key == unblock_key
+
+
+def _pause_blocked_on(payload: PauseRequestedPayload) -> str | None:
+    if payload.context_json is None:
+        return None
+    try:
+        context_payload: object = json.loads(payload.context_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(context_payload, dict):
+        return None
+    approval_key = context_payload.get("approval_key")
+    if isinstance(approval_key, str) and approval_key != "":
+        return f"approval:{approval_key}"
+    unblock_key = context_payload.get("unblock_key")
+    if isinstance(unblock_key, str) and unblock_key != "":
+        return f"unblock:{unblock_key}"
+    return None
+
+
+def _derive_run_status(
+    events: Sequence[KernelEvent],
+) -> tuple[RunLifecycleStatus, str | None, str | None]:
+    pending_pause = _pending_pause_event(events)
+    if pending_pause is not None:
+        payload = pending_pause.payload
+        if isinstance(payload, PauseRequestedPayload):
+            return "paused", _pause_blocked_on(payload), None
+        return "paused", None, None
+
+    for event in reversed(events):
+        if event.event_type != EventType.HARNESS_SLEEP:
+            continue
+        payload = event.payload
+        if not isinstance(payload, HarnessSleepPayload):
+            continue
+        if payload.status == "failed":
+            return "failed", None, payload.execution_error_type or payload.sleep_error_type
+        return "completed", None, None
+
+    for event in reversed(events):
+        if event.event_type != EventType.HARNESS_FAILED:
+            continue
+        payload = event.payload
+        if not isinstance(payload, HarnessFailedPayload):
+            continue
+        return "failed", None, payload.error_type
+
+    return "active", None, None
+
+
+def _latest_step_key(events: Sequence[KernelEvent]) -> str | None:
+    for event in reversed(events):
+        payload_step_key = getattr(event.payload, "step_key", None)
+        if isinstance(payload_step_key, str):
+            return payload_step_key
+        if isinstance(event.parent_step_key, str):
+            return event.parent_step_key
+    return None
+
+
+def _normalize_risk_level(value: str) -> Literal["low", "medium", "high", "critical"]:
+    if value == "low":
+        return "low"
+    if value == "high":
+        return "high"
+    if value == "critical":
+        return "critical"
+    return "medium"

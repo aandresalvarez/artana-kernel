@@ -14,6 +14,7 @@ from artana._kernel.tool_execution import (
     mark_pending_request_unknown,
     resolve_completed_tool_result,
 )
+from artana._kernel.tool_request_context import tool_request_context
 from artana._kernel.tool_state import resolve_tool_resolutions
 from artana._kernel.types import (
     ToolExecutionFailedError,
@@ -71,15 +72,16 @@ async def execute_tool_step_with_replay(
     parent_step_key: str | None = None,
 ) -> ToolStepReplayResult:
     normalized_arguments_json = canonicalize_json_object(arguments_json)
-    prepared_arguments_json = canonicalize_json_object(
-        await apply_prepare_tool_request_middleware(
+    with tool_request_context(step_key=step_key, parent_step_key=parent_step_key):
+        prepared_request = await apply_prepare_tool_request_middleware(
             middleware,
             run_id=run_id,
             tenant=tenant,
             tool_name=tool_name,
             arguments_json=normalized_arguments_json,
         )
-    )
+    prepared_arguments_json = canonicalize_json_object(prepared_request.arguments_json)
+    prepared_request = prepared_request.with_arguments_json(prepared_arguments_json)
     events = await store.get_events_for_run(run_id)
     validate_tenant_for_run(events=events, tenant=tenant)
     assert_tool_allowed_for_tenant(
@@ -146,6 +148,9 @@ async def execute_tool_step_with_replay(
             tool_version=tool_version,
             schema_version=schema_version,
             step_key=step_key,
+            semantic_idempotency_key=prepared_request.semantic_idempotency_key,
+            intent_id=prepared_request.intent_id,
+            amount_usd=prepared_request.amount_usd,
         ),
     )
     completed = await complete_pending_tool_request(
@@ -185,15 +190,15 @@ async def reconcile_tool_with_replay(
     parent_step_key: str | None = None,
 ) -> str:
     normalized_arguments_json = canonicalize_json_object(arguments_json)
-    prepared_arguments_json = canonicalize_json_object(
-        await apply_prepare_tool_request_middleware(
+    with tool_request_context(step_key=step_key, parent_step_key=parent_step_key):
+        prepared_request = await apply_prepare_tool_request_middleware(
             middleware,
             run_id=run_id,
             tenant=tenant,
             tool_name=tool_name,
             arguments_json=normalized_arguments_json,
         )
-    )
+    prepared_arguments_json = canonicalize_json_object(prepared_request.arguments_json)
     events = await store.get_events_for_run(run_id)
     validate_tenant_for_run(events=events, tenant=tenant)
     assert_tool_allowed_for_tenant(

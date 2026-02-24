@@ -61,6 +61,7 @@ class ToolUnknownOutcomeError(RuntimeError):
 
 ToolReturnValue = str | ToolExecutionResult
 ToolCallable = Callable[..., Awaitable[ToolReturnValue]]
+ToolRiskLevel = Literal["low", "medium", "high", "critical"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +76,8 @@ class RegisteredTool:
     tool_version: str
     schema_version: str
     schema_hash: str
+    risk_level: ToolRiskLevel
+    sandbox_profile: str | None = None
 
 
 class ToolPort(Protocol):
@@ -84,6 +87,8 @@ class ToolPort(Protocol):
         requires_capability: str | None = None,
         tool_version: str = "1.0.0",
         schema_version: str = "1",
+        risk_level: ToolRiskLevel = "medium",
+        sandbox_profile: str | None = None,
     ) -> None:
         ...
 
@@ -119,6 +124,8 @@ class LocalToolRegistry:
         requires_capability: str | None = None,
         tool_version: str = "1.0.0",
         schema_version: str = "1",
+        risk_level: ToolRiskLevel = "medium",
+        sandbox_profile: str | None = None,
     ) -> None:
         signature = inspect.signature(function)
         resolved_hints = get_type_hints(function)
@@ -162,6 +169,8 @@ class LocalToolRegistry:
             tool_version=tool_version,
             schema_version=schema_version,
             schema_hash=schema_hash,
+            risk_level=risk_level,
+            sandbox_profile=sandbox_profile,
         )
 
     def list_for_capabilities(self, capabilities: frozenset[str]) -> list[RegisteredTool]:
@@ -244,6 +253,8 @@ class LocalToolRegistry:
                 tool_version=tool.tool_version,
                 schema_version=tool.schema_version,
                 schema_hash=tool.schema_hash,
+                risk_level=tool.risk_level,
+                sandbox_profile=tool.sandbox_profile,
             )
             for tool in self.list_for_capabilities(capabilities)
         ]
@@ -257,6 +268,8 @@ class LocalToolRegistry:
                 tool_version=tool.tool_version,
                 schema_version=tool.schema_version,
                 schema_hash=tool.schema_hash,
+                risk_level=tool.risk_level,
+                sandbox_profile=tool.sandbox_profile,
             )
             for tool in self._tools.values()
         ]

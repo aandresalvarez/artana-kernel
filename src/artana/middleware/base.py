@@ -13,6 +13,29 @@ class BudgetExceededError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedToolRequest:
+    arguments_json: str
+    semantic_idempotency_key: str | None = None
+    intent_id: str | None = None
+    amount_usd: float | None = None
+
+    def with_arguments_json(self, arguments_json: str) -> "PreparedToolRequest":
+        return replace(self, arguments_json=arguments_json)
+
+    def merge(self, other: "PreparedToolRequest") -> "PreparedToolRequest":
+        return PreparedToolRequest(
+            arguments_json=other.arguments_json,
+            semantic_idempotency_key=(
+                other.semantic_idempotency_key
+                if other.semantic_idempotency_key is not None
+                else self.semantic_idempotency_key
+            ),
+            intent_id=other.intent_id if other.intent_id is not None else self.intent_id,
+            amount_usd=other.amount_usd if other.amount_usd is not None else self.amount_usd,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ModelInvocation:
     run_id: str
     tenant: TenantContext
@@ -56,7 +79,7 @@ class KernelMiddleware(Protocol):
         tenant: TenantContext,
         tool_name: str,
         arguments_json: str,
-    ) -> str:
+    ) -> str | PreparedToolRequest:
         ...
 
     async def prepare_tool_result(

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from artana.agent import AutonomousAgent
+from artana.agent import AutonomousAgent, ContextBuilder
 from artana.kernel import ArtanaKernel
 from artana.middleware import CapabilityGuardMiddleware, QuotaMiddleware
 from artana.models import TenantContext
@@ -62,7 +62,10 @@ def _create_kernel(db_path: Path) -> ArtanaKernel:
             budget_usd_limit=5.0,
             capabilities=frozenset(),
         )
-        agent = AutonomousAgent(kernel=kernel)
+        agent = AutonomousAgent(
+            kernel=kernel,
+            context_builder=ContextBuilder(progressive_skills=False),
+        )
 
         result = await agent.run(
             run_id=f"{artana_context.run_id}_ext_{artana_context.idempotency_key[:6]}",
@@ -131,7 +134,10 @@ def _create_kernel(db_path: Path) -> ArtanaKernel:
             budget_usd_limit=5.0,
             capabilities=frozenset(),
         )
-        agent = AutonomousAgent(kernel=kernel)
+        agent = AutonomousAgent(
+            kernel=kernel,
+            context_builder=ContextBuilder(progressive_skills=False),
+        )
 
         prompt = (
             f"Original text: {text}\n\n"
@@ -177,7 +183,10 @@ async def main() -> None:
         budget_usd_limit=5.00,
         capabilities=frozenset({"spawn_extractor", "run_math", "spawn_adjudicator"}),
     )
-    lead_agent = AutonomousAgent(kernel=kernel)
+    lead_agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(progressive_skills=False),
+    )
 
     article_text = (
         "DrugA strongly INHIBITS GeneB. In most patients, GeneB ACTIVATES DiseaseC. "
@@ -201,7 +210,7 @@ async def main() -> None:
             system_prompt=system_prompt,
             prompt=f"Please analyze this text: {article_text}",
             output_schema=FinalReport,
-            max_iterations=10,
+            max_iterations=16,
         )
         print("\n✅ Lead Agent Published Final Report:")
         print(report.model_dump_json(indent=2))

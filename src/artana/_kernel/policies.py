@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from artana._kernel.types import CapabilityDeniedError
-from artana.middleware.base import KernelMiddleware, ModelInvocation
+from artana.middleware.base import KernelMiddleware, ModelInvocation, PreparedToolRequest
 from artana.models import TenantContext
 
 
@@ -24,15 +24,19 @@ async def apply_prepare_tool_request_middleware(
     tenant: TenantContext,
     tool_name: str,
     arguments_json: str,
-) -> str:
-    current = arguments_json
+) -> PreparedToolRequest:
+    current = PreparedToolRequest(arguments_json=arguments_json)
     for middleware_item in middleware:
-        current = await middleware_item.prepare_tool_request(
+        result = await middleware_item.prepare_tool_request(
             run_id=run_id,
             tenant=tenant,
             tool_name=tool_name,
-            arguments_json=current,
+            arguments_json=current.arguments_json,
         )
+        if isinstance(result, PreparedToolRequest):
+            current = current.merge(result)
+            continue
+        current = current.with_arguments_json(result)
     return current
 
 

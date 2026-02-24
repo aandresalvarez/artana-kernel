@@ -6,6 +6,7 @@ from artana.middleware.base import KernelMiddleware
 from artana.middleware.capability_guard import CapabilityGuardMiddleware
 from artana.middleware.pii_scrubber import PIIScrubberMiddleware
 from artana.middleware.quota import QuotaMiddleware
+from artana.middleware.safety_policy import SafetyPolicyMiddleware
 
 
 def order_middleware(middleware: Sequence[KernelMiddleware]) -> tuple[KernelMiddleware, ...]:
@@ -24,4 +25,6 @@ def _priority_for(middleware_item: KernelMiddleware) -> int:
         return 1
     if isinstance(middleware_item, CapabilityGuardMiddleware):
         return 2
-    return 3
+    if isinstance(middleware_item, SafetyPolicyMiddleware):
+        return 3
+    return 4

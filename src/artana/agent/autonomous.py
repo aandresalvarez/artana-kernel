@@ -48,6 +48,7 @@ class AutonomousAgent:
     CORE_MEMORY_REPLACE = "core_memory_replace"
     CORE_MEMORY_SEARCH = "core_memory_search"
     QUERY_EVENT_HISTORY = "query_event_history"
+    RECORD_INTENT_PLAN = "record_intent_plan"
     COMPACTION_ARTIFACT_SUMMARY_TYPE = "artifact::agent_compaction"
 
     def __init__(
@@ -94,6 +95,7 @@ class AutonomousAgent:
             core_memory_replace=self.CORE_MEMORY_REPLACE,
             core_memory_search=self.CORE_MEMORY_SEARCH,
             query_event_history=self.QUERY_EVENT_HISTORY,
+            record_intent_plan=self.RECORD_INTENT_PLAN,
         )
         self._runtime_tools.ensure_registered()
 

@@ -11,7 +11,8 @@ This chapter focuses on:
 * Adapter portability
 * Ledger integrity
 
-All examples use current APIs and are copy-paste runnable.
+Standalone scripts in this chapter are runnable. Snippet blocks are in-context
+references and may assume existing kernel/store/runtime state.
 
 ---
 
@@ -305,9 +306,9 @@ Deterministic + AI + replay = production-safe orchestration.
 
 ---
 
-# Step 5 — Production Middleware (Enforced Mode)
+# Step 5 — Production Middleware (Enforced Modes)
 
-Production environments should enable enforcement mode:
+Baseline production enforcement:
 
 ```python
 from artana.kernel import KernelPolicy
@@ -329,12 +330,15 @@ kernel = ArtanaKernel(
 )
 ```
 
-Enforced mode requires:
+`KernelPolicy.enforced()` requires:
 
 * PII scrubber
 * Quota middleware
 * Capability guard
-* Tool IO hooks
+
+For side-effect-heavy production systems, prefer `KernelPolicy.enforced_v2()` and add
+`SafetyPolicyMiddleware` to activate intent plans, semantic idempotency, limits, approvals,
+and invariants.
 
 This prevents unsafe deployments.
 
@@ -364,13 +368,17 @@ Production tip:
 Every run is verifiable:
 
 ```python
-events = await kernel.get_events("migration_run")
+from artana.store import SQLiteStore
+
+events = await kernel.get_events(run_id="migration_run")
 
 for event in events:
     print(event.seq, event.event_type)
 
-valid = await kernel._store.verify_run_chain("migration_run")
+store = SQLiteStore("chapter3_step3.db")
+valid = await store.verify_run_chain("migration_run")
 print("Ledger valid:", valid)
+await store.close()
 ```
 
 Production uses:
@@ -382,13 +390,18 @@ Production uses:
 
 ---
 
-# Step 8 — Adapter Swap (SQLite → Postgres)
+# Step 8 — Adapter Swap (SQLite → PostgresStore)
 
 Production swaps store implementation, not business logic.
 
 ```python
-class PostgresStore(SQLiteStore):
-    """Production store adapter implementing EventStore interface."""
+from artana.store import PostgresStore
+
+store = PostgresStore(
+    dsn="postgresql://user:pass@db:5432/artana",
+    min_pool_size=2,
+    max_pool_size=20,
+)
 ```
 
 Kernel logic remains identical.
@@ -405,7 +418,7 @@ Only the persistence backend changes.
 | Crash safety            | WorkflowContext            |
 | Long-running discipline | IncrementalTaskHarness     |
 | Drift control           | ReplayPolicy               |
-| Policy enforcement      | KernelPolicy.enforced      |
+| Policy enforcement      | KernelPolicy.enforced_v2   |
 | Audit ledger            | verify_run_chain           |
 | Structured continuity   | artifacts + summaries      |
 | Safe scaling            | SupervisorHarness          |
@@ -418,7 +431,7 @@ Production Artana systems should:
 
 * Use Harness for long-running tasks
 * Use Workflow for deterministic orchestration
-* Use enforced middleware
+* Use enforced middleware (`enforced_v2` for OS-grade safety)
 * Use replay policies intentionally
 * Store structured artifacts
 * Validate clean state before sleep
