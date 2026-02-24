@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TypeVar
 
@@ -18,7 +19,7 @@ from artana.agent import (
 from artana.agent.experience import ExperienceRule, RuleType, SQLiteExperienceStore
 from artana.agent.memory import InMemoryMemoryStore
 from artana.agent.runtime_tools import RuntimeToolManager
-from artana.events import ChatMessage, EventType, ModelRequestedPayload
+from artana.events import ChatMessage, EventType, ModelRequestedPayload, RunSummaryPayload
 from artana.kernel import ArtanaKernel
 from artana.middleware import QuotaMiddleware
 from artana.models import TenantContext
@@ -74,6 +75,7 @@ class ProgressiveSkillsModelPort:
         self.allowed_tool_batches.append([tool.name for tool in request.allowed_tools])
 
         if self.calls == 1:
+            tool_calls: tuple[ToolCall, ...]
             tool_calls = (
                 ToolCall(
                     tool_name="load_skill",
@@ -117,6 +119,7 @@ class MemoryModelPort:
             self.system_messages.append("")
 
         if self.calls == 1:
+            tool_calls: tuple[ToolCall, ...]
             tool_calls = (
                 ToolCall(
                     tool_name="core_memory_append",
@@ -219,6 +222,7 @@ class SkillGuardModelPort:
             self.first_system_content = request.messages[0].content
 
         if self.calls == 1:
+            tool_calls: tuple[ToolCall, ...]
             tool_calls = (
                 ToolCall(
                     tool_name="load_skill",
@@ -247,6 +251,7 @@ class SubAgentInheritanceModelPort:
     ) -> ModelResult[OutputModelT]:
         if "::sub_agent::" in request.run_id:
             self.child_runs_seen.add(request.run_id)
+            tool_calls: tuple[ToolCall, ...]
             if len(request.messages) <= 2:
                 tool_calls = (
                     ToolCall(
@@ -385,7 +390,7 @@ class CustomContextBuilder(ContextBuilder):
         short_term_messages: tuple[ChatMessage, ...],
         system_prompt: str,
         active_skills: frozenset[str],
-        available_skill_summaries: dict[str, str] | None,
+        available_skill_summaries: Mapping[str, str] | None,
         memory_text: str | None,
     ) -> tuple[ChatMessage, ...]:
         return (ChatMessage(role="system", content="CUSTOM CONTEXT"),) + short_term_messages
@@ -440,10 +445,15 @@ async def test_autonomous_agent_compaction_records_compact_step(tmp_path: Path) 
                 step_keys.append(payload.step_key)
         assert "turn_1_compact" in step_keys
         assert "turn_1_model" in step_keys
-        assert any(
-            event.event_type == EventType.RUN_SUMMARY
-            and event.payload.summary_type == AutonomousAgent.COMPACTION_ARTIFACT_SUMMARY_TYPE
+        run_summaries = [
+            event.payload
             for event in events
+            if event.event_type == EventType.RUN_SUMMARY
+            and isinstance(event.payload, RunSummaryPayload)
+        ]
+        assert any(
+            payload.summary_type == AutonomousAgent.COMPACTION_ARTIFACT_SUMMARY_TYPE
+            for payload in run_summaries
         )
     finally:
         await kernel.close()

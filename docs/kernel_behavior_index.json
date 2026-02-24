@@ -2,6 +2,11 @@
   "event_types": [
     "run_started",
     "resume_requested",
+    "harness_initialized",
+    "harness_wake",
+    "harness_sleep",
+    "harness_failed",
+    "harness_stage",
     "model_requested",
     "model_completed",
     "replayed_with_drift",

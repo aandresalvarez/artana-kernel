@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from artana import KernelModelClient
-from artana.events import EventPayload, EventType, KernelEvent
+from artana.events import EventPayload, EventType, KernelEvent, RunSummaryPayload
 from artana.kernel import ArtanaKernel, CapabilityDeniedError
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage, ToolCall
@@ -67,6 +67,7 @@ class FailingStore(EventStore):
         tenant_id: str,
         event_type: EventType,
         payload: EventPayload,
+        parent_step_key: str | None = None,
     ) -> KernelEvent:
         raise RuntimeError("simulated store write failure")
 
@@ -75,6 +76,13 @@ class FailingStore(EventStore):
 
     async def verify_run_chain(self, run_id: str) -> bool:
         return True
+
+    async def get_latest_run_summary(
+        self,
+        run_id: str,
+        summary_type: str,
+    ) -> RunSummaryPayload | None:
+        return None
 
     async def close(self) -> None:
         return None

@@ -70,8 +70,13 @@ class DeveloperFriendlyHarness(BaseHarness[dict[str, object]]):
 
 
 class TaskListHarness(IncrementalTaskHarness):
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        kernel: ArtanaKernel,
+        tenant: TenantContext | None = None,
+    ) -> None:
+        super().__init__(kernel=kernel, tenant=tenant)
         self.completed: list[str] = []
 
     async def define_tasks(self) -> list[TaskUnit]:
@@ -111,10 +116,15 @@ async def test_base_harness_helpers_allow_run_without_explicit_tenant(tmp_path: 
         assert result["visible_tools"] == ["echo_public"]
 
         events = await store.get_events_for_run("run_harness_dx")
-        assert any(
-            event.event_type == EventType.RUN_SUMMARY
-            and event.payload.summary_type == "developer_state"
+        run_summaries = [
+            event.payload
             for event in events
+            if event.event_type == EventType.RUN_SUMMARY
+            and isinstance(event.payload, RunSummaryPayload)
+        ]
+        assert any(
+            payload.summary_type == "developer_state"
+            for payload in run_summaries
         )
         assert any(event.event_type == EventType.MODEL_REQUESTED for event in events)
         assert any(event.event_type == EventType.TOOL_COMPLETED for event in events)
@@ -171,10 +181,15 @@ async def test_incremental_task_harness_default_flow_runs_one_task_per_session(
         assert harness.completed == ["collect", "summarize"]
 
         events = await store.get_events_for_run(run_id)
-        assert any(
-            event.event_type == EventType.RUN_SUMMARY
-            and event.payload.summary_type == "task_progress"
+        run_summaries = [
+            event.payload
             for event in events
+            if event.event_type == EventType.RUN_SUMMARY
+            and isinstance(event.payload, RunSummaryPayload)
+        ]
+        assert any(
+            payload.summary_type == "task_progress"
+            for payload in run_summaries
         )
     finally:
         await kernel.close()

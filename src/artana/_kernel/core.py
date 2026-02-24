@@ -59,7 +59,7 @@ from artana.middleware.quota import QuotaMiddleware
 from artana.models import TenantContext
 from artana.ports.model import ModelPort, ToolDefinition
 from artana.ports.tool import LocalToolRegistry, ToolPort
-from artana.store.base import EventStore
+from artana.store.base import EventStore, SupportsModelCostAggregation
 
 WorkflowOutputT = TypeVar("WorkflowOutputT")
 
@@ -115,15 +115,20 @@ class ArtanaKernel:
         payload: EventPayload,
         parent_step_key: str | None = None,
     ) -> KernelEvent:
-        append_kwargs = {
-            "run_id": run_id,
-            "tenant_id": tenant_id,
-            "event_type": event_type,
-            "payload": payload,
-        }
-        if parent_step_key is not None:
-            append_kwargs["parent_step_key"] = parent_step_key
-        return await self._store.append_event(**append_kwargs)
+        if parent_step_key is None:
+            return await self._store.append_event(
+                run_id=run_id,
+                tenant_id=tenant_id,
+                event_type=event_type,
+                payload=payload,
+            )
+        return await self._store.append_event(
+            run_id=run_id,
+            tenant_id=tenant_id,
+            event_type=event_type,
+            payload=payload,
+            parent_step_key=parent_step_key,
+        )
 
     async def start_run(
         self,
@@ -237,7 +242,20 @@ class ArtanaKernel:
         if status == "completed" and failure_reason is not None:
             status = "failed"
 
-        cost_total = await self._store.get_model_cost_sum_for_run(run_id)
+        if isinstance(self._store, SupportsModelCostAggregation):
+            cost_total = await self._store.get_model_cost_sum_for_run(run_id)
+        else:
+            cost_total = 0.0
+            for event in events:
+                if event.event_type != EventType.MODEL_COMPLETED:
+                    continue
+                payload = event.payload
+                if payload.kind != "model_completed":
+                    raise RuntimeError(
+                        "Invalid event payload kind "
+                        f"{payload.kind!r} for model_completed event."
+                    )
+                cost_total += payload.cost_usd
         return {
             "status": status,
             "last_stage": last_stage,

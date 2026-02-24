@@ -42,15 +42,20 @@ async def _append_event_with_parent(
     payload: EventPayload,
     parent_step_key: str | None = None,
 ) -> KernelEvent:
-    append_kwargs = {
-        "run_id": run_id,
-        "tenant_id": tenant_id,
-        "event_type": event_type,
-        "payload": payload,
-    }
-    if parent_step_key is not None:
-        append_kwargs["parent_step_key"] = parent_step_key
-    return await store.append_event(**append_kwargs)
+    if parent_step_key is None:
+        return await store.append_event(
+            run_id=run_id,
+            tenant_id=tenant_id,
+            event_type=event_type,
+            payload=payload,
+        )
+    return await store.append_event(
+        run_id=run_id,
+        tenant_id=tenant_id,
+        event_type=event_type,
+        payload=payload,
+        parent_step_key=parent_step_key,
+    )
 
 
 async def get_or_execute_model_step(

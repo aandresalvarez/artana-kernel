@@ -441,6 +441,8 @@ async def test_parent_step_key_is_written_on_model_and_tool_events(tmp_path: Pat
             for event in events
             if event.event_type == EventType.TOOL_COMPLETED
         )
+        assert isinstance(model_requested.payload, ModelRequestedPayload)
+        assert isinstance(tool_requested.payload, ToolRequestedPayload)
         assert model_requested.parent_step_key == "trace::model"
         assert model_completed.parent_step_key == "trace::model"
         assert model_requested.payload.step_key == "model_step"

@@ -41,7 +41,7 @@ async def test_litellm_adapter_retries_transient_error_then_succeeds() -> None:
     async def completion_fn(
         *,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         response_format: type[BaseModel],
         tools: list[dict[str, object]] | None = None,
     ) -> object:
@@ -83,7 +83,7 @@ async def test_litellm_adapter_raises_timeout_error_after_retries() -> None:
     async def completion_fn(
         *,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         response_format: type[BaseModel],
         tools: list[dict[str, object]] | None = None,
     ) -> object:
@@ -124,7 +124,7 @@ async def test_litellm_adapter_raises_permanent_error_without_retry() -> None:
     async def completion_fn(
         *,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         response_format: type[BaseModel],
         tools: list[dict[str, object]] | None = None,
     ) -> object:
@@ -158,7 +158,7 @@ async def test_litellm_adapter_fails_when_cost_unknown_in_strict_mode() -> None:
     async def completion_fn(
         *,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         response_format: type[BaseModel],
         tools: list[dict[str, object]] | None = None,
     ) -> object:
@@ -188,12 +188,12 @@ async def test_litellm_adapter_fails_when_cost_unknown_in_strict_mode() -> None:
 
 @pytest.mark.asyncio
 async def test_litellm_adapter_sends_full_message_history() -> None:
-    captured_messages: list[list[dict[str, str]]] = []
+    captured_messages: list[list[dict[str, object]]] = []
 
     async def completion_fn(
         *,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, object]],
         response_format: type[BaseModel],
         tools: list[dict[str, object]] | None = None,
     ) -> object:

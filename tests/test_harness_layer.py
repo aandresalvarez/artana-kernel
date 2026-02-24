@@ -72,20 +72,24 @@ async def test_incremental_harness_emits_wake_reorientation_and_sleep_summary(
         assert [unit.id for unit in result] == ["t1", "t2"]
 
         events = await store.get_events_for_run(run_id)
-        wake_payload = next(
+        run_summaries = [
             event.payload
             for event in events
             if event.event_type == EventType.RUN_SUMMARY
-            and event.payload.summary_type == "wake_reorientation"
+            and isinstance(event.payload, RunSummaryPayload)
+        ]
+        wake_payload = next(
+            payload
+            for payload in run_summaries
+            if payload.summary_type == "wake_reorientation"
         )
         wake_summary = json.loads(wake_payload.summary_json)
         assert wake_summary["latest_run_summary"]["summary_type"] == "artifact::session_note"
         assert wake_summary["task_progress"][0]["id"] == "t1"
         assert wake_summary["task_progress"][1]["id"] == "t2"
         assert any(
-            event.event_type == EventType.RUN_SUMMARY
-            and event.payload.summary_type == "harness_sleep"
-            for event in events
+            payload.summary_type == "harness_sleep"
+            for payload in run_summaries
         )
     finally:
         await kernel.close()

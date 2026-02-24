@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from time import monotonic
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel
 
@@ -193,7 +193,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
                 if failure_parent_step_key is None:
                     failure_parent_step_key = sleep_stage
             if self._should_emit_stage_trace() or self._should_emit_verbose_trace():
-                status = (
+                status: Literal["completed", "failed"] = (
                     "failed"
                     if execution_error is not None or sleep_error is not None
                     else "completed"

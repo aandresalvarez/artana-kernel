@@ -24,6 +24,7 @@ async def execute_model_step(
     visible_tool_names: set[str] | None,
     replay_policy: ReplayPolicy = "strict",
     context_version: ContextVersion | None = None,
+    parent_step_key: str | None = None,
 ) -> StepModelResult[OutputT]:
     return await kernel.step_model_with_visible_tools(
         run_id=run_id,
@@ -35,6 +36,7 @@ async def execute_model_step(
         step_key=step_key,
         replay_policy=replay_policy,
         context_version=context_version,
+        parent_step_key=parent_step_key,
     )
 
 
