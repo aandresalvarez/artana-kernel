@@ -32,7 +32,6 @@ from artana.kernel import (
     JsonValue,
     KernelPolicy,
     ModelInput,
-    TraceLevel,
     PauseTicket,
     ReplayPolicy,
     RunHandle,
@@ -40,13 +39,14 @@ from artana.kernel import (
     StepModelResult,
     StepSerde,
     StepToolResult,
+    TraceLevel,
     WorkflowContext,
     WorkflowRunResult,
     json_step_serde,
     pydantic_step_serde,
 )
 from artana.models import TenantContext
-from artana.store import SQLiteStore
+from artana.store import PostgresStore, SQLiteStore
 
 __all__ = [
     "ArtanaKernel",
@@ -79,6 +79,7 @@ __all__ = [
     "SQLiteMemoryStore",
     "ModelInput",
     "PauseTicket",
+    "PostgresStore",
     "TraceLevel",
     "ReplayPolicy",
     "RunHandle",

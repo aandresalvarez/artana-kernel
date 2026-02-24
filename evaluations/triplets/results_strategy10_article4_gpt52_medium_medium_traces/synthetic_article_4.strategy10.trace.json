@@ -1,0 +1,67 @@
+{
+  "strategy": "strategy10",
+  "strategy_version": "v1",
+  "article": "synthetic_article_4.txt",
+  "run_id": "triplets_strategy10::synthetic_article_4::a1da14439a1e",
+  "extract_model": "gpt-5.2",
+  "review_model": "gpt-5.2",
+  "reasoning_effort": "medium",
+  "verbosity": "medium",
+  "prompt_fingerprint_extract": "6d1612b6095ce92b",
+  "evidence_required": true,
+  "min_evidence_chars": 24,
+  "min_confidence": 0.55,
+  "run_created": false,
+  "extract": {
+    "step_name": "atomic_extraction",
+    "prompt_fingerprint": "6d1612b6095ce92b",
+    "model": "gpt-5.2",
+    "usage": {
+      "prompt_tokens": 5738,
+      "completion_tokens": 7129,
+      "cost_usd": 0.1023883,
+      "replayed": true,
+      "replayed_with_drift": false,
+      "seq": 5,
+      "run_id": "triplets_strategy10::synthetic_article_4::a1da14439a1e"
+    },
+    "entities_count": 36,
+    "edge_counts": {
+      "fact_edges": 45,
+      "derived_edges": 11,
+      "contradicted_edges": 6,
+      "hypothesis_only": 3
+    }
+  },
+  "review": {
+    "step_name": "atomic_review",
+    "prompt_fingerprint": "6c4a6ca34ba96865",
+    "model": "gpt-5.2",
+    "usage": {
+      "prompt_tokens": 12419,
+      "completion_tokens": 9816,
+      "cost_usd": 0.15008525,
+      "replayed": true,
+      "replayed_with_drift": false,
+      "seq": 11,
+      "run_id": "triplets_strategy10::synthetic_article_4::a1da14439a1e"
+    },
+    "entities_count": 29,
+    "edge_counts": {
+      "fact_edges": 28,
+      "derived_edges": 8,
+      "contradicted_edges": 7,
+      "hypothesis_only": 3
+    }
+  },
+  "final": {
+    "step_name": "assemble_payload",
+    "run_id": "triplets_strategy10::synthetic_article_4::a1da14439a1e",
+    "edge_counts": {
+      "fact_edges": 28,
+      "derived_edges": 8,
+      "contradicted_edges": 7,
+      "hypothesis_only": 0
+    }
+  }
+}

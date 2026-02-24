@@ -53,12 +53,14 @@ Artana sits between them. It provides:
 
 Artana is the safety and durability layer your AI agent should run on. It complements Temporal and strengthens agent frameworks.
 
-## What This MVP Implements
+## What This Release Implements
 
 Initial implementation aligned with the Artana Kernel PRD:
 
 - Strictly typed kernel and event models (`mypy --strict`)
-- Event-sourced SQLite store (`SQLiteStore`) with hash-chained cryptographic ledgers
+- Event-sourced stores with hash-chained cryptographic ledgers:
+  - `SQLiteStore` for local/single-worker setups
+  - `PostgresStore` for multi-worker/shared-database deployments
 - Ports for model and tools:
   - `LiteLLMAdapter` (implements `ModelPort`)
   - `LocalToolRegistry` (implements `ToolPort`)
@@ -87,6 +89,7 @@ Initial implementation aligned with the Artana Kernel PRD:
 - Agent `run_summary` events for lightweight autonomous observability
 - Kernel `capability_decision` run summaries for per-tool allow/filter reasoning
 - Kernel contracts reference: `docs/kernel_contracts.md`
+- Deep traceability reference: `docs/deep_traceability.md`
 - Generated behavior index reference: `docs/kernel_behavior_index.json`
 
 ## Core Guarantees
@@ -246,7 +249,7 @@ Artana follows a strict Ports & Adapters model combined with an Event-Sourced Mi
 [ ModelPort ]         [ ToolPort ]
  (LiteLLM)         (Local Function Registry)
        ↘                 ↙
-   [ EventStore (SQLiteStore) ]
+   [ EventStore (SQLiteStore | PostgresStore) ]
 ```
 
 ## Detailed API Reference
@@ -267,8 +270,18 @@ ModelInput.from_messages(messages: Sequence[ChatMessage]) -> ModelInput
 
 ### ArtanaKernel Initialization
 ```python
+from artana import ArtanaKernel, PostgresStore, SQLiteStore
+
 kernel = ArtanaKernel(
     store=SQLiteStore("artana_state.db"),
+    model_port=LiteLLMAdapter(),
+    middleware=ArtanaKernel.default_middleware_stack(),
+    policy=KernelPolicy.enforced(),
+)
+
+# Multi-worker / shared DB deployment:
+kernel = ArtanaKernel(
+    store=PostgresStore("postgresql://user:pass@localhost:5432/artana"),
     model_port=LiteLLMAdapter(),
     middleware=ArtanaKernel.default_middleware_stack(),
     policy=KernelPolicy.enforced(),
@@ -417,7 +430,7 @@ Run examples from the repository root:
 
 ## Growth Path
 
-- **Phase 1 (MVP - Current):** SQLite, single worker, strict replay semantics, Autonomous Agent runtime (compaction/memory/progressive skills/sub-agents), inter-run Experience Engine (tenant/task rule memory + reflection), Workflow contexts.
-- **Phase 2:** Postgres backend (for multi-worker concurrency), Snapshotting, Advanced Observability (Logfire tracing decorators).
+- **Phase 1 (Shipped):** SQLite backend, strict replay semantics, Autonomous Agent runtime (compaction/memory/progressive skills/sub-agents), inter-run Experience Engine (tenant/task rule memory + reflection), Workflow contexts.
+- **Phase 2 (In progress):** Postgres backend for multi-worker concurrency (now available), plus Snapshotting and Advanced Observability (Logfire tracing decorators).
 - **Phase 3:** Optional integration with Temporal, distributed execution model, enterprise policy engines (OPA).
  

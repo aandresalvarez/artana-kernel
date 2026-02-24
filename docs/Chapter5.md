@@ -1,17 +1,3 @@
- Perfect.
-
-Below is a clean, production-grade **Chapter 5: Distributed Scaling & Multi-Tenant Deployment** — aligned with your real architecture and written for copy-paste use.
-
-This chapter assumes:
-
-* Kernel is event-sourced
-* Harness enforces discipline
-* Middleware enforces policy
-* Replay is deterministic
-* Store is pluggable
-
----
-
 # Chapter 5: Distributed Scaling & Multi-Tenant Deployment
 
 This chapter demonstrates:
@@ -93,8 +79,11 @@ This enables horizontal scaling.
 Each worker process:
 
 ```python
+from artana import ArtanaKernel, PostgresStore
+from artana.ports.model_adapter import LiteLLMAdapter
+
 kernel = ArtanaKernel(
-    store=PostgresStore(...),   # shared DB
+    store=PostgresStore("postgresql://user:pass@db:5432/artana"),  # shared DB
     model_port=LiteLLMAdapter(...),
     middleware=ArtanaKernel.default_middleware_stack(),
 )
@@ -168,16 +157,29 @@ Recovery is deterministic.
 
 ---
 
-# 🗃️ Step 5 — Distributed Event Store (Postgres Pattern)
+# 🗃️ Step 5 — Distributed Event Store (PostgresStore)
 
-Replace SQLite with Postgres implementation:
+`PostgresStore` is implemented in the Artana library and can be used directly:
 
 ```python
-class PostgresStore(EventStore):
-    ...
+from artana.store import PostgresStore
+
+store = PostgresStore(
+    dsn="postgresql://user:pass@db:5432/artana",
+    min_pool_size=2,
+    max_pool_size=20,
+    command_timeout_seconds=30.0,
+)
 ```
 
-All kernel logic remains identical.
+Then pass it into `ArtanaKernel`; all kernel logic remains identical.
+
+Implementation notes:
+
+* Event append is transactional
+* Per-run sequencing is protected with advisory locks
+* Hash-chain ledger semantics remain the same as SQLite
+* Replay and idempotency behavior do not change across stores
 
 Benefits:
 
@@ -260,7 +262,7 @@ Example cost dashboard query:
 ```sql
 SELECT
   tenant_id,
-  SUM(CAST(json_extract(payload_json, '$.cost_usd') AS REAL)) AS spend
+  COALESCE(SUM((payload_json::jsonb ->> 'cost_usd')::double precision), 0.0) AS spend
 FROM kernel_events
 WHERE event_type = 'model_completed'
 GROUP BY tenant_id;
@@ -302,7 +304,7 @@ Minimal production instantiation:
 
 ```python
 kernel = ArtanaKernel(
-    store=PostgresStore("postgres://..."),
+    store=PostgresStore("postgresql://..."),
     model_port=LiteLLMAdapter(...),
     middleware=ArtanaKernel.default_middleware_stack(),
     policy=KernelPolicy.enforced(),
