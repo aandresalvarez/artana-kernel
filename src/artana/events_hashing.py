@@ -42,8 +42,8 @@ def payload_to_canonical_json(payload: EventPayload) -> str:
                 if tool_call.get("tool_call_id") is None:
                     tool_call.pop("tool_call_id", None)
     if payload_dict.get("kind") == "tool_requested":
-        if payload_dict.get("step_key") is None:
-            payload_dict.pop("step_key", None)
+        # Keep step_key=null for backward compatibility with historical hash chains.
+        # Legacy events included `step_key` even when null.
         if payload_dict.get("semantic_idempotency_key") is None:
             payload_dict.pop("semantic_idempotency_key", None)
         if payload_dict.get("intent_id") is None:

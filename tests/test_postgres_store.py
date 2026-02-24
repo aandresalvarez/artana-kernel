@@ -326,3 +326,32 @@ async def test_tool_policy_columns_and_aggregates_are_queryable(store: PostgresS
         }.issubset(indexes)
     finally:
         await schema_connection.close()
+
+
+@pytest.mark.asyncio
+async def test_acquire_run_lease_handles_first_contention_without_exceptions(
+    store: PostgresStore,
+) -> None:
+    run_id = _run_id("run_pg_lease_race")
+    start_gate = asyncio.Event()
+    worker_ids = tuple(f"worker_{index}" for index in range(20))
+
+    async def acquire(worker_id: str) -> bool:
+        await start_gate.wait()
+        return await store.acquire_run_lease(
+            run_id=run_id,
+            worker_id=worker_id,
+            ttl_seconds=30,
+        )
+
+    tasks = [asyncio.create_task(acquire(worker_id)) for worker_id in worker_ids]
+    start_gate.set()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    exceptions = [result for result in results if isinstance(result, Exception)]
+    assert exceptions == []
+
+    successful = [result for result in results if result is True]
+    denied = [result for result in results if result is False]
+    assert len(successful) == 1
+    assert len(denied) == len(worker_ids) - 1

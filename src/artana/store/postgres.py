@@ -384,55 +384,29 @@ class PostgresStore(EventStore):
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=ttl_seconds)
         async with pool.acquire() as connection:
-            async with connection.transaction():
-                row = await connection.fetchrow(
-                    """
-                    SELECT worker_id, lease_expires_at
-                    FROM run_leases
-                    WHERE run_id = $1
-                    FOR UPDATE
-                    """,
-                    run_id,
-                )
-                if row is None:
-                    await connection.execute(
-                        """
-                        INSERT INTO run_leases (run_id, worker_id, lease_expires_at, updated_at)
-                        VALUES ($1, $2, $3, $4)
-                        """,
-                        run_id,
-                        worker_id,
-                        expires_at,
-                        now,
-                    )
-                    return True
-                current_worker_obj: object = row["worker_id"]
-                current_expiry_obj: object = row["lease_expires_at"]
-                if not isinstance(current_worker_obj, str):
-                    raise TypeError(
-                        f"Invalid worker_id row type: {type(current_worker_obj)!r}"
-                    )
-                if not isinstance(current_expiry_obj, datetime):
-                    raise TypeError(
-                        f"Invalid lease_expires_at row type: {type(current_expiry_obj)!r}"
-                    )
-                current_expiry = current_expiry_obj
-                if current_expiry.tzinfo is None:
-                    current_expiry = current_expiry.replace(tzinfo=timezone.utc)
-                if current_worker_obj != worker_id and current_expiry > now:
-                    return False
-                await connection.execute(
-                    """
-                    UPDATE run_leases
-                    SET worker_id = $2, lease_expires_at = $3, updated_at = $4
-                    WHERE run_id = $1
-                    """,
-                    run_id,
-                    worker_id,
-                    expires_at,
-                    now,
-                )
-                return True
+            row = await connection.fetchrow(
+                """
+                INSERT INTO run_leases (run_id, worker_id, lease_expires_at, updated_at)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (run_id) DO UPDATE SET
+                    worker_id = EXCLUDED.worker_id,
+                    lease_expires_at = EXCLUDED.lease_expires_at,
+                    updated_at = EXCLUDED.updated_at
+                WHERE run_leases.worker_id = EXCLUDED.worker_id
+                   OR run_leases.lease_expires_at <= EXCLUDED.updated_at
+                RETURNING worker_id
+                """,
+                run_id,
+                worker_id,
+                expires_at,
+                now,
+            )
+        if row is None:
+            return False
+        row_worker_obj: object = row["worker_id"]
+        if not isinstance(row_worker_obj, str):
+            raise TypeError(f"Invalid worker_id row type: {type(row_worker_obj)!r}")
+        return row_worker_obj == worker_id
 
     async def renew_run_lease(
         self,
