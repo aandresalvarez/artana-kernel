@@ -150,6 +150,29 @@ All runs require a `TenantContext`:
 
 The Kernel automatically filters the tool list based on the tenant's capabilities *before* the LLM ever sees the prompt.
 
+## Developer Guardrails
+
+Set up local enforcement once per clone:
+
+```bash
+uv sync --all-groups
+uv run pre-commit install
+```
+
+Run the full guardrail suite at any time:
+
+```bash
+uv run pre-commit run --all-files
+```
+
+Pre-commit mirrors CI quality gates and best-practices contracts:
+- `ruff check .`
+- `mypy --strict src tests`
+- `pytest`
+- `python scripts/generate_kernel_behavior_index.py --check`
+
+Best-practices invariants are also enforced in tests (`tests/test_best_practices_contract.py`) to prevent regressions in architecture boundaries, middleware ordering, typing hygiene, and side-effect safety patterns.
+
 ## Mental Models
 
 Artana gives you two ways to build, both backed by the exact same secure Kernel.

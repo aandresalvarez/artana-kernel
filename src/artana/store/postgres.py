@@ -447,7 +447,7 @@ class PostgresStore(EventStore):
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=ttl_seconds)
         async with pool.acquire() as connection:
-            status = await connection.execute(
+            status_raw: object = await connection.execute(
                 """
                 UPDATE run_leases
                 SET lease_expires_at = $3, updated_at = $4
@@ -460,6 +460,9 @@ class PostgresStore(EventStore):
                 expires_at,
                 now,
             )
+        if not isinstance(status_raw, str):
+            raise TypeError(f"Invalid lease renewal status type: {type(status_raw)!r}")
+        status = status_raw
         return status.endswith("1")
 
     async def release_run_lease(
@@ -470,7 +473,7 @@ class PostgresStore(EventStore):
     ) -> bool:
         pool = await self._ensure_pool()
         async with pool.acquire() as connection:
-            status = await connection.execute(
+            status_raw: object = await connection.execute(
                 """
                 DELETE FROM run_leases
                 WHERE run_id = $1
@@ -479,6 +482,9 @@ class PostgresStore(EventStore):
                 run_id,
                 worker_id,
             )
+        if not isinstance(status_raw, str):
+            raise TypeError(f"Invalid lease release status type: {type(status_raw)!r}")
+        status = status_raw
         return status.endswith("1")
 
     async def get_run_lease(self, *, run_id: str) -> RunLeaseRecord | None:

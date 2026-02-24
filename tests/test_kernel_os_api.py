@@ -161,9 +161,11 @@ async def test_explain_tool_allowlist_and_gateway_metadata(tmp_path: Path) -> No
             model="gpt-4o-mini",
             visible_tool_names={"transfer_funds", "read_balance"},
         )
+        raw_decisions = decision.get("decisions")
+        assert isinstance(raw_decisions, list)
         decisions = {
             str(item["tool_name"]): item
-            for item in decision["decisions"]  # type: ignore[index]
+            for item in raw_decisions
             if isinstance(item, dict) and "tool_name" in item
         }
         assert decisions["read_balance"]["decision"] == "allowed"

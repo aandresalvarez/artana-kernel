@@ -67,7 +67,7 @@ from artana.middleware.quota import QuotaMiddleware
 from artana.middleware.safety_policy import SafetyPolicyMiddleware
 from artana.models import TenantContext
 from artana.ports.model import ModelPort, ToolDefinition
-from artana.ports.tool import LocalToolRegistry, ToolPort
+from artana.ports.tool import LocalToolRegistry, ToolPort, ToolRiskLevel
 from artana.safety import IntentPlanRecord
 from artana.store.base import (
     EventStore,
@@ -726,7 +726,7 @@ class ArtanaKernel:
         requires_capability: str | None = None,
         tool_version: str = "1.0.0",
         schema_version: str = "1",
-        risk_level: str = "medium",
+        risk_level: ToolRiskLevel = "medium",
         sandbox_profile: str | None = None,
     ) -> Callable[[ToolCallable], ToolCallable]:
         def decorator(function: ToolCallable) -> ToolCallable:

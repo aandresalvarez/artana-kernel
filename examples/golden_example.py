@@ -11,6 +11,7 @@ from artana import ArtanaKernel, KernelModelClient, KernelPolicy, TenantContext
 from artana.events import EventType, KernelEvent, ToolCompletedPayload, ToolRequestedPayload
 from artana.kernel import ToolExecutionFailedError
 from artana.ports.model import LiteLLMAdapter
+from artana.ports.tool import ToolExecutionContext
 from artana.store import SQLiteStore
 
 
@@ -113,7 +114,11 @@ async def main() -> None:
     tool_attempts = [0]
 
     @kernel.tool(requires_capability="finance:write")
-    async def submit_transfer(account_id: str, amount: Decimal) -> str:
+    async def submit_transfer(
+        account_id: str,
+        amount: Decimal,
+        artana_context: ToolExecutionContext,
+    ) -> str:
         tool_attempts[0] += 1
         if tool_attempts[0] == 1:
             raise RuntimeError("simulated network drop after request submission")
@@ -122,6 +127,8 @@ async def main() -> None:
             + account_id
             + '","amount":"'
             + str(amount)
+            + '","idempotency_key":"'
+            + artana_context.idempotency_key
             + '"}'
         )
 

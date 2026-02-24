@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 
 from artana.agent import AutonomousAgent, ContextBuilder
 from artana.kernel import ArtanaKernel
-from artana.middleware import CapabilityGuardMiddleware, QuotaMiddleware
 from artana.models import TenantContext
 from artana.ports.model import LiteLLMAdapter
 from artana.ports.tool import ToolExecutionContext
@@ -46,7 +45,7 @@ def _create_kernel(db_path: Path) -> ArtanaKernel:
     kernel = ArtanaKernel(
         store=SQLiteStore(str(db_path)),
         model_port=LiteLLMAdapter(),
-        middleware=[QuotaMiddleware(), CapabilityGuardMiddleware()],
+        middleware=ArtanaKernel.default_middleware_stack(),
     )
 
     @kernel.tool(requires_capability="spawn_extractor")

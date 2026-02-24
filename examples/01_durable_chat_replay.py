@@ -13,6 +13,7 @@ from artana.middleware import (
     QuotaMiddleware,
 )
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage, ToolCall
+from artana.ports.tool import ToolExecutionContext
 from artana.store import SQLiteStore
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
@@ -66,13 +67,19 @@ async def main() -> None:
     transfer_tool_calls = [0]
 
     @kernel.tool(requires_capability="finance:write")
-    async def submit_transfer(account_id: str, amount: str) -> str:
+    async def submit_transfer(
+        account_id: str,
+        amount: str,
+        artana_context: ToolExecutionContext,
+    ) -> str:
         transfer_tool_calls[0] += 1
         return (
             '{"status":"submitted","account_id":"'
             + account_id
             + '","amount":"'
             + amount
+            + '","idempotency_key":"'
+            + artana_context.idempotency_key
             + '"}'
         )
 

@@ -96,7 +96,7 @@ class SupportsRunIndexing(Protocol):
 
 @runtime_checkable
 class SupportsEventStreaming(Protocol):
-    async def stream_events(
+    def stream_events(
         self,
         run_id: str,
         *,
