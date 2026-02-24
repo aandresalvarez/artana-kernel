@@ -5,7 +5,6 @@ from dataclasses import dataclass, replace
 
 from artana._kernel.policies import apply_prepare_tool_result_middleware
 from artana._kernel.types import ReplayConsistencyError, ToolExecutionFailedError
-from artana.canonicalization import canonicalize_json_object
 from artana.events import EventPayload, EventType, KernelEvent, ToolCompletedPayload
 from artana.json_utils import sha256_hex
 from artana.middleware.base import KernelMiddleware
@@ -210,10 +209,7 @@ def derive_idempotency_key(
     *,
     run_id: str,
     tool_name: str,
-    arguments_json: str,
-    step_key: str | None = None,
+    seq: int,
 ) -> str:
-    token = (
-        f"{run_id}:{tool_name}:{canonicalize_json_object(arguments_json)}:{step_key}"
-    )
+    token = f"{run_id}:{tool_name}:{seq}"
     return sha256_hex(token)

@@ -10,7 +10,6 @@ from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel
 
-from artana._kernel.tool_state import resolve_tool_resolutions
 from artana.agent.autonomous import AutonomousAgent
 from artana.agent.model_steps import execute_model_step
 from artana.events import (
@@ -31,6 +30,7 @@ from artana.kernel import (
     StepModelResult,
     StepToolResult,
     TraceLevel,
+    resolve_tool_resolutions,
 )
 from artana.models import TenantContext
 from artana.ports.model import ToolDefinition

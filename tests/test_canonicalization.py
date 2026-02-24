@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from artana._kernel.tool_execution import derive_idempotency_key
@@ -32,28 +30,31 @@ def test_canonicalize_json_object_requires_object() -> None:
         canonicalize_json_object("[1,2,3]")
 
 
-def test_idempotency_key_is_invariant_to_json_key_order() -> None:
+def test_idempotency_key_is_stable_for_same_sequence() -> None:
     key_one = derive_idempotency_key(
         run_id="run_1",
         tool_name="submit_transfer",
-        arguments_json='{"b":2,"a":1}',
-        step_key="transfer",
+        seq=2,
     )
     key_two = derive_idempotency_key(
         run_id="run_1",
         tool_name="submit_transfer",
-        arguments_json='{"a":1,"b":2}',
-        step_key="transfer",
+        seq=2,
     )
 
     assert key_one == key_two
 
 
-def test_idempotency_key_rejects_invalid_json_arguments() -> None:
-    with pytest.raises((ValueError, json.JSONDecodeError)):
-        derive_idempotency_key(
-            run_id="run_1",
-            tool_name="submit_transfer",
-            arguments_json='{"a":1',
-            step_key="transfer",
-        )
+def test_idempotency_key_changes_for_different_sequence() -> None:
+    key_one = derive_idempotency_key(
+        run_id="run_1",
+        tool_name="submit_transfer",
+        seq=2,
+    )
+    key_two = derive_idempotency_key(
+        run_id="run_1",
+        tool_name="submit_transfer",
+        seq=3,
+    )
+
+    assert key_one != key_two

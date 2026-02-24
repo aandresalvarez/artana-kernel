@@ -1,4 +1,5 @@
 from artana._kernel.core import ArtanaKernel
+from artana._kernel.tool_state import resolve_tool_resolutions
 from artana._kernel.types import (
     CapabilityDeniedError,
     ContextVersion,
@@ -36,6 +37,7 @@ __all__ = [
     "ReplayConsistencyError",
     "RunHandle",
     "RunRef",
+    "resolve_tool_resolutions",
     "StepModelResult",
     "StepToolResult",
     "StepSerde",

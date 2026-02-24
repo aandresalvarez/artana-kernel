@@ -4,8 +4,13 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-from artana._kernel.types import StepModelResult
-from artana.kernel import ArtanaKernel, ContextVersion, ModelInput, ReplayPolicy
+from artana.kernel import (
+    ArtanaKernel,
+    ContextVersion,
+    ModelInput,
+    ReplayPolicy,
+    StepModelResult,
+)
 from artana.models import TenantContext
 
 OutputT = TypeVar("OutputT", bound=BaseModel)

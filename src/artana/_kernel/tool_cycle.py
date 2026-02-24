@@ -127,8 +127,7 @@ async def execute_tool_step_with_replay(
     idempotency_key = derive_idempotency_key(
         run_id=run_id,
         tool_name=tool_name,
-        arguments_json=prepared_arguments_json,
-        step_key=step_key,
+        seq=_next_event_seq(events),
     )
     tool_version, schema_version = _tool_versions(
         tool_port=tool_port,
@@ -266,6 +265,12 @@ def _matches_tool_request(
     if step_key is None:
         return requested.step_key is None
     return requested.step_key == step_key
+
+
+def _next_event_seq(events: Sequence[KernelEvent]) -> int:
+    if not events:
+        return 1
+    return events[-1].seq + 1
 
 
 def _tool_versions(*, tool_port: ToolPort, tool_name: str) -> tuple[str, str]:

@@ -28,8 +28,8 @@ Replay validates only signature-based hashes/tokens.
 
 ## Tool Determinism Invariants
 
-- Tool arguments are canonicalized as sorted JSON objects before matching, storage, and idempotency-key derivation.
-- Tool idempotency key input is canonical arguments plus `(run_id, tool_name, step_key)`.
+- Tool arguments are canonicalized as sorted JSON objects before matching and storage.
+- Tool idempotency key input is `(run_id, tool_name, seq)`.
 - Tool request events persist `tool_version` and `schema_version`.
 
 ## Tool IO Policy Hooks

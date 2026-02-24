@@ -5,14 +5,13 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-from artana._kernel.types import ToolCallable
 from artana.agent.autonomous import AutonomousAgent
 from artana.agent.compaction import CompactionStrategy
 from artana.agent.context import ContextBuilder
 from artana.agent.memory import MemoryStore
 from artana.kernel import ArtanaKernel
 from artana.models import TenantContext
-from artana.ports.tool import ToolExecutionContext
+from artana.ports.tool import ToolCallable, ToolExecutionContext
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 

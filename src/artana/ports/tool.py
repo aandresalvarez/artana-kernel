@@ -4,23 +4,18 @@ import inspect
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from decimal import Decimal
-from enum import Enum
-from types import UnionType
-from typing import Any, Literal, Protocol, Union, get_args, get_origin, get_type_hints
+from typing import Literal, Protocol, get_type_hints
 
 from pydantic import (
     BaseModel,
     ConfigDict,
-    StrictBool,
-    StrictFloat,
-    StrictInt,
     ValidationError,
     create_model,
 )
 
 from artana.json_utils import canonical_json_dumps, sha256_hex
 from artana.ports.model import ToolDefinition
+from artana.ports.tool_annotations import strictify_annotation
 
 ToolExecutionOutcome = Literal[
     "success",
@@ -127,8 +122,7 @@ class LocalToolRegistry:
     ) -> None:
         signature = inspect.signature(function)
         resolved_hints = get_type_hints(function)
-        # Pydantic `create_model` typing requires `Any` for dynamic field kwargs.
-        model_fields: dict[str, Any] = {}
+        model_fields: dict[str, object] = {}
         accepts_artana_context = False
         for parameter in signature.parameters.values():
             if parameter.name == "artana_context":
@@ -140,7 +134,7 @@ class LocalToolRegistry:
             ):
                 continue
             raw_annotation = resolved_hints.get(parameter.name, parameter.annotation)
-            annotation = _strictify_annotation(raw_annotation)
+            annotation = strictify_annotation(raw_annotation)
             default: object
             if parameter.default is inspect.Parameter.empty:
                 default = ...
@@ -152,7 +146,7 @@ class LocalToolRegistry:
             f"{function.__name__}Arguments",
             __config__=ConfigDict(extra="forbid"),
             **model_fields,
-        )
+        )  # type: ignore[call-overload]  # Pydantic stubs over-constrain dynamic field definitions.
         schema = arguments_model.model_json_schema()
         schema_json = canonical_json_dumps(schema)
         schema_hash = sha256_hex(schema_json)
@@ -271,37 +265,3 @@ class LocalToolRegistry:
         return {
             tool_name: tool.requires_capability for tool_name, tool in self._tools.items()
         }
-
-
-def _strictify_annotation(annotation: object) -> object:
-    if annotation is inspect._empty:
-        return str
-    if annotation is int:
-        return StrictInt
-    if annotation is float:
-        return StrictFloat
-    if annotation is bool:
-        return StrictBool
-    if annotation is Decimal:
-        return Decimal
-    if isinstance(annotation, type) and issubclass(annotation, Enum):
-        return annotation
-
-    origin = get_origin(annotation)
-    if origin is None:
-        return annotation
-    if origin is Literal:
-        return annotation
-    if origin in (UnionType, Union):
-        raw_args = get_args(annotation)
-        strict_args = tuple(_strictify_annotation(arg) for arg in raw_args)
-        return Union[strict_args]
-
-    raw_args = get_args(annotation)
-    if not raw_args:
-        return annotation
-    strict_args = tuple(_strictify_annotation(arg) for arg in raw_args)
-    try:
-        return origin[strict_args]
-    except TypeError:
-        return annotation

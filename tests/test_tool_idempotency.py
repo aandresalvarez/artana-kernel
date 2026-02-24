@@ -44,30 +44,26 @@ def test_derive_idempotency_key_is_stable_for_same_inputs() -> None:
     key_one = derive_idempotency_key(
         run_id="run_1",
         tool_name="submit_transfer",
-        arguments_json='{"account_id":"acc_1","amount":"10"}',
-        step_key="transfer",
+        seq=2,
     )
     key_two = derive_idempotency_key(
         run_id="run_1",
         tool_name="submit_transfer",
-        arguments_json='{"account_id":"acc_1","amount":"10"}',
-        step_key="transfer",
+        seq=2,
     )
     assert key_one == key_two
 
 
-def test_derive_idempotency_key_changes_for_different_arguments() -> None:
+def test_derive_idempotency_key_changes_for_different_sequence() -> None:
     key_one = derive_idempotency_key(
         run_id="run_1",
         tool_name="submit_transfer",
-        arguments_json='{"account_id":"acc_1","amount":"10"}',
-        step_key="transfer",
+        seq=2,
     )
     key_two = derive_idempotency_key(
         run_id="run_1",
         tool_name="submit_transfer",
-        arguments_json='{"account_id":"acc_1","amount":"20"}',
-        step_key="transfer",
+        seq=3,
     )
     assert key_one != key_two
 
@@ -97,8 +93,7 @@ async def test_step_tool_uses_deterministic_idempotency_key(tmp_path: Path) -> N
         assert requested_payload.idempotency_key == derive_idempotency_key(
             run_id="run_idemp",
             tool_name="submit_transfer",
-            arguments_json='{"account_id":"acc_1","amount":"10"}',
-            step_key="transfer",
+            seq=2,
         )
     finally:
         await kernel.close()
