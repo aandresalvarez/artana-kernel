@@ -58,12 +58,16 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         tenant: TenantContext | None = None,
         *,
         default_model: str = "gpt-4o-mini",
+        draft_model: str = "gpt-5.3-codex-spark",
+        verify_model: str = "gpt-5.3-codex",
         replay_policy: ReplayPolicy = "allow_prompt_drift",
         trace_level: TraceLevel = "stage",
     ) -> None:
         self._kernel = kernel
         self._tenant = tenant
         self._default_model = default_model
+        self._draft_model = draft_model
+        self._verify_model = verify_model
         self._replay_policy = replay_policy
         self._trace_level = trace_level
         self._step_key_namespace = _normalize_step_key_prefix(type(self).__name__)
@@ -534,6 +538,70 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
                 if step_key is not None
                 else self._next_step_key(prefix="model")
             ),
+            visible_tool_names=visible_tool_names,
+            model_options=model_options,
+            replay_policy=replay_policy,
+            context_version=context_version,
+            parent_step_key=parent_step_key,
+        )
+
+    async def run_draft_model(
+        self,
+        *,
+        output_schema: type[OutputT],
+        prompt: str | None = None,
+        messages: Sequence[ChatMessage] | None = None,
+        input: ModelInput | None = None,
+        step_key: str | None = None,
+        run_id: str | None = None,
+        tenant: TenantContext | None = None,
+        visible_tool_names: set[str] | None = None,
+        model_options: ModelCallOptions | None = None,
+        replay_policy: ReplayPolicy | None = None,
+        context_version: ContextVersion | None = None,
+        parent_step_key: str | None = None,
+    ) -> StepModelResult[OutputT]:
+        return await self.run_model(
+            output_schema=output_schema,
+            prompt=prompt,
+            messages=messages,
+            input=input,
+            model=self._draft_model,
+            step_key=step_key,
+            run_id=run_id,
+            tenant=tenant,
+            visible_tool_names=visible_tool_names,
+            model_options=model_options,
+            replay_policy=replay_policy,
+            context_version=context_version,
+            parent_step_key=parent_step_key,
+        )
+
+    async def run_verify_model(
+        self,
+        *,
+        output_schema: type[OutputT],
+        prompt: str | None = None,
+        messages: Sequence[ChatMessage] | None = None,
+        input: ModelInput | None = None,
+        step_key: str | None = None,
+        run_id: str | None = None,
+        tenant: TenantContext | None = None,
+        visible_tool_names: set[str] | None = None,
+        model_options: ModelCallOptions | None = None,
+        replay_policy: ReplayPolicy | None = None,
+        context_version: ContextVersion | None = None,
+        parent_step_key: str | None = None,
+    ) -> StepModelResult[OutputT]:
+        return await self.run_model(
+            output_schema=output_schema,
+            prompt=prompt,
+            messages=messages,
+            input=input,
+            model=self._verify_model,
+            step_key=step_key,
+            run_id=run_id,
+            tenant=tenant,
             visible_tool_names=visible_tool_names,
             model_options=model_options,
             replay_policy=replay_policy,

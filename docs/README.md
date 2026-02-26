@@ -1,22 +1,40 @@
-# Docs Code Block Guide
+# Documentation Guide
 
-Artana docs use two code block types:
+Artana docs are organized as one recommended path from first local run to production governance.
 
-* `python`: standalone runnable script blocks.
-* `pycon`: in-context snippets that assume existing kernel/harness/runtime state.
+## Start Here (Recommended Order)
 
-If you want fully runnable examples, use the scripts in [`examples/README.md`](/Users/alvaro1/Documents/med13/artana/artana-kernel/examples/README.md).
+1. [Chapter 1](./Chapter1.md) — First local success, core primitives, and mental model.
+2. [Chapter 2](./Chapter2.md) — Durable harness discipline and supervisor composition.
+3. [Chapter 3](./Chapter3.md) — Failure handling, replay policies, and recovery patterns.
+4. [Chapter 4](./Chapter4.md) — Advanced orchestration and custom loop architecture.
+5. [Chapter 5](./Chapter5.md) — Distributed operations and deployment runbook.
+6. [Chapter 6](./Chapter6.md) — OS-grade safety policies and governance workflows.
 
-## Runnable Example Commands
+## Code Block Contract
 
-```bash
-uv run python examples/01_durable_chat_replay.py
-uv run python examples/02_real_litellm_chat.py
-uv run python examples/03_fact_extraction_triplets.py
-uv run python examples/04_autonomous_agent_research.py
-uv run python examples/05_hard_triplets_workflow.py
-uv run python examples/06_triplets_swarm.py
-uv run python examples/07_adaptive_agent_learning.py
-uv run python examples/08_responses_mode.py
-uv run python examples/golden_example.py
-```
+- `python`: standalone runnable scripts.
+- `pycon`: in-context snippets that assume surrounding state.
+
+If you want end-to-end runnable scripts, use [examples/README.md](../examples/README.md).
+
+## Coverage Matrix
+
+| API / Capability | Primary Doc Location(s) |
+| --- | --- |
+| Minimal local-first onboarding (`MockModelPort`) | Chapter 1, `examples/README.md` |
+| Optional deterministic keys (`StepKey`) + auto-step-key wrapper behavior | Chapter 1, `docs/kernel_contracts.md` |
+| Constructor ergonomics (positional `kernel` supported in high-level wrappers) | Chapter 1, Chapters 3–4 |
+| Capability visibility helpers (`describe_capabilities`, `list_tools_for_tenant`) | Chapter 2, Chapter 6, `docs/kernel_contracts.md` |
+| `@kernel.tool(side_effect=True)` + `ToolExecutionContext` | Chapter 1, Chapter 6, `docs/kernel_contracts.md` |
+| Replay policy modes (`strict`, `allow_prompt_drift`, `fork_on_drift`) | Chapter 3, Chapter 4, `docs/kernel_contracts.md` |
+| Safety policy and approvals (`enforced_v2`) | Chapter 4, Chapter 6, `docs/kernel_contracts.md` |
+| Traceability and run summaries | Chapter 5, `docs/deep_traceability.md` |
+| CLI operations (`list`, `tail`, `verify-ledger`, `status`, `summaries`, `artifacts`, `--json`) | Chapter 5, `docs/kernel_contracts.md` |
+| CLI starter scaffolding (`artana init`, `--profile enforced|dev`) | Chapter 1, Chapter 5, `docs/kernel_contracts.md` |
+
+## Core Reference Docs
+
+- [Kernel contracts](./kernel_contracts.md)
+- [Deep traceability](./deep_traceability.md)
+- [Behavior index (generated)](./kernel_behavior_index.json)

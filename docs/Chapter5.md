@@ -10,6 +10,13 @@ This chapter demonstrates:
 * Deployment topology
 * Production safety checklist
 
+## Chapter Metadata
+
+- Audience: Engineers operating Artana across teams, workers, and environments.
+- Prerequisites: Chapters 1–4 complete; familiarity with Postgres-backed deployments and worker patterns.
+- Estimated time: 35 minutes.
+- Expected outcome: You can operate distributed Artana runs, inspect state via CLI, and ship replay-safe upgrades.
+
 Code block contract for this chapter:
 
 * `pycon` blocks are in-context snippets for existing worker/orchestrator contexts.
@@ -354,6 +361,46 @@ Everything else is architecture.
 
 ---
 
+# 🧰 Step 11 — CLI Operations for Run Inspection
+
+Use the built-in CLI to inspect distributed runs without writing ad-hoc SQL.
+
+```bash
+# List recent run IDs
+artana run list --db .state.db
+
+# Tail events for one run
+artana run tail run_123 --db .state.db
+
+# Verify hash-chain ledger integrity
+artana run verify-ledger run_123 --db .state.db
+
+# Run lifecycle summary (human and machine friendly)
+artana run status run_123 --db .state.db
+artana run status run_123 --db .state.db --json
+
+# Inspect summaries and artifacts
+artana run summaries run_123 --db .state.db --limit 20
+artana run artifacts run_123 --db .state.db --json
+
+# Scaffold a local starter (enforced by default)
+artana init ./starter --profile enforced
+artana init ./starter-dev --profile dev
+```
+
+Output shape:
+
+* `run list`: one run id per line
+* `run tail`: tab-separated `seq timestamp event_type parent_step_key`
+* `verify-ledger`: `valid` or `invalid` (exit code 0/1)
+* `status`: run status with last event metadata (`--json` for structured output)
+* `summaries`: recent run summaries (`--type` and `--limit` filters)
+* `artifacts`: latest artifact key/value snapshots (`--json` supported)
+
+Use `--dsn postgresql://...` for shared Postgres deployments.
+
+---
+
 # 🧠 Final Production Mental Model
 
 In distributed production:
@@ -389,5 +436,15 @@ Before deploying:
 * [ ] Observability dashboards configured
 
 ---
+
+## You Should Now Be Able To
+
+- Run Artana workers in distributed topologies with deterministic replay and leasing.
+- Operate day-2 diagnostics with CLI status/summaries/artifacts flows.
+- Plan safe rollout and upgrade strategies for multi-tenant deployments.
+
+## Next Chapter
+
+Continue to [Chapter 6: OS-Grade Safety V2 and Harness Reality](./Chapter6.md) for intent plans, approvals, invariants, and safety-policy operations.
 
  

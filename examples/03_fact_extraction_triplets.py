@@ -8,9 +8,15 @@ All execution is event-sourced and replay-safe via the Artana kernel.
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
+from _live_example_utils import (
+    friendly_exit,
+    print_example_header,
+    print_summary,
+    require_openai_api_key,
+    resolve_model,
+)
 from pydantic import BaseModel
 
 from artana import ArtanaKernel, KernelModelClient, KernelPolicy, TenantContext
@@ -52,8 +58,12 @@ of the European Union.
 
 
 async def main() -> None:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is required. Load environment variables first.")
+    require_openai_api_key(script_name="03_fact_extraction_triplets.py")
+    model_name = resolve_model(env_var="ARTANA_MODEL", default="gpt-4o-mini")
+    print_example_header(
+        title="03 - Fact Extraction (Triplets)",
+        models={"extractor": model_name},
+    )
 
     database_path = Path("examples/.state_03_fact_extraction.db")
     if database_path.exists():
@@ -81,26 +91,27 @@ async def main() -> None:
         run = await kernel.start_run(tenant=tenant)
         prompt = f"{EXTRACTION_INSTRUCTIONS}\n\n---\n\nArticle:\n{SAMPLE_ARTICLE.strip()}"
 
-        result = await KernelModelClient(kernel=kernel).step(
+        result = await KernelModelClient(kernel).step(
             run_id=run.run_id,
             tenant=tenant,
-            model="gpt-4o-mini",
+            model=model_name,
             prompt=prompt,
             output_schema=ExtractedFacts,
             step_key="extract_facts",
         )
 
-        print("Run id:", run.run_id)
-        print("Extracted triplets:")
-        for i, t in enumerate(result.output.triplets, 1):
-            print(f"  {i}. ({t.subject!r} -- {t.predicate!r} --> {t.object!r})")
-        print(
-            "Usage:",
-            {
-                "prompt_tokens": result.usage.prompt_tokens,
-                "completion_tokens": result.usage.completion_tokens,
-                "cost_usd": result.usage.cost_usd,
-            },
+        print_summary(
+            payload={
+                "run_id": run.run_id,
+                "model": model_name,
+                "triplet_count": len(result.output.triplets),
+                "triplets": [triplet.model_dump() for triplet in result.output.triplets],
+                "usage": {
+                    "prompt_tokens": result.usage.prompt_tokens,
+                    "completion_tokens": result.usage.completion_tokens,
+                    "cost_usd": result.usage.cost_usd,
+                },
+            }
         )
     finally:
         await kernel.close()
@@ -109,4 +120,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as exc:
+        raise friendly_exit(script_name="03_fact_extraction_triplets.py", error=exc) from exc

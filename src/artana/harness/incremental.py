@@ -39,6 +39,8 @@ class IncrementalTaskHarness(BaseHarness[tuple[TaskUnit, ...]]):
         tenant: TenantContext | None = None,
         *,
         default_model: str = "gpt-4o-mini",
+        draft_model: str = "gpt-5.3-codex-spark",
+        verify_model: str = "gpt-5.3-codex",
         replay_policy: ReplayPolicy = "allow_prompt_drift",
         sanity_check_hook: SanityCheckHook | None = None,
     ) -> None:
@@ -46,6 +48,8 @@ class IncrementalTaskHarness(BaseHarness[tuple[TaskUnit, ...]]):
             kernel=kernel,
             tenant=tenant,
             default_model=default_model,
+            draft_model=draft_model,
+            verify_model=verify_model,
             replay_policy=replay_policy,
         )
         self._sanity_check_hook = sanity_check_hook

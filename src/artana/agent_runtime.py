@@ -30,7 +30,7 @@ class AgentRuntimeResult(Generic[OutputT]):
 class AgentRuntime:
     """Agent loop layer on top of ArtanaKernel execution primitives."""
 
-    def __init__(self, *, kernel: ArtanaKernel) -> None:
+    def __init__(self, kernel: ArtanaKernel) -> None:
         self._kernel = kernel
 
     async def run_turn(

@@ -118,7 +118,7 @@ async def main() -> None:
         budget_usd_limit=1.0,
     )
     agent = AutonomousAgent(
-        kernel=kernel,
+        kernel,
         context_builder=ContextBuilder(progressive_skills=False),
     )
 

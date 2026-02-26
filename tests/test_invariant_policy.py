@@ -32,6 +32,10 @@ class AmountArgs(BaseModel):
     amount: float
 
 
+class CodeArgs(BaseModel):
+    code: str
+
+
 class PlainModelPort:
     async def complete(
         self, request: ModelRequest[OutputModelT]
@@ -258,3 +262,102 @@ async def test_custom_json_rule_invariant(tmp_path: Path) -> None:
     finally:
         await kernel.close()
 
+
+@pytest.mark.asyncio
+async def test_ast_validation_passed_invariant(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(
+        store=store,
+        model_port=PlainModelPort(),
+        middleware=[
+            SafetyPolicyMiddleware(
+                config=SafetyPolicyConfig(
+                    tools={
+                        "submit_patch": ToolSafetyPolicy(
+                            invariants=(
+                                InvariantRule(
+                                    type="ast_validation_passed",
+                                    field="code",
+                                ),
+                            )
+                        )
+                    }
+                )
+            )
+        ],
+    )
+
+    @kernel.tool()
+    async def submit_patch(code: str) -> str:
+        return f'{{"ok":true,"code_length":{len(code)}}}'
+
+    try:
+        await kernel.start_run(tenant=_tenant(), run_id="run_ast_validation")
+        with pytest.raises(PolicyViolationError, match="ast_validation_passed"):
+            await kernel.step_tool(
+                run_id="run_ast_validation",
+                tenant=_tenant(),
+                tool_name="submit_patch",
+                arguments=CodeArgs(code="def broken(:\n    pass\n"),
+                step_key="invalid_ast",
+            )
+        allowed = await kernel.step_tool(
+            run_id="run_ast_validation",
+            tenant=_tenant(),
+            tool_name="submit_patch",
+            arguments=CodeArgs(code="def ok() -> int:\n    return 1\n"),
+            step_key="valid_ast",
+        )
+        assert allowed.replayed is False
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_linter_passed_invariant(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(
+        store=store,
+        model_port=PlainModelPort(),
+        middleware=[
+            SafetyPolicyMiddleware(
+                config=SafetyPolicyConfig(
+                    tools={
+                        "submit_patch": ToolSafetyPolicy(
+                            invariants=(
+                                InvariantRule(
+                                    type="linter_passed",
+                                    field="code",
+                                ),
+                            )
+                        )
+                    }
+                )
+            )
+        ],
+    )
+
+    @kernel.tool()
+    async def submit_patch(code: str) -> str:
+        return f'{{"ok":true,"code_length":{len(code)}}}'
+
+    try:
+        await kernel.start_run(tenant=_tenant(), run_id="run_linter_validation")
+        with pytest.raises(PolicyViolationError, match="linter_passed"):
+            await kernel.step_tool(
+                run_id="run_linter_validation",
+                tenant=_tenant(),
+                tool_name="submit_patch",
+                arguments=CodeArgs(code="def tabbed():\n\treturn 1\n"),
+                step_key="invalid_lint",
+            )
+        allowed = await kernel.step_tool(
+            run_id="run_linter_validation",
+            tenant=_tenant(),
+            tool_name="submit_patch",
+            arguments=CodeArgs(code="def clean() -> int:\n    return 1\n"),
+            step_key="valid_lint",
+        )
+        assert allowed.replayed is False
+    finally:
+        await kernel.close()

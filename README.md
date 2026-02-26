@@ -73,7 +73,7 @@ Initial implementation aligned with the Artana Kernel PRD:
 - **The Agent Runtime:**
   - `AutonomousAgent` — An out-of-the-box `Model -> Tool -> Model` loop that automatically executes tools and manages conversation memory on top of the Kernel.
   - `CompactionStrategy` — proactive context compaction (message-count and token-threshold triggers) with replay-safe summaries.
-  - `ContextBuilder` — pluggable prompt assembly pipeline (identity + long-term memory + inter-run experience learnings + progressive skills + short-term history).
+  - `ContextBuilder` — pluggable prompt assembly pipeline (identity + workspace context file + long-term memory + inter-run experience learnings + progressive skills + short-term history).
   - `SQLiteExperienceStore` — tenant/task-scoped inter-run learning store for reusable `WIN_PATTERN`, `ANTI_PATTERN`, and `FACT` rules.
   - Optional post-run reflection (`auto_reflect=True`) to extract and persist reusable rules with deterministic replay-safe step keys.
   - Progressive skill disclosure via built-in `load_skill(...)` meta-tool, capability-scoped so tenants only see/load authorized skills.
@@ -81,7 +81,18 @@ Initial implementation aligned with the Artana Kernel PRD:
   - `SubAgentFactory` — sub-agent delegation with run lineage (`parent::sub_agent::idempotency_key`) and parent tenant inheritance (capabilities + budget).
 - **The Workflow Runtime:**
   - `run_workflow` — Durable workflow with `WorkflowContext`, deterministic Python logic execution (`ctx.step`), and `ctx.pause`.
-- Tool registration via `@kernel.tool(requires_capability="...")`
+- **The Harness SDK:**
+  - `BaseHarness.run_draft_model(...)` and `BaseHarness.run_verify_model(...)` for two-model draft/verify loops.
+  - `TestDrivenHarness.verify_and_commit(...)` for verification-gated `TaskUnit -> done` transitions.
+  - `DraftReviewVerifySupervisor` template for drafter/reviewer/verifier orchestration.
+  - `StepKey` utility for deterministic namespaced `step_key` generation.
+- Agent loop controls:
+  - `DraftVerifyLoopConfig` for draft/verify model routing.
+  - `AcceptanceSpec` + `ToolGate` for deterministic completion gates.
+- Official tool bundles:
+  - `CodingHarnessTools` (`create_worktree`, `read_file`, `apply_patch`, `git_diff`)
+  - `ObservabilityTools` (`query_logs`, `query_metrics`)
+- Tool registration via `@kernel.tool(requires_capability="...", side_effect=True)` for side-effect enforcement.
 - Middleware stack: `PIIScrubberMiddleware`, `QuotaMiddleware`, `CapabilityGuardMiddleware`
 - Optional OS-grade Safety Policy V2 (`KernelPolicy.enforced_v2()` + `SafetyPolicyMiddleware`) for:
   - typed intent plans before side-effect tools
@@ -89,6 +100,7 @@ Initial implementation aligned with the Artana Kernel PRD:
   - per-tool limits (run + tenant window + amount)
   - human/critic approval gates
   - deterministic invariants
+    - includes `ast_validation_passed` and `linter_passed` for code payload checks
 - Replay-safe two-phase tool execution (protects against double-charging/executing on crash recovery)
 - Tool signature hashing (`name + version + schema hash`) for replay compatibility checks
 - Context version tracking in `model_requested` events (`system_prompt_hash`, context builder, compaction)
@@ -106,6 +118,10 @@ Initial implementation aligned with the Artana Kernel PRD:
   - `acquire_run_lease(...)`, `renew_run_lease(...)`, `release_run_lease(...)`
   - `explain_tool_allowlist(...)`
   - `canonicalize_tool_args(...)`, `tool_fingerprint(...)`
+- Built-in operations CLI:
+  - `artana run list`
+  - `artana run tail`
+  - `artana run verify-ledger`
 - Tool request payload extensions for policy traceability:
   - `semantic_idempotency_key`
   - `intent_id`
@@ -173,6 +189,48 @@ Pre-commit mirrors CI quality gates and best-practices contracts:
 
 Best-practices invariants are also enforced in tests (`tests/test_best_practices_contract.py`) to prevent regressions in architecture boundaries, middleware ordering, typing hygiene, and side-effect safety patterns.
 
+## Quickstart
+
+### Minimal (local-first)
+
+```python
+from pydantic import BaseModel
+from artana import ArtanaKernel, MockModelPort, SingleStepModelClient, SQLiteStore, TenantContext
+
+class HelloResult(BaseModel):
+    message: str
+
+kernel = ArtanaKernel(
+    store=SQLiteStore("state.db"),
+    model_port=MockModelPort(output={"message": "Hello from Artana!"}),
+)
+client = SingleStepModelClient(kernel)
+tenant = TenantContext(tenant_id="demo", capabilities=frozenset(), budget_usd_limit=1.0)
+result = await client.step(
+    run_id="hello_run",
+    tenant=tenant,
+    model="demo-model",
+    prompt="Say hello",
+    output_schema=HelloResult,
+)
+```
+
+### Recommended Minimal (explicit deterministic step keys)
+
+```python
+from artana import StepKey
+
+step = StepKey(namespace="quickstart")
+result = await client.step(
+    run_id="hello_run",
+    tenant=tenant,
+    model="demo-model",
+    prompt="Say hello",
+    output_schema=HelloResult,
+    step_key=step.next("model"),
+)
+```
+
 ## Mental Models
 
 Artana gives you two ways to build, both backed by the exact same secure Kernel.
@@ -211,6 +269,7 @@ context_builder = ContextBuilder(
     experience_store=experience_store,
     task_category="Financial_Reporting",
     progressive_skills=True,
+    workspace_context_path="docs/ACTIVE_PLAN.md",
 )
 agent = AutonomousAgent(
     kernel=kernel,
@@ -270,12 +329,105 @@ harness = ResearchHarness(kernel=kernel, tenant=tenant)
 snapshot = await harness.run(run_id="research_run_01")
 ```
 
+Two-model harness loops:
+
+```python
+draft = await harness.run_draft_model(
+    prompt="Propose an implementation plan",
+    output_schema=PlanResult,
+    model_options=ModelCallOptions(api_mode="auto", reasoning_effort="low"),
+)
+
+verify = await harness.run_verify_model(
+    prompt="Validate plan correctness and failure modes",
+    output_schema=VerificationResult,
+    model_options=ModelCallOptions(api_mode="responses", reasoning_effort="high"),
+)
+```
+
 What the SDK handles automatically:
 - run creation and wake/sleep lifecycle
 - wake reorientation summaries
 - task progress persistence and one-task-per-session advancement
-- replay-safe model/tool execution helpers (`run_model`, `run_tool`)
+- replay-safe model/tool execution helpers (`run_model`, `run_draft_model`, `run_verify_model`, `run_tool`)
 - clean-state validation before sleep
+
+Verification-gated completion with `TestDrivenHarness`:
+
+```python
+from artana.harness import TestDrivenHarness
+
+class PatchHarness(TestDrivenHarness):
+    async def work_on(self, task: TaskUnit) -> None:
+        # edit code first, then verify
+        await self.verify_and_commit(task_id=task.id, test_command="pytest -q")
+```
+
+### 4. Harness Engineering DX
+Use these defaults for production-safe coding loops:
+
+```python
+from artana import AcceptanceSpec, ToolGate, StepKey
+from artana.agent import DraftVerifyLoopConfig
+
+step = StepKey(namespace="refactor_auth")
+draft_step_key = step.next("draft")
+verify_step_key = step.next("verify")
+
+agent = AutonomousAgent(
+    kernel=kernel,
+    loop=DraftVerifyLoopConfig(
+        draft_model="gpt-5.3-codex-spark",
+        verify_model="gpt-5.3-codex",
+    ),
+)
+
+result = await agent.run(
+    run_id="refactor_auth_run",
+    tenant=tenant,
+    model="openai/gpt-5.3-codex",  # used when loop=None
+    prompt="Fix flaky auth tests.",
+    output_schema=PatchDecision,
+    acceptance=AcceptanceSpec(
+        gates=(ToolGate(tool="run_tests", must_pass=True),),
+    ),
+)
+```
+
+Reusable bundle/template building blocks:
+
+```python
+from artana import CodingHarnessTools, DraftReviewVerifySupervisor, ObservabilityTools
+
+coding_tools = CodingHarnessTools(sandbox_root="/tmp/agent_workspace")
+observability_tools = ObservabilityTools(root="/var/tmp/agent_observability")
+
+# Attach a bundle directly to a kernel tool_port when needed:
+kernel = ArtanaKernel(
+    store=SQLiteStore("artana_state.db"),
+    model_port=LiteLLMAdapter(),
+    tool_port=coding_tools.registry(),
+)
+
+supervisor = DraftReviewVerifySupervisor(
+    kernel=kernel,
+    tenant=tenant,
+    drafter=drafter_harness,
+    reviewer=reviewer_harness,
+    verifier=verifier_harness,
+)
+```
+
+Operational CLI for run inspection:
+
+```bash
+artana run list --db .state.db
+artana run tail run_123 --db .state.db
+artana run verify-ledger run_123 --db .state.db
+```
+
+Default model routing is `ModelCallOptions(api_mode="auto")` across kernel, harness, and agent flows.
+Use `api_mode="responses"` only when you need strict Responses-only behavior.
 
 ## Architecture
 
@@ -380,7 +532,7 @@ kernel = ArtanaKernel(
 ```python
 from artana.ports.tool import ToolExecutionContext
 
-@kernel.tool(requires_capability="finance:write")
+@kernel.tool(requires_capability="finance:write", side_effect=True)
 async def transfer_funds(
     account_id: str,
     amount: str,
@@ -393,18 +545,20 @@ async def transfer_funds(
     return "Success"
 ```
 
-For side-effect tools, treating idempotency as optional is unsafe. Always accept
-`artana_context: ToolExecutionContext` and pass `artana_context.idempotency_key`
-to downstream APIs.
+`side_effect=True` enforces signature safety at registration time. If
+`artana_context: ToolExecutionContext` is missing, registration fails fast.
+For side-effect tools, always pass `artana_context.idempotency_key` to downstream APIs.
 
 ### Autonomous Agent API
 A runtime wrapper over the kernel that manages conversation history, automatic tool execution,
 context compaction, long-term memory, inter-run experience learning, and progressive skill disclosure.
 ```python
+from artana import AcceptanceSpec, ToolGate
 from artana.agent import (
     AutonomousAgent,
     CompactionStrategy,
     ContextBuilder,
+    DraftVerifyLoopConfig,
     SQLiteExperienceStore,
 )
 from artana.agent.memory import SQLiteMemoryStore
@@ -416,6 +570,7 @@ context_builder = ContextBuilder(
     experience_store=experience_store,
     task_category="Financial_Reporting",
     progressive_skills=True,
+    workspace_context_path="docs/ACTIVE_PLAN.md",
 )
 
 agent = AutonomousAgent(
@@ -424,6 +579,10 @@ agent = AutonomousAgent(
     compaction=CompactionStrategy(trigger_at_messages=40, keep_recent_messages=10),
     auto_reflect=True,
     reflection_model="gpt-4o-mini",
+    loop=DraftVerifyLoopConfig(
+        draft_model="gpt-5.3-codex-spark",
+        verify_model="gpt-5.3-codex",
+    ),
 )
 result = await agent.run(
     run_id="run_123",
@@ -432,6 +591,7 @@ result = await agent.run(
     system_prompt="You are a helpful agent.",
     prompt="Do the task.",
     output_schema=FinalDecision,
+    acceptance=AcceptanceSpec(gates=(ToolGate(tool="run_tests", must_pass=True),)),
     max_iterations=15
 )
 ```
@@ -450,6 +610,10 @@ When `experience_store` and `task_category` are configured:
   - prioritized historical rules for that exact `tenant_id` + task category
 - With `auto_reflect=True`, the agent runs a deterministic reflection step
   (`turn_{iteration}_reflection`) at the end of successful runs and persists extracted rules.
+
+When `workspace_context_path` is configured:
+- If the file exists and is non-empty, the system prompt includes a
+  `Workspace Context / Active Plan` section.
 
 ### Sub-Agent Delegation API
 Create tools that run specialized child agents with inherited governance and durable lineage.
@@ -605,7 +769,8 @@ Run examples from the repository root:
 - **`05_hard_triplets_workflow.py`**: Demonstrates the strict `run_workflow` pattern interleaving LLM calls, deterministic Python math, and a durable Human-In-The-Loop pause.
 - **`06_triplets_swarm.py`**: Demonstrates multi-agent orchestration (lead agent + extractor/adjudicator sub-agents + deterministic graph math tool) on the shared Kernel ledger.
 - **`07_adaptive_agent_learning.py`**: Demonstrates inter-run experience learning where Run 1 discovers a durable rule and Run 2 succeeds immediately using injected past learnings.
-- **`08_responses_mode.py`**: Demonstrates Responses-mode options (`api_mode`, `reasoning_effort`, `verbosity`) and chaining with `previous_response_id`.
+- **`08_responses_mode.py`**: Demonstrates explicit Responses controls (`api_mode="responses"`, `reasoning_effort`, `verbosity`) and chaining with `previous_response_id`.
+- **`09_harness_engineering_dx.py`**: Demonstrates `StepKey`, draft/verify harness calls, acceptance gates, side-effect-safe tool registration, and coding tool bundle usage.
 - **`golden_example.py`**: Canonical production-leaning example testing unknown tool outcomes and reconciliation.
 
 ## Growth Path

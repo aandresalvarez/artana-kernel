@@ -44,6 +44,13 @@ Current built-in channels:
 - `trace::drift`
 - `trace::tool_validation`
 
+Agent-level run summaries also include:
+
+- `agent_model_step`
+- `agent_verify_step`
+- `agent_acceptance_gate`
+- `agent_tool_step`
+
 You can emit additional custom channels with:
 
 ```pycon
@@ -136,6 +143,16 @@ async for event in kernel.stream_events(run_id="run_1", since_seq=0, follow=True
     print(event.seq, event.event_type.value)
 ```
 
+### 7b. Draft/Verify + Acceptance Gate Trace Shape
+
+When `AutonomousAgent` runs with `DraftVerifyLoopConfig` and `AcceptanceSpec`:
+
+- draft model turns emit `summary_type=agent_model_step`
+- gate tool checks emit `summary_type=agent_acceptance_gate`
+- verifier turns emit `summary_type=agent_verify_step`
+
+This allows deterministic analysis of why a run continued vs. finalized.
+
 ### 8. Trace query API
 
 Kernel exposes:
@@ -175,6 +192,19 @@ Behavior:
 - `stage`: lifecycle and stage-level trace summaries
 - `verbose`: stage plus detailed tool/model validation summaries
 
+### 10. CLI Trace Inspection
+
+Operational trace inspection is available through CLI commands:
+
+```pycon
+artana run status <run_id> --db .state.db --json
+artana run summaries <run_id> --db .state.db --limit 20 --json
+artana run artifacts <run_id> --db .state.db --json
+artana run tail <run_id> --db .state.db --since-seq 0
+```
+
+Use `--dsn postgresql://...` for shared deployments.
+
 ## API surface
 
 ### Kernel
@@ -184,12 +214,16 @@ Behavior:
 - `ArtanaKernel.append_run_summary(..., parent_step_key=...)`
 - `ArtanaKernel.append_harness_event(..., parent_step_key=...)`
 - `ArtanaKernel.stream_events(run_id, since_seq=0, follow=False, ...)`
+- `ArtanaKernel.describe_capabilities(tenant=...)`
+- `ArtanaKernel.list_tools_for_tenant(tenant=...)`
 
 ### Harness
 
 - `BaseHarness.run(..., trace_level=...)`
 - `BaseHarness.emit_summary(..., parent_step_key=...)`
 - `BaseHarness.run_model(..., model_options=..., parent_step_key=...)`
+- `BaseHarness.run_draft_model(..., model_options=..., parent_step_key=...)`
+- `BaseHarness.run_verify_model(..., model_options=..., parent_step_key=...)`
 - `BaseHarness.run_tool(..., parent_step_key=...)`
 
 ### Store
@@ -207,9 +241,10 @@ For one harness run, you typically see:
 4. `harness_stage` (initialize/wake/work/sleep)
 5. `trace::state_transition` summaries
 6. model/tool events (if used)
-7. `trace::round`, `trace::cost`, `trace::cost_snapshot`
-8. `harness_sleep`
-9. optional `harness_failed` (if exception)
+7. optional agent summaries (`agent_model_step`, `agent_acceptance_gate`, `agent_verify_step`)
+8. `trace::round`, `trace::cost`, `trace::cost_snapshot`
+9. `harness_sleep`
+10. optional `harness_failed` (if exception)
 
 ## Determinism and safety notes
 

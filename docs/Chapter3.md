@@ -11,6 +11,13 @@ This chapter focuses on:
 * Adapter portability
 * Ledger integrity
 
+## Chapter Metadata
+
+- Audience: Engineers deploying Artana in failure-prone or evolving environments.
+- Prerequisites: Chapters 1–2 complete; familiarity with harness lifecycle and replay basics.
+- Estimated time: 40 minutes.
+- Expected outcome: You can choose replay policies intentionally, recover from tool uncertainty, and design crash-safe long-running runs.
+
 Code block contract for this chapter:
 
 * `python` blocks are standalone runnable scripts.
@@ -171,10 +178,15 @@ Production systems must survive crashes mid-run.
 
 ```python
 import asyncio
-from artana.harness import IncrementalTaskHarness, TaskUnit
-from artana.kernel import ArtanaKernel
-from artana.models import TenantContext
-from artana.store import SQLiteStore
+
+from artana import (
+    ArtanaKernel,
+    IncrementalTaskHarness,
+    MockModelPort,
+    SQLiteStore,
+    TaskUnit,
+    TenantContext,
+)
 
 
 class MigrationHarness(IncrementalTaskHarness):
@@ -193,7 +205,7 @@ class MigrationHarness(IncrementalTaskHarness):
 async def main():
     kernel = ArtanaKernel(
         store=SQLiteStore("chapter3_step3.db"),
-        model_port=None,
+        model_port=MockModelPort(output={"message": "unused"}),
     )
 
     tenant = TenantContext(
@@ -279,7 +291,7 @@ async def main():
         budget_usd_limit=5.0,
     )
 
-    client = SingleStepModelClient(kernel=kernel)
+    client = SingleStepModelClient(kernel)
 
     async def workflow(ctx: WorkflowContext):
         intent = await client.step(
@@ -463,5 +475,15 @@ Production Artana systems should:
 * Store structured artifacts
 * Validate clean state before sleep
 * Audit ledger integrity
+
+## You Should Now Be Able To
+
+- Recover safely from unknown tool outcomes without duplicating side effects.
+- Pick the correct replay policy (`strict`, `allow_prompt_drift`, or `fork_on_drift`) for your environment.
+- Resume long-running harness and workflow runs after interruptions with deterministic state.
+
+## Next Chapter
+
+Continue to [Chapter 4: Ultimate Architecture](./Chapter4.md) for advanced orchestration, custom loops, and platform-level composition patterns.
 
  

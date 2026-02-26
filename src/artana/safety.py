@@ -56,6 +56,8 @@ class InvariantRule(BaseModel):
         "email_domain_allowlist",
         "recipient_must_be_verified",
         "custom_json_rule",
+        "ast_validation_passed",
+        "linter_passed",
     ]
     field: str | None = None
     allowed_domains: tuple[str, ...] = Field(default_factory=tuple)
@@ -81,6 +83,8 @@ class InvariantRule(BaseModel):
                 raise ValueError("custom_json_rule invariant requires json_path and operator.")
             if self.value_json is None:
                 raise ValueError("custom_json_rule invariant requires value_json.")
+        if self.type in ("ast_validation_passed", "linter_passed") and self.field is None:
+            raise ValueError(f"{self.type} invariant requires field.")
         return self
 
 
@@ -107,4 +111,3 @@ class IntentPlanRecord(BaseModel):
     assumed_state: str = Field(min_length=1)
     applies_to_tools: tuple[str, ...] = Field(default_factory=tuple)
     created_at: datetime = Field(default_factory=utc_now)
-

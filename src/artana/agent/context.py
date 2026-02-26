@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import Mapping
+from pathlib import Path
 
 from artana.agent.experience import ExperienceRule, ExperienceStore
 from artana.agent.memory import MemoryStore
@@ -20,12 +21,14 @@ class ContextBuilder(ABC):
         experience_store: ExperienceStore | None = None,
         task_category: str | None = None,
         progressive_skills: bool = True,
+        workspace_context_path: str | None = None,
     ) -> None:
         self.identity = identity
         self.memory_store = memory_store
         self.experience_store = experience_store
         self.task_category = task_category
         self.progressive_skills = progressive_skills
+        self.workspace_context_path = workspace_context_path
 
     @property
     def version(self) -> str:
@@ -43,6 +46,9 @@ class ContextBuilder(ABC):
         memory_text: str | None,
     ) -> tuple[ChatMessage, ...]:
         sections: list[str] = [self.identity, system_prompt]
+        workspace_context = self._read_workspace_context()
+        if workspace_context is not None:
+            sections.append(f"Workspace Context / Active Plan:\n{workspace_context}")
         if memory_text:
             sections.append(f"Long-Term Memory:\n{memory_text}")
         experience_rules = await self._load_experience_rules(tenant_id=tenant.tenant_id)
@@ -58,6 +64,20 @@ class ContextBuilder(ABC):
                 )
             )
         return (ChatMessage(role="system", content="\n\n".join(sections)),) + short_term_messages
+
+    def _read_workspace_context(self) -> str | None:
+        if self.workspace_context_path is None:
+            return None
+        path = Path(self.workspace_context_path).expanduser()
+        try:
+            if not path.exists() or not path.is_file():
+                return None
+            content = path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            return None
+        if content == "":
+            return None
+        return content
 
     def _format_skill_panel(
         self,

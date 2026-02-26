@@ -82,7 +82,7 @@ async def _run_workflow_with_human_gate(
     tenant: TenantContext,
     prompt: str,
 ) -> None:
-    chat = SingleStepModelClient(kernel=kernel)
+    chat = SingleStepModelClient(kernel)
     should_pause = [True]
 
     async def workflow(context: WorkflowContext) -> CommitResult:

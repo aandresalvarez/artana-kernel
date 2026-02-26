@@ -11,7 +11,7 @@ from artana import ArtanaKernel
 from artana.events import EventType, ModelRequestedPayload, RunSummaryPayload
 from artana.harness import BaseHarness, HarnessContext, IncrementalTaskHarness, TaskUnit
 from artana.models import TenantContext
-from artana.ports.model import ModelRequest, ModelResult, ModelUsage
+from artana.ports.model import ModelCallOptions, ModelRequest, ModelResult, ModelUsage
 from artana.store import SQLiteStore
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
@@ -91,6 +91,27 @@ class TaskListHarness(IncrementalTaskHarness):
             key=f"completed_{task.id}",
             value=True,
         )
+
+
+class DraftVerifyHarness(BaseHarness[tuple[str, str]]):
+    async def step(self, *, context: HarnessContext) -> tuple[str, str]:
+        draft = await self.run_draft_model(
+            prompt="draft answer",
+            output_schema=Decision,
+            model_options=ModelCallOptions(
+                api_mode="responses",
+                reasoning_effort="low",
+                verbosity="low",
+            ),
+            step_key="draft_step",
+        )
+        verify = await self.run_verify_model(
+            prompt="verify answer",
+            output_schema=Decision,
+            model_options=ModelCallOptions(api_mode="chat"),
+            step_key="verify_step",
+        )
+        return (draft.output.reason, verify.output.reason)
 
 
 @pytest.mark.asyncio
@@ -191,5 +212,41 @@ async def test_incremental_task_harness_default_flow_runs_one_task_per_session(
             payload.summary_type == "task_progress"
             for payload in run_summaries
         )
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_base_harness_draft_and_verify_wrappers_use_dedicated_models(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(store=store, model_port=StaticDecisionModelPort())
+    tenant = _tenant()
+    harness = DraftVerifyHarness(
+        kernel=kernel,
+        tenant=tenant,
+        draft_model="gpt-5.3-codex-spark",
+        verify_model="gpt-5.3-codex",
+    )
+    try:
+        reasons = await harness.run(run_id="run_draft_verify")
+        assert reasons == ("policy_ok", "policy_ok")
+
+        events = await store.get_events_for_run("run_draft_verify")
+        model_requested = [
+            event.payload
+            for event in events
+            if event.event_type == EventType.MODEL_REQUESTED
+            and isinstance(event.payload, ModelRequestedPayload)
+        ]
+        assert [payload.model for payload in model_requested] == [
+            "gpt-5.3-codex-spark",
+            "gpt-5.3-codex",
+        ]
+        assert model_requested[0].api_mode == "responses"
+        assert model_requested[0].reasoning_effort == "low"
+        assert model_requested[0].verbosity == "low"
+        assert model_requested[1].api_mode == "chat"
     finally:
         await kernel.close()

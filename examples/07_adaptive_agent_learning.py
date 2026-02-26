@@ -162,7 +162,7 @@ async def main() -> None:
         budget_usd_limit=3.0,
     )
     agent = AutonomousAgent(
-        kernel=kernel,
+        kernel,
         context_builder=ContextBuilder(
             identity="You are a financial extraction agent.",
             experience_store=experience_store,

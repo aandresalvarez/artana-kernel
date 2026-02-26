@@ -100,6 +100,7 @@ DEFAULT_EXCLUDE_FOLDERS = {
     "logs",
     "alembic",
     "output",
+    "evaluations",
 }
 
 # Folder patterns to exclude (glob patterns for folder matching)
@@ -179,6 +180,10 @@ def should_exclude_path(
     if any(part in exclude_folders for part in path_parts):
         return True
 
+    # Exclude any hidden folders (names starting with a dot)
+    if any(part.startswith(".") and part != "." for part in path_parts):
+        return True
+
     # Check for folder pattern exclusions (glob patterns)
     for part in path_parts:
         for pattern in exclude_folder_patterns:
@@ -229,6 +234,8 @@ def build_tree_structure(
     docker_files,
     excluded_file_patterns,
     exclude_specific_paths=None,
+    script_path=None,
+    output_path=None,
 ):
     tree = defaultdict(list)
     for root, dirs, files in os.walk(base_folder):
@@ -245,6 +252,13 @@ def build_tree_structure(
 
         rel_root = os.path.relpath(root, base_folder)
         for f in sorted(files):
+            file_path = os.path.join(root, f)
+            abs_file_path = os.path.abspath(file_path)
+
+            # Skip the script itself and the output file
+            if abs_file_path in {script_path, output_path}:
+                continue
+
             # Skip files that match excluded patterns
             if should_exclude_file(f, excluded_file_patterns):
                 continue
@@ -467,6 +481,8 @@ def main():
             docker_files,
             EXCLUDED_FILE_PATTERNS,
             exclude_specific_paths,
+            script_path,
+            output_path,
         )
         folder_name = os.path.basename(target_folder)
         for folder, files in tree.items():

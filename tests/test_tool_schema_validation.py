@@ -172,3 +172,34 @@ async def test_tool_argument_validation_rejects_invalid_payloads() -> None:
     )
     assert success.outcome == "success"
     assert calls == 1
+
+
+def test_side_effect_tool_requires_artana_context_annotation() -> None:
+    registry = LocalToolRegistry()
+
+    async def unsafe_side_effect_tool(amount: int) -> str:
+        return f'{{"amount":{amount}}}'
+
+    with pytest.raises(ValueError, match="side_effect=True"):
+        registry.register(unsafe_side_effect_tool, side_effect=True)
+
+
+def test_side_effect_tool_with_artana_context_annotation_registers() -> None:
+    registry = LocalToolRegistry()
+
+    async def safe_side_effect_tool(
+        amount: int,
+        artana_context: ToolExecutionContext,
+    ) -> str:
+        return (
+            '{"amount":'
+            f"{amount}"
+            ',"idempotency_key":"'
+            f"{artana_context.idempotency_key}"
+            '"}'
+        )
+
+    registry.register(safe_side_effect_tool, side_effect=True)
+    definitions = registry.to_all_tool_definitions()
+    assert len(definitions) == 1
+    assert definitions[0].name == "safe_side_effect_tool"

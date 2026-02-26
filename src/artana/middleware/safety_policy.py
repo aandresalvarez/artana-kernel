@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from datetime import datetime, timedelta, timezone
 from string import Formatter
@@ -616,6 +617,78 @@ class SafetyPolicyMiddleware:
                         tool_name=tool_name,
                         fingerprint=fingerprint,
                     )
+            elif invariant.type == "ast_validation_passed":
+                if invariant.field is None:
+                    continue
+                code = _resolve_arg(arguments, invariant.field)
+                if not isinstance(code, str):
+                    raise PolicyViolationError(
+                        code="invariant_violation",
+                        message=(
+                            f"Tool {tool_name!r} invariant ast_validation_passed requires "
+                            f"a string code payload at field={invariant.field!r}."
+                        ),
+                        tool_name=tool_name,
+                        fingerprint=fingerprint,
+                    )
+                ast_ok, ast_error = _validate_python_ast(code)
+                if not ast_ok:
+                    await self._emit_policy_decision(
+                        run_id=run_id,
+                        tenant_id=tenant.tenant_id,
+                        tool_name=tool_name,
+                        fingerprint=fingerprint,
+                        outcome="deny",
+                        rule_id="invariant:ast_validation_passed",
+                        reason=ast_error or f"field={invariant.field}",
+                        step_key=step_key,
+                        parent_step_key=parent_step_key,
+                    )
+                    raise PolicyViolationError(
+                        code="invariant_violation",
+                        message=(
+                            f"Tool {tool_name!r} ast_validation_passed failed for "
+                            f"field={invariant.field!r}: {ast_error or 'invalid syntax'}."
+                        ),
+                        tool_name=tool_name,
+                        fingerprint=fingerprint,
+                    )
+            elif invariant.type == "linter_passed":
+                if invariant.field is None:
+                    continue
+                code = _resolve_arg(arguments, invariant.field)
+                if not isinstance(code, str):
+                    raise PolicyViolationError(
+                        code="invariant_violation",
+                        message=(
+                            f"Tool {tool_name!r} invariant linter_passed requires "
+                            f"a string code payload at field={invariant.field!r}."
+                        ),
+                        tool_name=tool_name,
+                        fingerprint=fingerprint,
+                    )
+                lint_ok, lint_error = _validate_lint(code)
+                if not lint_ok:
+                    await self._emit_policy_decision(
+                        run_id=run_id,
+                        tenant_id=tenant.tenant_id,
+                        tool_name=tool_name,
+                        fingerprint=fingerprint,
+                        outcome="deny",
+                        rule_id="invariant:linter_passed",
+                        reason=lint_error or f"field={invariant.field}",
+                        step_key=step_key,
+                        parent_step_key=parent_step_key,
+                    )
+                    raise PolicyViolationError(
+                        code="invariant_violation",
+                        message=(
+                            f"Tool {tool_name!r} linter_passed failed for "
+                            f"field={invariant.field!r}: {lint_error or 'lint failed'}."
+                        ),
+                        tool_name=tool_name,
+                        fingerprint=fingerprint,
+                    )
 
     def _derive_semantic_key(
         self,
@@ -930,6 +1003,31 @@ def _load_json_value_or_raise(value_json: str | None) -> object:
     return json.loads(value_json)
 
 
+def _validate_python_ast(code: str) -> tuple[bool, str | None]:
+    try:
+        ast.parse(code)
+    except SyntaxError as exc:
+        details = exc.msg
+        if exc.lineno is not None:
+            details = f"line {exc.lineno}: {details}"
+        return False, details
+    return True, None
+
+
+def _validate_lint(code: str) -> tuple[bool, str | None]:
+    ast_ok, ast_error = _validate_python_ast(code)
+    if not ast_ok:
+        return False, ast_error
+    for line_number, line in enumerate(code.splitlines(), start=1):
+        if "\t" in line:
+            return False, f"line {line_number}: tabs are not allowed"
+        if line.rstrip(" \t") != line:
+            return False, f"line {line_number}: trailing whitespace is not allowed"
+        if len(line) > 120:
+            return False, f"line {line_number}: line length exceeds 120 characters"
+    return True, None
+
+
 def _evaluate_custom_rule(*, left: object, operator: str, right: object) -> bool:
     if left is _MISSING:
         return False
@@ -970,4 +1068,3 @@ def _safe_ordered_compare(*, left: object, right: object, op: str) -> bool:
     if op == "lte":
         return left <= right
     return False
-

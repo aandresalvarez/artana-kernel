@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
+from _live_example_utils import (
+    friendly_exit,
+    print_example_header,
+    print_summary,
+    require_openai_api_key,
+    resolve_model,
+)
 from pydantic import BaseModel
 
 from artana import ArtanaKernel, KernelModelClient, KernelPolicy, TenantContext
@@ -17,8 +23,12 @@ class Decision(BaseModel):
 
 
 async def main() -> None:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is required. Load environment variables first.")
+    require_openai_api_key(script_name="02_real_litellm_chat.py")
+    model_name = resolve_model(env_var="ARTANA_MODEL", default="gpt-4o-mini")
+    print_example_header(
+        title="02 - Real LiteLLM Chat (OpenAI)",
+        models={"primary": model_name},
+    )
 
     database_path = Path("examples/.state_real_litellm_example.db")
     if database_path.exists():
@@ -49,44 +59,23 @@ async def main() -> None:
             "Approve this request and give a short reason."
         )
 
-        first = await KernelModelClient(kernel=kernel).step(
+        first = await KernelModelClient(kernel).step(
             run_id=run.run_id,
             prompt=prompt,
-            model="gpt-4o-mini",
+            model=model_name,
             tenant=tenant,
             output_schema=Decision,
         )
         events_after_first = await store.get_events_for_run(run.run_id)
 
-        second = await KernelModelClient(kernel=kernel).step(
+        second = await KernelModelClient(kernel).step(
             run_id=run.run_id,
             prompt=prompt,
-            model="gpt-4o-mini",
+            model=model_name,
             tenant=tenant,
             output_schema=Decision,
         )
         events_after_second = await store.get_events_for_run(run.run_id)
-
-        print("Run id:", run.run_id)
-        print("Live model response:", first.output.model_dump())
-        print(
-            "Usage:",
-            {
-                "prompt_tokens": first.usage.prompt_tokens,
-                "completion_tokens": first.usage.completion_tokens,
-                "cost_usd": first.usage.cost_usd,
-            },
-        )
-        print("First replayed:", first.replayed)
-        print("Second replayed:", second.replayed)
-        print(
-            "Event types after first:",
-            [event.event_type for event in events_after_first],
-        )
-        print(
-            "Event types after second:",
-            [event.event_type for event in events_after_second],
-        )
 
         if not second.replayed:
             raise AssertionError("Expected second call to replay from event log.")
@@ -94,6 +83,22 @@ async def main() -> None:
             raise AssertionError("Replay should not append duplicate model events.")
         if first.output != second.output:
             raise AssertionError("Replay output must match first output exactly.")
+
+        print_summary(
+            payload={
+                "run_id": run.run_id,
+                "model": model_name,
+                "first_replayed": first.replayed,
+                "second_replayed": second.replayed,
+                "output": first.output.model_dump(),
+                "usage": {
+                    "prompt_tokens": first.usage.prompt_tokens,
+                    "completion_tokens": first.usage.completion_tokens,
+                    "cost_usd": first.usage.cost_usd,
+                },
+                "event_count": len(events_after_second),
+            }
+        )
     finally:
         await kernel.close()
         if database_path.exists():
@@ -101,4 +106,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as exc:
+        raise friendly_exit(script_name="02_real_litellm_chat.py", error=exc) from exc

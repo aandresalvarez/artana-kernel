@@ -194,7 +194,9 @@ def find_matching_model_cycle(
         )
         if replay_policy == "strict":
             raise ReplayConsistencyError(
-                "Cannot resume run with changed model inputs/options for the same model step."
+                "Cannot resume run with changed model inputs/options for the same "
+                "model step. Use replay_policy='allow_prompt_drift' to replay the "
+                "prior completion, or replay_policy='fork_on_drift' to branch."
             )
         if replay_policy == "allow_prompt_drift":
             completed = find_model_completed_after(events=events, start_index=index + 1)

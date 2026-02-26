@@ -12,6 +12,13 @@ This chapter demonstrates:
 * External orchestrator integration
 * Ledger observability at scale
 
+## Chapter Metadata
+
+- Audience: Engineers designing platform-level Artana architecture and custom orchestration layers.
+- Prerequisites: Chapters 1–3 complete; strong understanding of replay and policy enforcement.
+- Estimated time: 40 minutes.
+- Expected outcome: You can design advanced loop patterns and orchestration boundaries while preserving Artana safety guarantees.
+
 Code block contract for this chapter:
 
 * `python` blocks are standalone runnable scripts.
@@ -88,7 +95,7 @@ async def main():
         budget_usd_limit=1.0,
     )
 
-    client = SingleStepModelClient(kernel=kernel)
+    client = SingleStepModelClient(kernel)
 
     result = await client.step(
         run_id="enforced_run",
@@ -273,10 +280,16 @@ Production systems should coordinate harnesses, not raw agents.
 
 ```python
 import asyncio
-from artana.harness import IncrementalTaskHarness, SupervisorHarness, TaskUnit
-from artana.kernel import ArtanaKernel
-from artana.models import TenantContext
-from artana.store import SQLiteStore
+
+from artana import (
+    ArtanaKernel,
+    IncrementalTaskHarness,
+    MockModelPort,
+    SQLiteStore,
+    SupervisorHarness,
+    TaskUnit,
+    TenantContext,
+)
 
 
 class DeploymentHarness(IncrementalTaskHarness):
@@ -305,7 +318,7 @@ class DeploymentSupervisor(SupervisorHarness):
 async def main():
     kernel = ArtanaKernel(
         store=SQLiteStore("chapter4_step4.db"),
-        model_port=None,
+        model_port=MockModelPort(output={"message": "unused"}),
     )
 
     tenant = TenantContext(
@@ -463,4 +476,14 @@ Production Artana systems combine:
 | Ledger       | Immutable audit trail             |
 
 ---
+
+## You Should Now Be Able To
+
+- Choose between harness-, workflow-, and kernel-level orchestration for advanced workloads.
+- Design replay-safe custom loops with explicit governance and middleware enforcement.
+- Integrate Artana as deterministic execution substrate under external schedulers.
+
+## Next Chapter
+
+Continue to [Chapter 5: Distributed Scaling & Multi-Tenant Deployment](./Chapter5.md) for worker topology, run operations, and production deployment guidance.
  

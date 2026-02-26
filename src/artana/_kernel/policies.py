@@ -72,5 +72,7 @@ def assert_tool_allowed_for_tenant(
         raise KeyError(f"Tool {tool_name!r} is not registered.")
     if required_capability not in tenant.capabilities:
         raise CapabilityDeniedError(
-            f"Tool {tool_name!r} requires capability {required_capability!r}."
+            f"Tool {tool_name!r} requires capability {required_capability!r} for "
+            f"tenant {tenant.tenant_id!r}. Add that capability to tenant.capabilities "
+            "or call a tool allowed for this tenant."
         )

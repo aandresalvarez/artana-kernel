@@ -621,6 +621,32 @@ async def test_autonomous_agent_memory_tool_injects_long_term_memory(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_context_builder_injects_workspace_context_file(tmp_path: Path) -> None:
+    workspace_context = tmp_path / "ACTIVE_PLAN.md"
+    workspace_context.write_text("1. Fix tests\n2. Run lint", encoding="utf-8")
+    context_builder = ContextBuilder(
+        progressive_skills=False,
+        workspace_context_path=str(workspace_context),
+    )
+
+    messages = await context_builder.build_messages(
+        run_id="run_workspace_context",
+        tenant=_tenant(),
+        short_term_messages=(ChatMessage(role="user", content="continue"),),
+        system_prompt="You are the agent.",
+        active_skills=frozenset(),
+        available_skill_summaries=None,
+        memory_text=None,
+    )
+
+    assert messages[0].role == "system"
+    assert (
+        "Workspace Context / Active Plan:\n1. Fix tests\n2. Run lint"
+        in messages[0].content
+    )
+
+
+@pytest.mark.asyncio
 async def test_context_builder_injects_experience_rules(tmp_path: Path) -> None:
     store = SQLiteStore(str(tmp_path / "state.db"))
     model_port = ContextCaptureModelPort()

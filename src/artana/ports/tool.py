@@ -85,6 +85,7 @@ class ToolPort(Protocol):
         self,
         function: ToolCallable,
         requires_capability: str | None = None,
+        side_effect: bool = False,
         tool_version: str = "1.0.0",
         schema_version: str = "1",
         risk_level: ToolRiskLevel = "medium",
@@ -122,6 +123,7 @@ class LocalToolRegistry:
         self,
         function: ToolCallable,
         requires_capability: str | None = None,
+        side_effect: bool = False,
         tool_version: str = "1.0.0",
         schema_version: str = "1",
         risk_level: ToolRiskLevel = "medium",
@@ -148,6 +150,17 @@ class LocalToolRegistry:
             else:
                 default = parameter.default
             model_fields[parameter.name] = (annotation, default)
+
+        if side_effect:
+            expected: object = resolved_hints.get("artana_context")
+            context_parameter = signature.parameters.get("artana_context")
+            if expected is None and context_parameter is not None:
+                expected = context_parameter.annotation
+            if not accepts_artana_context or expected is not ToolExecutionContext:
+                raise ValueError(
+                    "side_effect=True requires tool signature to include "
+                    "artana_context: ToolExecutionContext."
+                )
 
         arguments_model = create_model(
             f"{function.__name__}Arguments",

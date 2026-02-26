@@ -31,5 +31,11 @@ jobs:
       - name: Kernel Behavior Index
         run: uv run python scripts/generate_kernel_behavior_index.py --check
 
+      - name: Pytest (docs contracts)
+        run: uv run pytest tests/test_docs_contracts.py
+
+      - name: Pytest (examples contracts)
+        run: uv run pytest tests/test_examples_contracts.py
+
       - name: Pytest
         run: uv run pytest

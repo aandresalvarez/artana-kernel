@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
 
+from _live_example_utils import (
+    friendly_exit,
+    print_example_header,
+    print_summary,
+    require_openai_api_key,
+    resolve_model,
+)
 from pydantic import BaseModel, Field
 
 from artana.agent import AutonomousAgent, ContextBuilder
@@ -40,7 +46,12 @@ class FinalReport(BaseModel):
     verified_derived_relations: list[Triplet] = Field(default_factory=list)
 
 
-def _create_kernel(db_path: Path) -> ArtanaKernel:
+def _create_kernel(
+    db_path: Path,
+    *,
+    extractor_model: str,
+    adjudicator_model: str,
+) -> ArtanaKernel:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     kernel = ArtanaKernel(
         store=SQLiteStore(str(db_path)),
@@ -62,14 +73,14 @@ def _create_kernel(db_path: Path) -> ArtanaKernel:
             capabilities=frozenset(),
         )
         agent = AutonomousAgent(
-            kernel=kernel,
+            kernel,
             context_builder=ContextBuilder(progressive_skills=False),
         )
 
         result = await agent.run(
             run_id=f"{artana_context.run_id}_ext_{artana_context.idempotency_key[:6]}",
             tenant=tenant,
-            model="gpt-4o-mini",
+            model=extractor_model,
             system_prompt=(
                 "You extract explicitly stated relationships. "
                 "Allowed relations: INHIBITS, ACTIVATES, PART_OF."
@@ -134,7 +145,7 @@ def _create_kernel(db_path: Path) -> ArtanaKernel:
             capabilities=frozenset(),
         )
         agent = AutonomousAgent(
-            kernel=kernel,
+            kernel,
             context_builder=ContextBuilder(progressive_skills=False),
         )
 
@@ -147,7 +158,7 @@ def _create_kernel(db_path: Path) -> ArtanaKernel:
         result = await agent.run(
             run_id=f"{artana_context.run_id}_adj_{artana_context.idempotency_key[:6]}",
             tenant=tenant,
-            model="gpt-4o",
+            model=adjudicator_model,
             system_prompt=(
                 "You are a strict Biological Adjudicator. "
                 "Reject relations that ignore nuance."
@@ -168,14 +179,28 @@ def _create_kernel(db_path: Path) -> ArtanaKernel:
 
 
 async def main() -> None:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is required. Load environment variables first.")
+    require_openai_api_key(script_name="06_triplets_swarm.py")
+    lead_model = resolve_model(env_var="ARTANA_MODEL_LEAD", default="gpt-4o")
+    extractor_model = resolve_model(env_var="ARTANA_MODEL_EXTRACTOR", default="gpt-4o-mini")
+    adjudicator_model = resolve_model(env_var="ARTANA_MODEL_ADJUDICATOR", default="gpt-4o")
+    print_example_header(
+        title="06 - Triplets Swarm (Sub-Agent Runtime)",
+        models={
+            "lead": lead_model,
+            "extractor": extractor_model,
+            "adjudicator": adjudicator_model,
+        },
+    )
 
     db_path = Path("examples/.state_triplets_swarm.db")
     if db_path.exists():
         db_path.unlink()
 
-    kernel = _create_kernel(db_path)
+    kernel = _create_kernel(
+        db_path,
+        extractor_model=extractor_model,
+        adjudicator_model=adjudicator_model,
+    )
 
     tenant = TenantContext(
         tenant_id="science_team",
@@ -183,7 +208,7 @@ async def main() -> None:
         capabilities=frozenset({"spawn_extractor", "run_math", "spawn_adjudicator"}),
     )
     lead_agent = AutonomousAgent(
-        kernel=kernel,
+        kernel,
         context_builder=ContextBuilder(progressive_skills=False),
     )
 
@@ -205,14 +230,23 @@ async def main() -> None:
         report = await lead_agent.run(
             run_id="paper_analysis_swarm_01",
             tenant=tenant,
-            model="gpt-4o",
+            model=lead_model,
             system_prompt=system_prompt,
             prompt=f"Please analyze this text: {article_text}",
             output_schema=FinalReport,
             max_iterations=16,
         )
-        print("\n✅ Lead Agent Published Final Report:")
-        print(report.model_dump_json(indent=2))
+        print_summary(
+            payload={
+                "run_id": "paper_analysis_swarm_01",
+                "lead_model": lead_model,
+                "extractor_model": extractor_model,
+                "adjudicator_model": adjudicator_model,
+                "explicit_fact_count": len(report.explicit_facts),
+                "verified_relation_count": len(report.verified_derived_relations),
+                "report": report.model_dump(),
+            }
+        )
     finally:
         await kernel.close()
         if db_path.exists():
@@ -220,4 +254,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as exc:
+        raise friendly_exit(script_name="06_triplets_swarm.py", error=exc) from exc

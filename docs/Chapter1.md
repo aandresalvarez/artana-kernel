@@ -10,6 +10,13 @@ Artana is built in **three layers**:
 
 This guide walks you from deterministic steps → tools → workflows → agents → harnesses.
 
+## Chapter Metadata
+
+- Audience: Engineers onboarding to Artana for the first time.
+- Prerequisites: Python 3.12+, repository cloned, `uv sync --all-groups`.
+- Estimated time: 35–45 minutes.
+- Expected outcome: You can run a local Artana flow end-to-end and understand when to choose Kernel, Workflow, Agent, or Harness layers.
+
 Code block contract for this chapter:
 
 * `python` blocks are standalone runnable scripts.
@@ -19,52 +26,39 @@ Code block contract for this chapter:
 
 # 🧠 Step 1 — Deterministic Model Steps (The Kernel)
 
+Goal: first successful local run in under 10 minutes.
+
 Every model step in Artana:
 
 * Is persisted
 * Is replay-safe
-* Requires a `step_key`
+* Supports optional deterministic `step_key`
 * Can be resumed safely
+
+Minimal first run:
 
 ```python
 import asyncio
-from typing import TypeVar
 
 from pydantic import BaseModel
 
-from artana.agent import SingleStepModelClient
-from artana.kernel import ArtanaKernel
-from artana.models import TenantContext
-from artana.ports.model import (
-    ModelCallOptions,
-    ModelRequest,
-    ModelResult,
-    ModelUsage,
+from artana import (
+    ArtanaKernel,
+    MockModelPort,
+    SingleStepModelClient,
+    SQLiteStore,
+    TenantContext,
 )
-from artana.store import SQLiteStore
-
-OutputT = TypeVar("OutputT", bound=BaseModel)
 
 
 class HelloResult(BaseModel):
     message: str
 
 
-class DemoModelPort:
-    async def complete(self, request: ModelRequest[OutputT]) -> ModelResult[OutputT]:
-        output = request.output_schema.model_validate(
-            {"message": "Hello from Artana!"}
-        )
-        return ModelResult(
-            output=output,
-            usage=ModelUsage(prompt_tokens=5, completion_tokens=5, cost_usd=0.0),
-        )
-
-
 async def main():
     kernel = ArtanaKernel(
         store=SQLiteStore("step1.db"),
-        model_port=DemoModelPort(),
+        model_port=MockModelPort(output={"message": "Hello from Artana!"}),
     )
 
     tenant = TenantContext(
@@ -73,7 +67,7 @@ async def main():
         budget_usd_limit=1.0,
     )
 
-    client = SingleStepModelClient(kernel=kernel)
+    client = SingleStepModelClient(kernel)
 
     result = await client.step(
         run_id="hello_run",
@@ -81,8 +75,6 @@ async def main():
         model="demo-model",
         prompt="Say hello",
         output_schema=HelloResult,
-        model_options=ModelCallOptions(api_mode="auto"),
-        step_key="hello_step",  # 🔑 required for replay safety
     )
 
     print(result.output)
@@ -92,9 +84,25 @@ async def main():
 asyncio.run(main())
 ```
 
-🔑 **Important:**
-`step_key` ensures deterministic replay.
-Never reuse a step_key for different logic.
+Recommended deterministic style:
+
+```python
+from artana import StepKey
+
+step = StepKey(namespace="chapter1_step1")
+result = await client.step(
+    run_id="hello_run",
+    tenant=tenant,
+    model="demo-model",
+    prompt="Say hello",
+    output_schema=HelloResult,
+    step_key=step.next("model"),
+)
+```
+
+🔑 **Important:** use explicit `step_key` for stable workflow-style orchestration and drift policies.
+Use `StepKey(namespace=...)` when generating keys across loops.
+If you omit `step_key` in `KernelModelClient` / `SingleStepModelClient`, Artana generates a deterministic step key for high-level ergonomics.
 
 `api_mode="auto"` is the normal model flow. Artana uses Responses when supported and falls back to chat-completions when needed.
 
@@ -148,7 +156,7 @@ async def main():
         model_port=DemoModelPort(),
     )
 
-    @kernel.tool()
+    @kernel.tool(side_effect=True)
     async def transfer_money(
         amount: int,
         to_user: str,
@@ -193,15 +201,21 @@ If the process crashes, you resume safely.
 
 ```python
 import asyncio
-from artana.kernel import ArtanaKernel, WorkflowContext, json_step_serde
-from artana.models import TenantContext
-from artana.store import SQLiteStore
+
+from artana import (
+    ArtanaKernel,
+    MockModelPort,
+    SQLiteStore,
+    TenantContext,
+    WorkflowContext,
+    json_step_serde,
+)
 
 
 async def main():
     kernel = ArtanaKernel(
         store=SQLiteStore("workflow.db"),
-        model_port=None,  # not needed here
+        model_port=MockModelPort(output={"message": "unused"}),
     )
 
     tenant = TenantContext(
@@ -310,10 +324,15 @@ They enforce:
 
 ```python
 import asyncio
-from artana.harness import IncrementalTaskHarness, TaskUnit
-from artana.kernel import ArtanaKernel
-from artana.models import TenantContext
-from artana.store import SQLiteStore
+
+from artana import (
+    ArtanaKernel,
+    IncrementalTaskHarness,
+    MockModelPort,
+    SQLiteStore,
+    TaskUnit,
+    TenantContext,
+)
 
 
 class ResearchHarness(IncrementalTaskHarness):
@@ -332,7 +351,7 @@ class ResearchHarness(IncrementalTaskHarness):
 async def main():
     kernel = ArtanaKernel(
         store=SQLiteStore("harness.db"),
-        model_port=None,
+        model_port=MockModelPort(output={"message": "unused"}),
     )
 
     tenant = TenantContext(
@@ -401,6 +420,30 @@ result = await supervisor.run(run_id="supervisor_run")
 
 ---
 
+# ⚖️ Step 8 — Draft vs Verify Model Calls
+
+Harness helpers support two-model loops without changing kernel semantics.
+
+Snippet (in-context, not standalone):
+
+```pycon
+draft = await harness.run_draft_model(
+    prompt="Brainstorm implementation options",
+    output_schema=Decision,
+    model_options=ModelCallOptions(api_mode="auto", reasoning_effort="low"),
+)
+
+verify = await harness.run_verify_model(
+    prompt="Check correctness and edge cases",
+    output_schema=Decision,
+    model_options=ModelCallOptions(api_mode="responses", reasoning_effort="high"),
+)
+```
+
+Use `run_draft_model` for low-cost exploration and `run_verify_model` for final checks.
+
+---
+
 # 🏁 Final Mental Model
 
 | Layer           | Purpose                            |
@@ -419,5 +462,15 @@ result = await supervisor.run(run_id="supervisor_run")
 * Harness enforces discipline
 * Replay modes allow evolution
 * Artifacts store structured continuity
+
+## You Should Now Be Able To
+
+- Run a complete local-first Artana flow without external model dependencies.
+- Decide when to rely on auto-generated step keys vs explicit `StepKey` control.
+- Build first durable tool, workflow, agent, and harness executions on the same kernel.
+
+## Next Chapter
+
+Continue to [Chapter 2: Scaling Up](./Chapter2.md) to learn durable harness progression, supervisor orchestration, and production discipline.
 
  

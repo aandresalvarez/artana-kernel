@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from decimal import Decimal
 from pathlib import Path
 
+from _live_example_utils import (
+    friendly_exit,
+    print_example_header,
+    print_summary,
+    require_openai_api_key,
+    resolve_model,
+)
 from pydantic import BaseModel
 
 from artana import ArtanaKernel, KernelModelClient, KernelPolicy, TenantContext
@@ -83,8 +89,12 @@ def _latest_tool_completion_payload(
 
 
 async def main() -> None:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is required. Load environment variables first.")
+    require_openai_api_key(script_name="golden_example.py")
+    model_name = resolve_model(env_var="ARTANA_MODEL", default="gpt-4o-mini")
+    print_example_header(
+        title="Golden Example (Production-Leaning)",
+        models={"primary": model_name},
+    )
 
     database_path = Path("examples/.state_golden_example.db")
     if database_path.exists():
@@ -113,7 +123,7 @@ async def main() -> None:
     )
     tool_attempts = [0]
 
-    @kernel.tool(requires_capability="finance:write")
+    @kernel.tool(requires_capability="finance:write", side_effect=True)
     async def submit_transfer(
         account_id: str,
         amount: Decimal,
@@ -140,7 +150,7 @@ async def main() -> None:
     tool_args = TransferArgs(account_id="acc_1", amount=Decimal("10.00"))
     model_step_key = "decision.v1"
     tool_step_key = "transfer.acc_1.10.v1"
-    chat = KernelModelClient(kernel=kernel)
+    chat = KernelModelClient(kernel)
 
     try:
         run = await kernel.start_run(tenant=tenant)
@@ -161,7 +171,7 @@ async def main() -> None:
         first = await chat.step(
             run_id=run_id,
             prompt=prompt,
-            model="gpt-4o-mini",
+            model=model_name,
             tenant=tenant,
             output_schema=Decision,
             step_key=model_step_key,
@@ -185,7 +195,7 @@ async def main() -> None:
         second = await chat.step(
             run_id=run_id,
             prompt=prompt,
-            model="gpt-4o-mini",
+            model=model_name,
             tenant=tenant,
             output_schema=Decision,
             step_key=model_step_key,
@@ -340,7 +350,17 @@ async def main() -> None:
         if len(events_after_tool_replay) != len(events_after_reconcile):
             raise AssertionError("Tool replay should not append duplicate completion events.")
 
-        print("\n✅ All golden features validated.")
+        print_summary(
+            payload={
+                "run_id": run_id,
+                "model": model_name,
+                "features_validated": 8,
+                "tool_attempts": tool_attempts[0],
+                "event_count": len(events_after_tool_replay),
+                "model_replay": second.replayed,
+                "tool_replay": replayed_tool_result.replayed,
+            }
+        )
     finally:
         await kernel.close()
         if database_path.exists():
@@ -348,4 +368,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as exc:
+        raise friendly_exit(script_name="golden_example.py", error=exc) from exc

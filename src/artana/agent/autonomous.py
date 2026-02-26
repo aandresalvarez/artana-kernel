@@ -6,9 +6,11 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
+from artana.acceptance import AcceptanceSpec, ToolGate
 from artana.agent.compaction import CompactionStrategy, CompactionSummary
 from artana.agent.context import ContextBuilder
 from artana.agent.experience import ExperienceRule, ReflectionResult
+from artana.agent.loop import DraftVerifyLoopConfig
 from artana.agent.memory import InMemoryMemoryStore, MemoryStore
 from artana.agent.model_steps import execute_model_step
 from artana.agent.runtime_tools import RuntimeToolManager, extract_loaded_skill_name
@@ -42,6 +44,11 @@ class _CompactionArtifact(BaseModel):
     window_message_count: int
 
 
+class _AcceptanceVerdict(BaseModel):
+    accepted: bool
+    reasoning: str
+
+
 class AutonomousAgent:
     LOAD_SKILL_NAME = "load_skill"
     CORE_MEMORY_APPEND = "core_memory_append"
@@ -53,9 +60,10 @@ class AutonomousAgent:
 
     def __init__(
         self,
-        *,
         kernel: ArtanaKernel,
+        *,
         context_builder: ContextBuilder | None = None,
+        loop: DraftVerifyLoopConfig | None = None,
         compaction: CompactionStrategy | None = None,
         memory_store: MemoryStore | None = None,
         auto_reflect: bool = False,
@@ -80,6 +88,7 @@ class AutonomousAgent:
 
         self._kernel = kernel
         self._context_builder = context_builder
+        self._loop = loop
         self._compaction = compaction
         self._memory_store = memory_store
         self._auto_reflect = auto_reflect
@@ -109,6 +118,7 @@ class AutonomousAgent:
         prompt: str,
         output_schema: type[OutputT],
         max_iterations: int = 15,
+        acceptance: AcceptanceSpec | None = None,
     ) -> OutputT:
         if max_iterations <= 0:
             raise ValueError("max_iterations must be >= 1.")
@@ -156,14 +166,20 @@ class AutonomousAgent:
                     available_skill_summaries=available_skill_summaries,
                     memory_text=memory_text,
                 )
+                active_turn_model = self._loop.draft_model if self._loop is not None else model
+                model_step_key = (
+                    f"turn_{iteration}_draft"
+                    if self._loop is not None
+                    else f"turn_{iteration}_model"
+                )
                 model_result = await execute_model_step(
                     kernel=self._kernel,
                     run_id=active_run_id,
                     tenant=tenant,
-                    model=model,
+                    model=active_turn_model,
                     messages=context_messages,
                     output_schema=output_schema,
-                    step_key=f"turn_{iteration}_model",
+                    step_key=model_step_key,
                     visible_tool_names=visible_tool_names,
                     replay_policy=self._replay_policy,
                     context_version=self._context_version(system_prompt=system_prompt),
@@ -173,9 +189,10 @@ class AutonomousAgent:
                     run_id=active_run_id,
                     tenant=tenant,
                     summary_type="agent_model_step",
-                    step_key=f"turn_{iteration}_model",
+                    step_key=model_step_key,
                     payload={
                         "iteration": iteration,
+                        "model": active_turn_model,
                         "replayed": model_result.replayed,
                         "replayed_with_drift": model_result.replayed_with_drift,
                         "tool_calls": [
@@ -193,6 +210,39 @@ class AutonomousAgent:
                     ),
                 ) from exc
             if not model_result.tool_calls:
+                if acceptance is not None:
+                    acceptance_passed, acceptance_feedback = await self._evaluate_acceptance_gates(
+                        run_id=active_run_id,
+                        tenant=tenant,
+                        acceptance=acceptance,
+                        iteration=iteration,
+                    )
+                    short_term_messages.append(
+                        ChatMessage(role="user", content=acceptance_feedback)
+                    )
+                    if not acceptance_passed:
+                        continue
+                if self._loop is not None:
+                    verify_passed, verify_reasoning = await self._verify_candidate(
+                        run_id=active_run_id,
+                        tenant=tenant,
+                        verify_model=self._loop.verify_model,
+                        iteration=iteration,
+                        context_messages=context_messages,
+                        candidate_output=model_result.output.model_dump_json(),
+                        system_prompt=system_prompt,
+                    )
+                    if not verify_passed:
+                        short_term_messages.append(
+                            ChatMessage(
+                                role="user",
+                                content=(
+                                    "Verification rejected completion. Revise the solution.\n"
+                                    f"Reason: {verify_reasoning}"
+                                ),
+                            )
+                        )
+                        continue
                 if self._auto_reflect:
                     try:
                         await self._run_reflection(
@@ -261,6 +311,109 @@ class AutonomousAgent:
         raise MaxIterationsExceeded(
             f"Agent exceeded max iterations ({max_iterations}) without reaching an answer."
         )
+
+    async def _evaluate_acceptance_gates(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        acceptance: AcceptanceSpec,
+        iteration: int,
+    ) -> tuple[bool, str]:
+        if len(acceptance.gates) == 0:
+            return True, "Acceptance gates configured: none."
+
+        all_required_passed = True
+        feedback_lines: list[str] = ["Acceptance gate results:"]
+        for index, gate in enumerate(acceptance.gates, start=1):
+            tool_result = await self._kernel.step_tool(
+                run_id=run_id,
+                tenant=tenant,
+                tool_name=gate.tool,
+                arguments=model_from_tool_arguments_json(gate.arguments_json),
+                step_key=f"turn_{iteration}_accept_tool_{index}_{gate.tool}",
+            )
+            gate_passed = _tool_gate_passed(gate=gate, result_json=tool_result.result_json)
+            if gate.must_pass and not gate_passed:
+                all_required_passed = False
+            await self._emit_run_summary(
+                run_id=run_id,
+                tenant=tenant,
+                summary_type="agent_acceptance_gate",
+                step_key=f"turn_{iteration}_accept_tool_{index}_{gate.tool}",
+                payload={
+                    "iteration": iteration,
+                    "tool": gate.tool,
+                    "must_pass": gate.must_pass,
+                    "passed": gate_passed,
+                    "result_json": tool_result.result_json,
+                },
+            )
+            feedback_lines.append(
+                (
+                    f"- {gate.tool}: "
+                    f"{'passed' if gate_passed else 'failed'} "
+                    f"(must_pass={gate.must_pass})"
+                )
+            )
+
+        if all_required_passed:
+            feedback_lines.append("All required acceptance gates passed.")
+        else:
+            feedback_lines.append("One or more required acceptance gates failed.")
+        return all_required_passed, "\n".join(feedback_lines)
+
+    async def _verify_candidate(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        verify_model: str,
+        iteration: int,
+        context_messages: tuple[ChatMessage, ...],
+        candidate_output: str,
+        system_prompt: str,
+    ) -> tuple[bool, str]:
+        verification_messages = (
+            *context_messages,
+            ChatMessage(
+                role="assistant",
+                content=f"Candidate final structured output:\n{candidate_output}",
+            ),
+            ChatMessage(
+                role="user",
+                content=(
+                    "Verify whether this candidate output should be accepted. "
+                    "Return strict JSON with fields {accepted:boolean, reasoning:string}."
+                ),
+            ),
+        )
+        verdict = await execute_model_step(
+            kernel=self._kernel,
+            run_id=run_id,
+            tenant=tenant,
+            model=verify_model,
+            messages=verification_messages,
+            output_schema=_AcceptanceVerdict,
+            step_key=f"turn_{iteration}_verify",
+            visible_tool_names=set(),
+            replay_policy=self._replay_policy,
+            context_version=self._context_version(system_prompt=system_prompt),
+        )
+        await self._emit_run_summary(
+            run_id=run_id,
+            tenant=tenant,
+            summary_type="agent_verify_step",
+            step_key=f"turn_{iteration}_verify",
+            payload={
+                "iteration": iteration,
+                "model": verify_model,
+                "accepted": verdict.output.accepted,
+                "reasoning": verdict.output.reasoning,
+                "replayed": verdict.replayed,
+            },
+        )
+        return verdict.output.accepted, verdict.output.reasoning
 
     async def _run_reflection(
         self,
@@ -550,6 +703,50 @@ def _require_tool_call_id(tool_call: ToolCall) -> str:
             "Tool protocol requires a stable tool_call_id for each call."
         )
     return tool_call.tool_call_id
+
+
+def _tool_gate_passed(*, gate: ToolGate, result_json: str) -> bool:
+    if gate.pass_json_path is not None:
+        try:
+            parsed = json.loads(result_json)
+            expected: object = True
+            if gate.pass_if_equals_json is not None:
+                expected = json.loads(gate.pass_if_equals_json)
+        except json.JSONDecodeError:
+            return False
+        value = _resolve_json_path(parsed, gate.pass_json_path)
+        return value == expected
+
+    try:
+        parsed_result = json.loads(result_json)
+    except json.JSONDecodeError:
+        return False
+    if isinstance(parsed_result, bool):
+        return parsed_result
+    if not isinstance(parsed_result, dict):
+        return False
+    for field_name in ("passed", "pass", "ok", "success"):
+        value = parsed_result.get(field_name)
+        if isinstance(value, bool):
+            return value
+    status = parsed_result.get("status")
+    if isinstance(status, str):
+        return status.lower() in {"passed", "success", "ok"}
+    exit_code = parsed_result.get("exit_code")
+    if isinstance(exit_code, int):
+        return exit_code == 0
+    return False
+
+
+def _resolve_json_path(value: object, path: str) -> object | None:
+    if path == "":
+        return None
+    current = value
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
 
 
 def _to_assistant_tool_calls(tool_calls: tuple[ToolCall, ...]) -> list[ToolCallMessage]:

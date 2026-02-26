@@ -9,6 +9,7 @@ from artana.agent.experience import (
     RuleType,
     SQLiteExperienceStore,
 )
+from artana.agent.loop import DraftVerifyLoopConfig
 from artana.agent.memory import InMemoryMemoryStore, MemoryStore, SQLiteMemoryStore
 from artana.agent.subagents import SubAgentFactory
 
@@ -17,6 +18,7 @@ __all__ = [
     "AgentRunFailed",
     "CompactionStrategy",
     "ContextBuilder",
+    "DraftVerifyLoopConfig",
     "ExperienceRule",
     "ExperienceStore",
     "InMemoryMemoryStore",

@@ -1,8 +1,10 @@
+from artana.acceptance import AcceptanceSpec, ToolGate
 from artana.agent import (
     AgentRunFailed,
     AutonomousAgent,
     CompactionStrategy,
     ContextBuilder,
+    DraftVerifyLoopConfig,
     ExperienceRule,
     ExperienceStore,
     KernelModelClient,
@@ -17,6 +19,9 @@ from artana.agent.memory import InMemoryMemoryStore, MemoryStore, SQLiteMemorySt
 from artana.agent_runtime import AgentRuntime, AgentRuntimeResult, AgentRuntimeState
 from artana.harness import (
     BaseHarness,
+    DraftReviewVerifyResult,
+    DraftReviewVerifySupervisor,
+    ExecuteTestArgs,
     HarnessContext,
     HarnessStateError,
     IncrementalTaskHarness,
@@ -25,6 +30,8 @@ from artana.harness import (
     TaskProgressSnapshot,
     TaskProgressValidationError,
     TaskUnit,
+    TestAdjudication,
+    TestDrivenHarness,
 )
 from artana.kernel import (
     ApprovalRequiredError,
@@ -65,23 +72,32 @@ from artana.safety import (
     ToolSafetyPolicy,
 )
 from artana.store import PostgresStore, SQLiteStore
+from artana.testing import MockModelPort
+from artana.tools import CodingHarnessTools, ObservabilityTools
+from artana.util import StepKey
 
 __all__ = [
     "ArtanaKernel",
     "AgentRuntime",
     "AutonomousAgent",
     "AgentRunFailed",
+    "AcceptanceSpec",
     "AgentRuntimeResult",
     "AgentRuntimeState",
     "ContextVersion",
     "ApprovalRequiredError",
+    "CodingHarnessTools",
     "KernelModelClient",
     "CompactionStrategy",
     "ContextBuilder",
+    "DraftVerifyLoopConfig",
+    "ExecuteTestArgs",
     "ExperienceRule",
     "ExperienceStore",
     "JsonValue",
     "BaseHarness",
+    "DraftReviewVerifyResult",
+    "DraftReviewVerifySupervisor",
     "HarnessContext",
     "HarnessStateError",
     "IncrementalTaskHarness",
@@ -113,22 +129,28 @@ __all__ = [
     "StepModelResult",
     "StepToolResult",
     "StepSerde",
+    "StepKey",
     "TaskProgressSnapshot",
     "TaskProgressValidationError",
     "TaskUnit",
+    "TestAdjudication",
+    "TestDrivenHarness",
     "TenantContext",
     "ModelCallOptions",
     "ToolFingerprint",
+    "ToolGate",
     "SafetyPolicyConfig",
     "ToolSafetyPolicy",
     "IntentRequirement",
     "IntentPlanRecord",
     "SemanticIdempotencyRequirement",
     "ToolLimitPolicy",
+    "ObservabilityTools",
     "ApprovalGatePolicy",
     "InvariantRule",
     "WorkflowContext",
     "WorkflowRunResult",
     "json_step_serde",
     "pydantic_step_serde",
+    "MockModelPort",
 ]

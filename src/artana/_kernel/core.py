@@ -587,6 +587,28 @@ class ArtanaKernel:
             middleware_allowed_tools=prepared_invocation.allowed_tools,
         )
 
+    async def describe_capabilities(
+        self,
+        *,
+        tenant: TenantContext,
+        visible_tool_names: set[str] | None = None,
+    ) -> dict[str, object]:
+        return await self.explain_tool_allowlist(
+            tenant=tenant,
+            visible_tool_names=visible_tool_names,
+        )
+
+    def list_tools_for_tenant(
+        self,
+        *,
+        tenant: TenantContext,
+        visible_tool_names: set[str] | None = None,
+    ) -> tuple[ToolDefinition, ...]:
+        return self.list_tools(
+            tenant_capabilities=tenant.capabilities,
+            visible_tool_names=visible_tool_names,
+        )
+
     async def stream_events(
         self,
         *,
@@ -726,6 +748,7 @@ class ArtanaKernel:
         self,
         *,
         requires_capability: str | None = None,
+        side_effect: bool = False,
         tool_version: str = "1.0.0",
         schema_version: str = "1",
         risk_level: ToolRiskLevel = "medium",
@@ -735,6 +758,7 @@ class ArtanaKernel:
             self._tool_port.register(
                 function=function,
                 requires_capability=requires_capability,
+                side_effect=side_effect,
                 tool_version=tool_version,
                 schema_version=schema_version,
                 risk_level=risk_level,
