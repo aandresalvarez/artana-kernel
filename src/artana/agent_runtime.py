@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from artana.events import ChatMessage
 from artana.kernel import ArtanaKernel, ModelInput, StepModelResult
 from artana.models import TenantContext
+from artana.ports.model import ModelCallOptions
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
@@ -41,6 +42,7 @@ class AgentRuntime:
         output_schema: type[OutputT],
         state: AgentRuntimeState,
         step_key: str | None = None,
+        model_options: ModelCallOptions | None = None,
     ) -> AgentRuntimeResult[OutputT]:
         if len(state.messages) == 0:
             raise ValueError("AgentRuntimeState.messages cannot be empty.")
@@ -55,6 +57,7 @@ class AgentRuntime:
             input=ModelInput.from_messages(state.messages),
             output_schema=output_schema,
             step_key=turn_key,
+            model_options=model_options,
         )
         assistant_message = ChatMessage(
             role="assistant",
@@ -77,6 +80,7 @@ class AgentRuntime:
         should_continue: Callable[[AgentRuntimeResult[OutputT]], bool],
         max_turns: int = 4,
         step_key_prefix: str = "agent_turn",
+        model_options: ModelCallOptions | None = None,
     ) -> AgentRuntimeResult[OutputT]:
         if max_turns <= 0:
             raise ValueError("max_turns must be >= 1.")
@@ -91,6 +95,7 @@ class AgentRuntime:
                 output_schema=output_schema,
                 state=current_state,
                 step_key=f"{step_key_prefix}_{current_state.turn_index}",
+                model_options=model_options,
             )
             last_result = result
             current_state = result.state

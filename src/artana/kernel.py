@@ -30,10 +30,12 @@ from artana._kernel.workflow_runtime import (
     json_step_serde,
     pydantic_step_serde,
 )
+from artana.ports.model import ModelCallOptions
 
 __all__ = [
     "ArtanaKernel",
     "ContextVersion",
+    "ModelCallOptions",
     "ApprovalRequiredError",
     "CapabilityDeniedError",
     "KernelPolicy",

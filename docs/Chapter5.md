@@ -10,8 +10,10 @@ This chapter demonstrates:
 * Deployment topology
 * Production safety checklist
 
-Most blocks in this chapter are composable deployment snippets for existing
-worker/orchestrator contexts, not standalone scripts.
+Code block contract for this chapter:
+
+* `pycon` blocks are in-context snippets for existing worker/orchestrator contexts.
+* Runnable end-to-end scripts live in `examples/` and are listed in `examples/README.md`.
 
 ---
 
@@ -21,7 +23,7 @@ In Artana, tenants are explicit.
 
 Every run is tied to:
 
-```python
+```pycon
 TenantContext(
     tenant_id="tenant_name",
     capabilities=frozenset({...}),
@@ -31,7 +33,7 @@ TenantContext(
 
 Example:
 
-```python
+```pycon
 from artana.kernel import ArtanaKernel
 from artana.models import TenantContext
 from artana.store import SQLiteStore
@@ -81,13 +83,13 @@ This enables horizontal scaling.
 
 Each worker process:
 
-```python
+```pycon
 from artana import ArtanaKernel, KernelPolicy, PostgresStore
 from artana.ports.model_adapter import LiteLLMAdapter
 
 kernel = ArtanaKernel(
     store=PostgresStore("postgresql://user:pass@db:5432/artana"),  # shared DB
-    model_port=LiteLLMAdapter(...),
+    model_port=LiteLLMAdapter(...),  # model calls default to ModelCallOptions(api_mode="auto")
     middleware=ArtanaKernel.default_middleware_stack(),
     policy=KernelPolicy.enforced(),
 )
@@ -102,13 +104,15 @@ Workers can:
 
 No in-memory coordination required.
 
+`api_mode="auto"` is the normal production flow: workers use Responses when supported and automatically fall back to chat-completions when a provider/model does not support Responses.
+
 ---
 
 # 🔁 Step 3 — Queue + Worker Architecture
 
 Example using a simple async queue:
 
-```python
+```pycon
 import asyncio
 
 task_queue = asyncio.Queue()
@@ -152,13 +156,13 @@ This enables:
 
 If a worker crashes mid-task:
 
-```python
+```pycon
 await harness.run("migration_run")
 ```
 
 On restart:
 
-```python
+```pycon
 await harness.run("migration_run")
 ```
 
@@ -177,7 +181,7 @@ Recovery is deterministic.
 
 `PostgresStore` is implemented in the Artana library and can be used directly:
 
-```python
+```pycon
 from artana.store import PostgresStore
 
 store = PostgresStore(
@@ -253,7 +257,7 @@ If incompatible change:
 
 Use:
 
-```python
+```pycon
 replay_policy="fork_on_drift"
 ```
 
@@ -320,7 +324,7 @@ Optional:
 
 Minimal production instantiation:
 
-```python
+```pycon
 from artana import ArtanaKernel, KernelPolicy
 from artana.middleware import SafetyPolicyMiddleware
 from artana.ports.model_adapter import LiteLLMAdapter
@@ -331,7 +335,7 @@ safety = SafetyPolicyMiddleware(config=SafetyPolicyConfig(tools={...}))
 
 kernel = ArtanaKernel(
     store=PostgresStore("postgresql://..."),
-    model_port=LiteLLMAdapter(...),
+    model_port=LiteLLMAdapter(...),  # auto Responses routing by default
     middleware=ArtanaKernel.default_middleware_stack(safety=safety),
     policy=KernelPolicy.enforced_v2(),
 )
@@ -339,7 +343,7 @@ kernel = ArtanaKernel(
 
 Workers:
 
-```python
+```pycon
 harness = MyHarness(kernel=kernel, tenant=tenant)
 await harness.run(run_id)
 ```

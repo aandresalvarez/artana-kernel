@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from artana.events import ChatMessage, ToolCallMessage, ToolFunctionCall
 from artana.ports.model import (
     LiteLLMAdapter,
+    ModelCallOptions,
     ModelPermanentError,
     ModelRequest,
     ModelTimeoutError,
@@ -31,6 +32,12 @@ class _TransientLiteLLMError(Exception):
 class _PermanentLiteLLMError(Exception):
     def __init__(self, status_code: int) -> None:
         super().__init__(f"permanent status {status_code}")
+        self.status_code = status_code
+
+
+class _ResponsesUnsupportedLiteLLMError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__("unsupported endpoint: /v1/responses")
         self.status_code = status_code
 
 
@@ -411,3 +418,237 @@ async def test_litellm_adapter_raises_on_malformed_tool_call_arguments() -> None
 
     with pytest.raises(ValueError, match="malformed arguments JSON"):
         await adapter.complete(request)
+
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_auto_uses_responses_for_supported_prefix() -> None:
+    captured: list[dict[str, object]] = []
+
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        raise AssertionError("chat completion should not be used for openai/ in auto mode")
+
+    async def responses_fn(
+        *,
+        input: str | list[dict[str, object]],
+        model: str,
+        previous_response_id: str | None = None,
+        reasoning: dict[str, object] | None = None,
+        text: dict[str, object] | None = None,
+        text_format: type[BaseModel] | dict[str, object] | None = None,
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        captured.append(
+            {
+                "input": input,
+                "model": model,
+                "previous_response_id": previous_response_id,
+                "reasoning": reasoning,
+                "text": text,
+                "text_format": text_format,
+                "tools": tools,
+            }
+        )
+        return {
+            "id": "resp_123",
+            "output_text": '{"approved": true, "reason": "ok"}',
+            "output": [],
+            "usage": {"input_tokens": 5, "output_tokens": 3},
+            "_response_cost": 0.002,
+        }
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        responses_fn=responses_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_responses_auto",
+        model="openai/gpt-5.3-codex",
+        prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
+        output_schema=Decision,
+        allowed_tools=(),
+        model_options=ModelCallOptions(
+            api_mode="auto",
+            reasoning_effort="high",
+            verbosity="low",
+            previous_response_id="resp_prev",
+        ),
+    )
+
+    result = await adapter.complete(request)
+    assert result.output.approved is True
+    assert result.api_mode_used == "responses"
+    assert result.response_id == "resp_123"
+    assert len(captured) == 1
+    assert captured[0]["previous_response_id"] == "resp_prev"
+    assert captured[0]["reasoning"] == {"effort": "high"}
+    assert captured[0]["text"] == {"verbosity": "low"}
+
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_auto_falls_back_to_chat_on_responses_unsupported() -> None:
+    chat_calls = 0
+    responses_calls = 0
+
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        nonlocal chat_calls
+        chat_calls += 1
+        return {
+            "choices": [{"message": {"content": '{"approved": true, "reason": "chat"}'}}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            "_response_cost": 0.001,
+        }
+
+    async def responses_fn(
+        *,
+        input: str | list[dict[str, object]],
+        model: str,
+        previous_response_id: str | None = None,
+        reasoning: dict[str, object] | None = None,
+        text: dict[str, object] | None = None,
+        text_format: type[BaseModel] | dict[str, object] | None = None,
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        nonlocal responses_calls
+        responses_calls += 1
+        raise _ResponsesUnsupportedLiteLLMError(status_code=404)
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        responses_fn=responses_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_responses_fallback",
+        model="openai/gpt-5.3-codex",
+        prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
+        output_schema=Decision,
+        allowed_tools=(),
+        model_options=ModelCallOptions(api_mode="auto"),
+    )
+
+    result = await adapter.complete(request)
+    assert result.api_mode_used == "chat"
+    assert result.output.reason == "chat"
+    assert responses_calls == 1
+    assert chat_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_responses_mode_is_strict_on_unsupported() -> None:
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        raise AssertionError("chat completion should not run in strict responses mode")
+
+    async def responses_fn(
+        *,
+        input: str | list[dict[str, object]],
+        model: str,
+        previous_response_id: str | None = None,
+        reasoning: dict[str, object] | None = None,
+        text: dict[str, object] | None = None,
+        text_format: type[BaseModel] | dict[str, object] | None = None,
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        raise _ResponsesUnsupportedLiteLLMError(status_code=404)
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        responses_fn=responses_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_responses_strict",
+        model="openai/gpt-5.3-codex",
+        prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
+        output_schema=Decision,
+        allowed_tools=(),
+        model_options=ModelCallOptions(api_mode="responses"),
+    )
+
+    with pytest.raises(ModelPermanentError, match="responses unsupported"):
+        await adapter.complete(request)
+
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_extracts_tool_calls_from_responses_output_items() -> None:
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        raise AssertionError("chat completion should not run for this test")
+
+    async def responses_fn(
+        *,
+        input: str | list[dict[str, object]],
+        model: str,
+        previous_response_id: str | None = None,
+        reasoning: dict[str, object] | None = None,
+        text: dict[str, object] | None = None,
+        text_format: type[BaseModel] | dict[str, object] | None = None,
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        return {
+            "id": "resp_tool_1",
+            "output_text": '{"approved": false, "reason": "needs tool"}',
+            "output": [
+                {
+                    "type": "function_call",
+                    "name": "lookup_weather",
+                    "arguments": '{"city":"SF"}',
+                    "call_id": "call_resp_1",
+                }
+            ],
+            "usage": {"input_tokens": 3, "output_tokens": 2},
+            "_response_cost": 0.001,
+        }
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        responses_fn=responses_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_responses_tool_call",
+        model="openai/gpt-5.3-codex",
+        prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
+        output_schema=Decision,
+        allowed_tools=(),
+        model_options=ModelCallOptions(api_mode="responses"),
+    )
+
+    result = await adapter.complete(request)
+    assert result.api_mode_used == "responses"
+    assert result.response_id == "resp_tool_1"
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].tool_name == "lookup_weather"
+    assert result.tool_calls[0].tool_call_id == "call_resp_1"
+    assert len(result.response_output_items) == 1

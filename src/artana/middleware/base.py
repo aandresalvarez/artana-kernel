@@ -5,7 +5,7 @@ from typing import Protocol
 
 from artana.events import ChatMessage
 from artana.models import TenantContext
-from artana.ports.model import ModelUsage, ToolDefinition
+from artana.ports.model import ModelCallOptions, ModelUsage, ToolDefinition
 
 
 class BudgetExceededError(RuntimeError):
@@ -42,6 +42,7 @@ class ModelInvocation:
     model: str
     prompt: str
     messages: tuple[ChatMessage, ...]
+    model_options: ModelCallOptions
     allowed_tools: tuple[ToolDefinition, ...]
     tool_capability_by_name: dict[str, str | None]
 
@@ -50,12 +51,16 @@ class ModelInvocation:
         *,
         prompt: str | None = None,
         messages: tuple[ChatMessage, ...] | None = None,
+        model_options: ModelCallOptions | None = None,
         allowed_tools: tuple[ToolDefinition, ...] | None = None,
     ) -> "ModelInvocation":
         return replace(
             self,
             prompt=self.prompt if prompt is None else prompt,
             messages=self.messages if messages is None else messages,
+            model_options=(
+                self.model_options if model_options is None else model_options
+            ),
             allowed_tools=self.allowed_tools if allowed_tools is None else allowed_tools,
         )
 

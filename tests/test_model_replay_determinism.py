@@ -10,7 +10,7 @@ from artana import KernelModelClient
 from artana.events import ModelRequestedPayload, compute_allowed_tools_hash
 from artana.kernel import ArtanaKernel, ReplayConsistencyError
 from artana.models import TenantContext
-from artana.ports.model import ModelRequest, ModelResult, ModelUsage
+from artana.ports.model import ModelCallOptions, ModelRequest, ModelResult, ModelUsage
 from artana.store import SQLiteStore
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
@@ -169,6 +169,47 @@ async def test_model_replay_rejects_tool_set_changes(tmp_path: Path) -> None:
                 model="gpt-4o-mini",
                 tenant=tenant,
                 output_schema=Decision,
+            )
+        assert second_model.calls == 0
+    finally:
+        await second_kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_model_replay_rejects_model_option_changes(tmp_path: Path) -> None:
+    database_path = tmp_path / "state.db"
+    tenant = _tenant()
+
+    first_store = SQLiteStore(str(database_path))
+    first_model = CountingModelPort()
+    first_kernel = ArtanaKernel(store=first_store, model_port=first_model)
+    try:
+        await KernelModelClient(kernel=first_kernel).step(
+            run_id="run_model_option_change",
+            prompt="check options",
+            model="openai/gpt-5.3-codex",
+            tenant=tenant,
+            output_schema=Decision,
+            step_key="options_step",
+            model_options=ModelCallOptions(api_mode="responses", verbosity="low"),
+        )
+        assert first_model.calls == 1
+    finally:
+        await first_kernel.close()
+
+    second_store = SQLiteStore(str(database_path))
+    second_model = CountingModelPort()
+    second_kernel = ArtanaKernel(store=second_store, model_port=second_model)
+    try:
+        with pytest.raises(ReplayConsistencyError, match="changed model inputs/options"):
+            await KernelModelClient(kernel=second_kernel).step(
+                run_id="run_model_option_change",
+                prompt="check options",
+                model="openai/gpt-5.3-codex",
+                tenant=tenant,
+                output_schema=Decision,
+                step_key="options_step",
+                model_options=ModelCallOptions(api_mode="responses", verbosity="high"),
             )
         assert second_model.calls == 0
     finally:

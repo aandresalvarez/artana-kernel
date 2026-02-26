@@ -109,3 +109,18 @@ Run:
 ```bash
 uv run python examples/07_adaptive_agent_learning.py
 ```
+
+## 08 - Responses Mode (OpenAI Responses API)
+
+Demonstrates Responses-native model calls through Artana:
+- `ModelCallOptions(api_mode="responses")`
+- reasoning and verbosity options
+- `previous_response_id` chaining across turns
+- surfaced `api_mode_used`, `response_id`, and response metadata
+
+Run:
+
+```bash
+set -a; source .env; set +a
+uv run python examples/08_responses_mode.py
+```

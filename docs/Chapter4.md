@@ -12,8 +12,10 @@ This chapter demonstrates:
 * External orchestrator integration
 * Ledger observability at scale
 
-Standalone scripts in this chapter are runnable. Short snippet blocks are
-in-context references and may require surrounding setup.
+Code block contract for this chapter:
+
+* `python` blocks are standalone runnable scripts.
+* `pycon` blocks are in-context snippets and may require surrounding setup.
 
 ---
 
@@ -128,7 +130,13 @@ from pydantic import BaseModel
 from artana.events import ChatMessage
 from artana.kernel import ArtanaKernel, ModelInput
 from artana.models import TenantContext
-from artana.ports.model import ModelRequest, ModelResult, ModelUsage, ToolCall
+from artana.ports.model import (
+    ModelCallOptions,
+    ModelRequest,
+    ModelResult,
+    ModelUsage,
+    ToolCall,
+)
 from artana.store import SQLiteStore
 
 
@@ -191,6 +199,7 @@ async def main():
             transcript + [ChatMessage(role="user", content="Store this idea")]
         ),
         output_schema=DebateResponse,
+        model_options=ModelCallOptions(api_mode="auto"),
         step_key="turn_1",
     )
 
@@ -210,6 +219,8 @@ async def main():
 asyncio.run(main())
 ```
 
+`ModelCallOptions(api_mode="auto")` is the standard baseline for model calls in kernel loops.
+
 Use this pattern when:
 
 * Building custom reasoning loops
@@ -224,19 +235,25 @@ Long-lived systems evolve.
 
 Artana supports controlled run forking.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
+from artana.kernel import ModelInput
+from artana.ports.model import ModelCallOptions
+
 result = await kernel.step_model(
     run_id="long_run",
     tenant=tenant,
     model="demo-model",
     input=ModelInput.from_prompt("New improved prompt"),
     output_schema=Decision,
+    model_options=ModelCallOptions(api_mode="auto", verbosity="medium"),
     step_key="analysis_step",
     replay_policy="fork_on_drift",
 )
 ```
 
-If prompt changes:
+If model inputs/options change:
 
 * Original run remains immutable
 * New forked run is created
@@ -328,7 +345,12 @@ from pydantic import BaseModel
 
 from artana.kernel import ArtanaKernel, ModelInput
 from artana.models import TenantContext
-from artana.ports.model import ModelRequest, ModelResult, ModelUsage
+from artana.ports.model import (
+    ModelCallOptions,
+    ModelRequest,
+    ModelResult,
+    ModelUsage,
+)
 from artana.store import SQLiteStore
 
 
@@ -364,6 +386,7 @@ async def generate_report(workflow_id: str, account_id: str) -> str:
         model="demo-model",
         input=ModelInput.from_prompt(f"Generate report for {account_id}"),
         output_schema=Report,
+        model_options=ModelCallOptions(api_mode="auto"),
         step_key="report_step",
     )
 
@@ -389,7 +412,9 @@ Artana manages durable execution and replay.
 
 Artana’s event store is a queryable audit log.
 
-```python
+Snippet (in-context, not standalone; assumes an existing SQLite event DB):
+
+```pycon
 import sqlite3
 
 connection = sqlite3.connect("chapter4_step1.db")

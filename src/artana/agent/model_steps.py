@@ -13,6 +13,7 @@ from artana.kernel import (
     StepModelResult,
 )
 from artana.models import TenantContext
+from artana.ports.model import ModelCallOptions
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
@@ -27,6 +28,7 @@ async def execute_model_step(
     output_schema: type[OutputT],
     step_key: str,
     visible_tool_names: set[str] | None,
+    model_options: ModelCallOptions | None = None,
     replay_policy: ReplayPolicy = "strict",
     context_version: ContextVersion | None = None,
     parent_step_key: str | None = None,
@@ -38,6 +40,7 @@ async def execute_model_step(
         input=ModelInput.from_messages(messages),
         output_schema=output_schema,
         visible_tool_names=visible_tool_names,
+        model_options=model_options,
         step_key=step_key,
         replay_policy=replay_policy,
         context_version=context_version,

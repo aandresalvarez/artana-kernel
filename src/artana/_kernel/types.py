@@ -8,7 +8,7 @@ from typing import Generic, Literal, TypeVar
 from pydantic import BaseModel
 
 from artana.events import ChatMessage
-from artana.ports.model import ModelUsage, ToolCall
+from artana.ports.model import ModelAPIModeUsed, ModelUsage, ToolCall
 from artana.ports.tool import ToolReturnValue
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -168,6 +168,9 @@ class StepModelResult(Generic[OutputT]):
     usage: ModelUsage
     tool_calls: tuple[ToolCall, ...]
     replayed: bool
+    api_mode_used: ModelAPIModeUsed = "chat"
+    response_id: str | None = None
+    response_output_items: tuple[dict[str, object], ...] = ()
     replayed_with_drift: bool = False
     forked_from_run_id: str | None = None
     drift_fields: tuple[str, ...] = ()

@@ -66,7 +66,8 @@ from artana.middleware.pii_scrubber import PIIScrubberMiddleware
 from artana.middleware.quota import QuotaMiddleware
 from artana.middleware.safety_policy import SafetyPolicyMiddleware
 from artana.models import TenantContext
-from artana.ports.model import ModelPort, ToolDefinition
+from artana.ports.model import ModelCallOptions, ModelPort, ToolDefinition
+from artana.ports.model_adapter_helpers import serialize_messages_for_responses
 from artana.ports.tool import LocalToolRegistry, ToolPort, ToolRiskLevel
 from artana.safety import IntentPlanRecord
 from artana.store.base import (
@@ -568,6 +569,7 @@ class ArtanaKernel:
             model=model,
             prompt=resolved_prompt,
             messages=resolved_messages,
+            model_options=ModelCallOptions(),
             allowed_tools=all_tools,
             tool_capability_by_name=capability_map,
         )
@@ -786,6 +788,7 @@ class ArtanaKernel:
         input: ModelInput,
         output_schema: type[OutputT],
         visible_tool_names: set[str] | None,
+        model_options: ModelCallOptions | None = None,
         step_key: str | None = None,
         replay_policy: ReplayPolicy = "strict",
         context_version: ContextVersion | None = None,
@@ -799,6 +802,7 @@ class ArtanaKernel:
             output_schema=output_schema,
             step_key=step_key,
             visible_tool_names=visible_tool_names,
+            model_options=model_options,
             replay_policy=replay_policy,
             context_version=context_version,
             parent_step_key=parent_step_key,
@@ -814,6 +818,7 @@ class ArtanaKernel:
         output_schema: type[OutputT],
         step_key: str | None = None,
         visible_tool_names: set[str] | None = None,
+        model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy = "strict",
         context_version: ContextVersion | None = None,
         parent_step_key: str | None = None,
@@ -826,6 +831,7 @@ class ArtanaKernel:
         validate_tenant_for_run(events=events, tenant=tenant)
 
         prompt, messages = _normalize_model_input(input)
+        resolved_model_options = model_options or ModelCallOptions()
         registered_tools = tuple(self._tool_port.to_all_tool_definitions())
         capability_map = self._tool_port.capability_map()
         all_tools = registered_tools
@@ -843,12 +849,21 @@ class ArtanaKernel:
             model=model,
             prompt=prompt,
             messages=messages,
+            model_options=resolved_model_options,
             allowed_tools=all_tools,
             tool_capability_by_name=capability_map,
         )
         prepared_invocation = await apply_prepare_model_middleware(
             self._middleware,
             initial_invocation,
+        )
+        responses_input_items = (
+            serialize_messages_for_responses(
+                prepared_invocation.messages,
+                fallback_prompt=prepared_invocation.prompt,
+            )
+            if prepared_invocation.model_options.api_mode != "chat"
+            else None
         )
         capability_decision_summary = _build_capability_decision_summary(
             tenant=tenant,
@@ -870,6 +885,8 @@ class ArtanaKernel:
                 prompt=prepared_invocation.prompt,
                 messages=prepared_invocation.messages,
                 model=prepared_invocation.model,
+                model_options=prepared_invocation.model_options,
+                responses_input_items=responses_input_items,
                 allowed_tool_signatures=tool_signatures_from_definitions(
                     prepared_invocation.allowed_tools
                 ),
@@ -882,6 +899,8 @@ class ArtanaKernel:
                     step_key=step_key,
                     prompt=prepared_invocation.prompt,
                     messages=prepared_invocation.messages,
+                    model_options=prepared_invocation.model_options,
+                    responses_input_items=responses_input_items,
                 )
                 target_events = await self._ensure_fork_run_exists(
                     run_id=target_run_id,
@@ -922,6 +941,8 @@ class ArtanaKernel:
             output_schema=output_schema,
             tool_definitions=prepared_invocation.allowed_tools,
             events=target_events,
+            model_options=prepared_invocation.model_options,
+            responses_input_items=responses_input_items,
             step_key=step_key,
             parent_step_key=parent_step_key,
             replay_policy=normalized_replay_policy,
@@ -946,6 +967,9 @@ class ArtanaKernel:
             usage=model_result.usage,
             tool_calls=model_result.tool_calls,
             replayed=model_result.replayed,
+            api_mode_used=model_result.api_mode_used,
+            response_id=model_result.response_id,
+            response_output_items=model_result.response_output_items,
             replayed_with_drift=model_result.replayed_with_drift,
             forked_from_run_id=forked_from_run_id,
             drift_fields=drift_fields or model_result.drift_fields,
@@ -1375,11 +1399,29 @@ def _derive_fork_run_id(
     step_key: str | None,
     prompt: str,
     messages: tuple[ChatMessage, ...],
+    model_options: ModelCallOptions,
+    responses_input_items: list[dict[str, object]] | None,
 ) -> str:
     messages_json = canonical_json_dumps(
         [message.model_dump(mode="json") for message in messages]
     )
-    token = f"{model}|{step_key}|{prompt}|{messages_json}"
+    model_options_json = canonical_json_dumps(
+        {
+            "api_mode": model_options.api_mode,
+            "reasoning_effort": model_options.reasoning_effort,
+            "verbosity": model_options.verbosity,
+            "previous_response_id": model_options.previous_response_id,
+        }
+    )
+    responses_items_json = (
+        canonical_json_dumps(responses_input_items)
+        if responses_input_items is not None
+        else "null"
+    )
+    token = (
+        f"{model}|{step_key}|{prompt}|{messages_json}|"
+        f"{model_options_json}|{responses_items_json}"
+    )
     return f"{run_id}::fork::{sha256_hex(token)[:12]}"
 
 

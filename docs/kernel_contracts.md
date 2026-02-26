@@ -8,9 +8,11 @@ validated in CI.
 
 `step_model` and `KernelModelClient.step` support:
 
-- `strict` (default): exact replay requires matching prompt, messages, model, tool signatures, and `step_key`.
-- `allow_prompt_drift`: if prompt/messages drift for the same `(model, step_key, tool signatures)`, replay the prior completion and append `replayed_with_drift`.
+- `strict` (default): exact replay requires matching prompt, messages, model, model options, Responses input items, tool signatures, and `step_key`.
+- `allow_prompt_drift`: if prompt/messages/model options drift for the same `(model, step_key, tool signatures)`, replay the prior completion and append `replayed_with_drift`.
 - `fork_on_drift`: if drift is detected for the same `(model, step_key, tool signatures)`, fork into `run_id::fork::<hash>` and execute there.
+
+`step_key` is required for drift detection semantics. Without a stable `step_key`, strict replay still works for exact repeats but drift workflows are not activated.
 
 ## Kernel Policy Modes
 
@@ -39,6 +41,11 @@ Status semantics:
 
 Each `model_requested` event stores:
 
+- `api_mode` (`auto|responses|chat`)
+- `reasoning_effort` (optional)
+- `verbosity` (optional)
+- `previous_response_id` (optional)
+- `responses_input_items` (optional, canonicalized)
 - `allowed_tools`: sorted tool names
 - `allowed_tool_signatures`: `name + tool_version + schema_version + schema_hash`
 - `allowed_tools_hash`: hash of tool signatures (not just tool names)
@@ -47,7 +54,26 @@ Each `model_requested` event stores:
   - `context_builder_version`
   - `compaction_version`
 
-Replay validates only signature-based hashes/tokens.
+Replay validates tool signatures plus model input identity (prompt/messages/options/Responses items).
+
+## Model Completion Metadata
+
+Each `model_completed` event stores:
+
+- `api_mode_used` (`responses|chat`)
+- `response_id` (optional)
+- `responses_output_items` (full normalized output items)
+- `tool_calls` (canonicalized arguments JSON)
+
+This keeps audit and replay fidelity for both chat-completions and Responses-native providers.
+
+## Model API Mode Defaults
+
+Artana model calls default to `ModelCallOptions(api_mode="auto")`:
+
+- use Responses when supported by provider/model routing
+- fallback to chat-completions when Responses is unsupported
+- use `api_mode="responses"` for strict Responses-only behavior
 
 ## Tool Determinism Invariants
 

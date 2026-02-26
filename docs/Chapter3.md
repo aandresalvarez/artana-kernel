@@ -11,8 +11,10 @@ This chapter focuses on:
 * Adapter portability
 * Ledger integrity
 
-Standalone scripts in this chapter are runnable. Snippet blocks are in-context
-references and may assume existing kernel/store/runtime state.
+Code block contract for this chapter:
+
+* `python` blocks are standalone runnable scripts.
+* `pycon` blocks are in-context snippets and may assume existing kernel/store/runtime state.
 
 ---
 
@@ -123,18 +125,35 @@ In production, prompts evolve.
 
 ReplayPolicy allows safe evolution.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.kernel import ReplayPolicy
+from artana.ports.model import ModelCallOptions
 
 # Strict replay (default safety)
-await kernel.step_model(..., replay_policy="strict")
+await kernel.step_model(
+    ...,
+    model_options=ModelCallOptions(api_mode="auto", verbosity="medium"),
+    replay_policy="strict",
+)
 
 # Allow prompt drift while preserving prior outputs
-await kernel.step_model(..., replay_policy="allow_prompt_drift")
+await kernel.step_model(
+    ...,
+    model_options=ModelCallOptions(api_mode="responses", previous_response_id="resp_prev"),
+    replay_policy="allow_prompt_drift",
+)
 
-# Fork run automatically if prompt changed
-await kernel.step_model(..., replay_policy="fork_on_drift")
+# Fork run automatically if model inputs/options change
+await kernel.step_model(
+    ...,
+    model_options=ModelCallOptions(api_mode="auto"),
+    replay_policy="fork_on_drift",
+)
 ```
+
+Drift matching includes prompt/messages plus model options (api mode, reasoning, verbosity, previous response chain) and Responses input items.
 
 Production guidance:
 
@@ -310,7 +329,9 @@ Deterministic + AI + replay = production-safe orchestration.
 
 Baseline production enforcement:
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.kernel import KernelPolicy
 from artana.middleware import (
     PIIScrubberMiddleware,
@@ -348,7 +369,9 @@ This prevents unsafe deployments.
 
 Progressive skills allow dynamic tool exposure.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.agent import AutonomousAgent
 
 agent = AutonomousAgent(kernel=kernel)
@@ -367,7 +390,9 @@ Production tip:
 
 Every run is verifiable:
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.store import SQLiteStore
 
 events = await kernel.get_events(run_id="migration_run")
@@ -394,7 +419,9 @@ Production uses:
 
 Production swaps store implementation, not business logic.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.store import PostgresStore
 
 store = PostgresStore(

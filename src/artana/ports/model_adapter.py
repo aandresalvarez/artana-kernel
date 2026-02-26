@@ -8,16 +8,25 @@ from pydantic import BaseModel
 
 from artana.ports.model_adapter_helpers import (
     extract_output_json,
+    extract_output_json_from_responses,
+    extract_response_id,
+    extract_responses_output_items,
     extract_tool_calls,
+    extract_tool_calls_from_responses,
     extract_usage,
     has_tokens,
+    is_responses_unsupported_exception,
     is_transient_exception,
     normalize_response,
     serialize_messages,
+    serialize_messages_for_responses,
     serialize_tools,
+    serialize_tools_for_responses,
 )
 from artana.ports.model_types import (
     LiteLLMCompletionFn,
+    LiteLLMResponsesFn,
+    ModelAPIModeUsed,
     ModelPermanentError,
     ModelRequest,
     ModelResult,
@@ -27,10 +36,19 @@ from artana.ports.model_types import (
 )
 
 
+class _ResponsesUnsupported(RuntimeError):
+    pass
+
+
 class LiteLLMAdapter:
+    _RESPONSES_PREFIXES: frozenset[str] = frozenset(
+        {"openai", "azure", "anthropic", "vertex", "vertex_ai"}
+    )
+
     def __init__(
         self,
         completion_fn: LiteLLMCompletionFn | None = None,
+        responses_fn: LiteLLMResponsesFn | None = None,
         *,
         timeout_seconds: float = 30.0,
         max_retries: int = 2,
@@ -55,25 +73,75 @@ class LiteLLMAdapter:
 
         if completion_fn is not None:
             self._completion_fn = completion_fn
-            return
+        else:
+            from litellm import acompletion
 
-        from litellm import acompletion
+            self._completion_fn = cast(LiteLLMCompletionFn, acompletion)
 
-        self._completion_fn = cast(LiteLLMCompletionFn, acompletion)
+        if responses_fn is not None:
+            self._responses_fn = responses_fn
+        else:
+            from litellm import aresponses
+
+            self._responses_fn = cast(LiteLLMResponsesFn, aresponses)
 
     async def complete(self, request: ModelRequest[OutputT]) -> ModelResult[OutputT]:
         tools_payload = serialize_tools(request.allowed_tools)
-        response_dict = await self._call_with_retry(
-            model=request.model,
-            messages_payload=serialize_messages(
-                request.messages, fallback_prompt=request.prompt
-            ),
-            response_format=request.output_schema,
-            tools_payload=tools_payload if tools_payload else None,
+        tools_payload_responses = serialize_tools_for_responses(request.allowed_tools)
+        messages_payload = serialize_messages(
+            request.messages, fallback_prompt=request.prompt
         )
+        responses_input = serialize_messages_for_responses(
+            request.messages, fallback_prompt=request.prompt
+        )
+        selected_mode = self._select_mode(request.model, request.model_options.api_mode)
+        response_dict: Mapping[str, object]
+        api_mode_used: ModelAPIModeUsed
 
-        raw_output = extract_output_json(response_dict)
-        tool_calls = extract_tool_calls(response_dict)
+        if selected_mode == "responses":
+            try:
+                response_dict = await self._call_responses_with_retry(
+                    model=request.model,
+                    input_payload=responses_input,
+                    response_format=request.output_schema,
+                    tools_payload=tools_payload_responses if tools_payload_responses else None,
+                    previous_response_id=request.model_options.previous_response_id,
+                    reasoning_effort=request.model_options.reasoning_effort,
+                    verbosity=request.model_options.verbosity,
+                )
+                api_mode_used = "responses"
+            except _ResponsesUnsupported as exc:
+                if request.model_options.api_mode != "auto":
+                    raise ModelPermanentError(
+                        f"LiteLLM responses unsupported for model {request.model!r}: {exc}"
+                    ) from exc
+                response_dict = await self._call_chat_with_retry(
+                    model=request.model,
+                    messages_payload=messages_payload,
+                    response_format=request.output_schema,
+                    tools_payload=tools_payload if tools_payload else None,
+                )
+                api_mode_used = "chat"
+        else:
+            response_dict = await self._call_chat_with_retry(
+                model=request.model,
+                messages_payload=messages_payload,
+                response_format=request.output_schema,
+                tools_payload=tools_payload if tools_payload else None,
+            )
+            api_mode_used = "chat"
+
+        if api_mode_used == "responses":
+            raw_output = extract_output_json_from_responses(response_dict)
+            tool_calls = extract_tool_calls_from_responses(response_dict)
+            response_id = extract_response_id(response_dict)
+            response_output_items = extract_responses_output_items(response_dict)
+        else:
+            raw_output = extract_output_json(response_dict)
+            tool_calls = extract_tool_calls(response_dict)
+            response_id = None
+            response_output_items = ()
+
         if raw_output is None:
             if not tool_calls:
                 raise ValueError(
@@ -94,9 +162,12 @@ class LiteLLMAdapter:
             usage=usage,
             tool_calls=tool_calls,
             raw_output=raw_output,
+            api_mode_used=api_mode_used,
+            response_id=response_id,
+            response_output_items=response_output_items,
         )
 
-    async def _call_with_retry(
+    async def _call_chat_with_retry(
         self,
         *,
         model: str,
@@ -134,6 +205,75 @@ class LiteLLMAdapter:
                     attempt += 1
                     continue
                 raise ModelPermanentError(f"LiteLLM permanent failure: {exc}") from exc
+
+    async def _call_responses_with_retry(
+        self,
+        *,
+        model: str,
+        input_payload: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools_payload: list[dict[str, object]] | None,
+        previous_response_id: str | None,
+        reasoning_effort: str | None,
+        verbosity: str | None,
+    ) -> Mapping[str, object]:
+        reasoning_payload: dict[str, object] | None = None
+        if reasoning_effort is not None:
+            reasoning_payload = {"effort": reasoning_effort}
+        text_payload: dict[str, object] | None = None
+        if verbosity is not None:
+            text_payload = {"verbosity": verbosity}
+
+        attempt = 0
+        while True:
+            try:
+                response_obj = await asyncio.wait_for(
+                    self._responses_fn(
+                        model=model,
+                        input=input_payload,
+                        previous_response_id=previous_response_id,
+                        reasoning=reasoning_payload,
+                        text=text_payload,
+                        text_format=response_format,
+                        tools=tools_payload,
+                    ),
+                    timeout=self._timeout_seconds,
+                )
+                return normalize_response(response_obj)
+            except asyncio.TimeoutError as exc:
+                if attempt >= self._max_retries:
+                    raise ModelTimeoutError(
+                        f"LiteLLM timed out after {attempt + 1} attempts."
+                    ) from exc
+                await asyncio.sleep(self._retry_backoff(attempt))
+                attempt += 1
+            except Exception as exc:
+                if is_responses_unsupported_exception(exc):
+                    raise _ResponsesUnsupported(str(exc)) from exc
+                if is_transient_exception(exc):
+                    if attempt >= self._max_retries:
+                        raise ModelTransientError(
+                            f"LiteLLM transient failure after {attempt + 1} attempts: {exc}"
+                        ) from exc
+                    await asyncio.sleep(self._retry_backoff(attempt))
+                    attempt += 1
+                    continue
+                raise ModelPermanentError(f"LiteLLM permanent failure: {exc}") from exc
+
+    def _select_mode(self, model: str, requested_mode: str) -> str:
+        if requested_mode == "chat":
+            return "chat"
+        if requested_mode == "responses":
+            return "responses"
+        if requested_mode != "auto":
+            return "chat"
+        return "responses" if self._supports_responses(model) else "chat"
+
+    def _supports_responses(self, model: str) -> bool:
+        if "/" in model:
+            prefix, _sep, _name = model.partition("/")
+            return prefix.lower() in self._RESPONSES_PREFIXES
+        return False
 
     def _retry_backoff(self, attempt: int) -> float:
         backoff = float(self._initial_backoff_seconds * (2**attempt))

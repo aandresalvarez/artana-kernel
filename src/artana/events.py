@@ -69,6 +69,11 @@ class ModelRequestedPayload(BaseModel):
     model: str
     prompt: str
     messages: list[ChatMessage]
+    api_mode: Literal["auto", "responses", "chat"] = "auto"
+    reasoning_effort: Literal["low", "medium", "high", "xhigh"] | None = None
+    verbosity: Literal["low", "medium", "high"] | None = None
+    previous_response_id: str | None = None
+    responses_input_items: list[dict[str, object]] | None = None
     allowed_tools: list[str] = Field(default_factory=list)
     allowed_tool_signatures: list[ToolSignatureRecord] = Field(default_factory=list)
     allowed_tools_hash: str | None = None
@@ -90,6 +95,9 @@ class ModelCompletedPayload(BaseModel):
     completion_tokens: int = Field(ge=0)
     cost_usd: float = Field(ge=0.0)
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
+    api_mode_used: Literal["responses", "chat"] = "chat"
+    response_id: str | None = None
+    responses_output_items: list[dict[str, object]] = Field(default_factory=list)
 
 
 class ReplayedWithDriftPayload(BaseModel):

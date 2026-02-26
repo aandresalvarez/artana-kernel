@@ -10,8 +10,10 @@ This chapter focuses on production patterns:
 * Middleware enforcement
 * Ledger & observability
 
-Standalone scripts in this chapter are runnable. Snippet blocks are in-context
-API references and may assume existing `kernel`, `tenant`, or harness state.
+Code block contract for this chapter:
+
+* `python` blocks are standalone runnable scripts.
+* `pycon` blocks are in-context snippets and may assume existing `kernel`, `tenant`, or harness state.
 
 ---
 
@@ -146,7 +148,9 @@ Long-running agents evolve. Prompts change. Policies update.
 
 Artana supports safe replay policies.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.kernel import ReplayPolicy
 
 harness = DataPipelineHarness(
@@ -171,7 +175,7 @@ Replay modes:
 
 | Mode               | Behavior                         |
 | ------------------ | -------------------------------- |
-| strict             | Fail if prompt changes           |
+| strict             | Fail if model inputs/options change |
 | allow_prompt_drift | Replay safely with drift summary |
 | fork_on_drift      | Fork run if logic changed        |
 
@@ -183,7 +187,9 @@ This is critical for long-lived systems.
 
 Artifacts allow structured continuity across sessions.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 await harness.set_artifact(key="schema_version", value={"v": 2})
 schema = await harness.get_artifact(key="schema_version")
 print("Schema:", schema)
@@ -209,7 +215,9 @@ Use artifacts for:
 
 You can layer custom policies safely.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.middleware import (
     PIIScrubberMiddleware,
     QuotaMiddleware,
@@ -257,7 +265,9 @@ Order is enforced automatically:
 
 Every run is a verifiable ledger.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.store import SQLiteStore
 
 events = await kernel.get_events(run_id="pipeline_run_001")
@@ -288,7 +298,7 @@ This makes Artana suitable for regulated environments.
 
 Autonomous agents can inspect themselves.
 
-```python
+```text
 # query_event_history is automatically registered
 # when AutonomousAgent is used
 

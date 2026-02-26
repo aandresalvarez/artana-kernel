@@ -12,6 +12,7 @@ from artana.kernel import (
     StepModelResult,
 )
 from artana.models import TenantContext
+from artana.ports.model import ModelCallOptions
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
@@ -29,6 +30,7 @@ class KernelModelClient:
         prompt: str,
         output_schema: type[OutputT],
         step_key: str | None = None,
+        model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy = "strict",
         context_version: ContextVersion | None = None,
     ) -> StepModelResult[OutputT]:
@@ -43,6 +45,7 @@ class KernelModelClient:
             input=ModelInput.from_prompt(prompt),
             output_schema=output_schema,
             step_key=step_key,
+            model_options=model_options,
             replay_policy=replay_policy,
             context_version=context_version,
         )

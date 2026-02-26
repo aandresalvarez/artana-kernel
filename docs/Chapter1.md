@@ -10,8 +10,10 @@ Artana is built in **three layers**:
 
 This guide walks you from deterministic steps → tools → workflows → agents → harnesses.
 
-Standalone scripts in this chapter are runnable. Short snippet blocks are
-in-context API references and assume surrounding variables.
+Code block contract for this chapter:
+
+* `python` blocks are standalone runnable scripts.
+* `pycon` blocks are in-context snippets and assume surrounding variables/state.
 
 ---
 
@@ -33,7 +35,12 @@ from pydantic import BaseModel
 from artana.agent import SingleStepModelClient
 from artana.kernel import ArtanaKernel
 from artana.models import TenantContext
-from artana.ports.model import ModelRequest, ModelResult, ModelUsage
+from artana.ports.model import (
+    ModelCallOptions,
+    ModelRequest,
+    ModelResult,
+    ModelUsage,
+)
 from artana.store import SQLiteStore
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -74,6 +81,7 @@ async def main():
         model="demo-model",
         prompt="Say hello",
         output_schema=HelloResult,
+        model_options=ModelCallOptions(api_mode="auto"),
         step_key="hello_step",  # 🔑 required for replay safety
     )
 
@@ -88,6 +96,8 @@ asyncio.run(main())
 `step_key` ensures deterministic replay.
 Never reuse a step_key for different logic.
 
+`api_mode="auto"` is the normal model flow. Artana uses Responses when supported and falls back to chat-completions when needed.
+
 ---
 
 # 🛠 Step 2 — Tools + Idempotency
@@ -96,7 +106,7 @@ Tools are durable and idempotent.
 
 Every tool can receive:
 
-```python
+```text
 artana_context: ToolExecutionContext
 ```
 
@@ -354,7 +364,9 @@ Harnesses automatically:
 
 Artifacts store structured durable state.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 await harness.set_artifact(key="plan", value={"phase": 1})
 plan = await harness.get_artifact(key="plan")
 print(plan)
@@ -368,7 +380,9 @@ Artifacts are stored as structured run summaries.
 
 Compose harnesses safely.
 
-```python
+Snippet (in-context, not standalone):
+
+```pycon
 from artana.harness import SupervisorHarness
 
 class ResearchSupervisor(SupervisorHarness):

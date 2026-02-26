@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Generic
+from typing import Generic, cast
 
 from artana._kernel.types import OutputT, ReplayConsistencyError, ReplayPolicy
 from artana.events import (
@@ -15,7 +16,12 @@ from artana.events import (
     compute_allowed_tools_hash,
 )
 from artana.models import TenantContext
-from artana.ports.model import ModelUsage, ToolCall
+from artana.ports.model import (
+    ModelAPIModeUsed,
+    ModelCallOptions,
+    ModelUsage,
+    ToolCall,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +31,9 @@ class ModelStepResult(Generic[OutputT]):
     usage: ModelUsage
     tool_calls: tuple[ToolCall, ...]
     replayed: bool
+    api_mode_used: ModelAPIModeUsed = "chat"
+    response_id: str | None = None
+    response_output_items: tuple[dict[str, object], ...] = ()
     replayed_with_drift: bool = False
     drift_fields: tuple[str, ...] = ()
 
@@ -75,6 +84,9 @@ def deserialize_model_completed(
             for tool_call in payload.tool_calls
         ),
         replayed=replayed,
+        api_mode_used=payload.api_mode_used,
+        response_id=payload.response_id,
+        response_output_items=tuple(payload.responses_output_items),
         replayed_with_drift=replayed_with_drift,
         drift_fields=drift_fields,
     )
@@ -86,6 +98,8 @@ def find_prompt_drift_candidate(
     prompt: str,
     messages: tuple[ChatMessage, ...],
     model: str,
+    model_options: ModelCallOptions,
+    responses_input_items: list[dict[str, object]] | None,
     allowed_tool_signatures: list[ToolSignatureRecord],
     step_key: str | None = None,
 ) -> PromptDriftCandidate | None:
@@ -109,9 +123,18 @@ def find_prompt_drift_candidate(
         )
         prompt_matches = payload.prompt == prompt
         messages_match = payload.messages == expected_messages
-        if prompt_matches and messages_match:
+        options_drift_fields = _model_options_drift_fields(
+            payload=payload,
+            model_options=model_options,
+            responses_input_items=responses_input_items,
+        )
+        if prompt_matches and messages_match and len(options_drift_fields) == 0:
             return None
-        drift_fields = _drift_fields(prompt_matches=prompt_matches, messages_match=messages_match)
+        drift_fields = _drift_fields(
+            prompt_matches=prompt_matches,
+            messages_match=messages_match,
+            options_drift_fields=options_drift_fields,
+        )
         completed = find_model_completed_after(events=events, start_index=index + 1)
         return PromptDriftCandidate(
             request_event=event,
@@ -127,6 +150,8 @@ def find_matching_model_cycle(
     prompt: str,
     messages: tuple[ChatMessage, ...],
     model: str,
+    model_options: ModelCallOptions,
+    responses_input_items: list[dict[str, object]] | None,
     allowed_tool_signatures: list[ToolSignatureRecord],
     step_key: str | None = None,
     replay_policy: ReplayPolicy = "strict",
@@ -151,16 +176,25 @@ def find_matching_model_cycle(
         )
         prompt_matches = payload.prompt == prompt
         messages_match = payload.messages == expected_messages
-        if prompt_matches and messages_match:
+        options_drift_fields = _model_options_drift_fields(
+            payload=payload,
+            model_options=model_options,
+            responses_input_items=responses_input_items,
+        )
+        if prompt_matches and messages_match and len(options_drift_fields) == 0:
             completed = find_model_completed_after(events=events, start_index=index + 1)
             return ModelCycleLookup(request_event=event, completed_event=completed)
         if step_key is None:
             continue
 
-        drift_fields = _drift_fields(prompt_matches=prompt_matches, messages_match=messages_match)
+        drift_fields = _drift_fields(
+            prompt_matches=prompt_matches,
+            messages_match=messages_match,
+            options_drift_fields=options_drift_fields,
+        )
         if replay_policy == "strict":
             raise ReplayConsistencyError(
-                "Cannot resume run with changed prompt/messages for the same model step."
+                "Cannot resume run with changed model inputs/options for the same model step."
             )
         if replay_policy == "allow_prompt_drift":
             completed = find_model_completed_after(events=events, start_index=index + 1)
@@ -249,10 +283,58 @@ def _signature_token(signature: ToolSignatureRecord) -> str:
     )
 
 
-def _drift_fields(*, prompt_matches: bool, messages_match: bool) -> tuple[str, ...]:
+def _drift_fields(
+    *,
+    prompt_matches: bool,
+    messages_match: bool,
+    options_drift_fields: tuple[str, ...],
+) -> tuple[str, ...]:
     fields: list[str] = []
     if not prompt_matches:
         fields.append("prompt")
     if not messages_match:
         fields.append("messages")
+    fields.extend(options_drift_fields)
     return tuple(fields)
+
+
+def _model_options_drift_fields(
+    *,
+    payload: ModelRequestedPayload,
+    model_options: ModelCallOptions,
+    responses_input_items: list[dict[str, object]] | None,
+) -> tuple[str, ...]:
+    fields: list[str] = []
+    if payload.api_mode != model_options.api_mode:
+        fields.append("api_mode")
+    if payload.reasoning_effort != model_options.reasoning_effort:
+        fields.append("reasoning_effort")
+    if payload.verbosity != model_options.verbosity:
+        fields.append("verbosity")
+    if payload.previous_response_id != model_options.previous_response_id:
+        fields.append("previous_response_id")
+
+    # Compatibility path for legacy rows that don't have responses_input_items.
+    if payload.responses_input_items is None:
+        return tuple(fields)
+
+    if not _responses_input_equal(payload.responses_input_items, responses_input_items):
+        fields.append("responses_input_items")
+    return tuple(fields)
+
+
+def _responses_input_equal(
+    stored_items: list[dict[str, object]],
+    expected_items: list[dict[str, object]] | None,
+) -> bool:
+    return _canonicalize_items(stored_items) == _canonicalize_items(expected_items or [])
+
+
+def _canonicalize_items(items: Sequence[dict[str, object]]) -> list[dict[str, object]]:
+    return [
+        cast(
+            dict[str, object],
+            json.loads(json.dumps(item, sort_keys=True, separators=(",", ":"))),
+        )
+        for item in items
+    ]

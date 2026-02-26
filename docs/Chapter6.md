@@ -8,14 +8,16 @@ This chapter covers what is now available in Artana:
 * Kernel orchestration syscalls (status/checkpoint/artifacts/blocking/leases/streaming)
 * First-class harness APIs (`HarnessContext`, `TaskUnit`, artifacts)
 
-Blocks in this chapter are mostly in-context policy/syscall snippets and are
-intended to be integrated into an existing kernel/harness setup.
+Code block contract for this chapter:
+
+* `pycon` blocks are in-context snippets intended for existing kernel/harness setups.
+* Runnable end-to-end scripts live in `examples/` and are listed in `examples/README.md`.
 
 ---
 
 # Step 1 — Boot an Enforced V2 Kernel
 
-```python
+```pycon
 from artana.kernel import ArtanaKernel, KernelPolicy
 from artana.middleware import SafetyPolicyMiddleware
 from artana.safety import (
@@ -67,7 +69,7 @@ What `enforced_v2` guarantees at boot:
 
 # Step 2 — Record a Typed Intent Plan Before Side Effects
 
-```python
+```pycon
 from artana.safety import IntentPlanRecord
 
 await kernel.record_intent_plan(
@@ -125,7 +127,7 @@ All violations are hard blocks and are audited via `policy_decision` run summari
 
 Human approval flow:
 
-```python
+```pycon
 from pydantic import BaseModel
 from artana.kernel import ApprovalRequiredError
 
@@ -176,7 +178,7 @@ Artana now has an explicit harness substrate:
 
 Example artifact usage:
 
-```python
+```pycon
 await harness.set_artifact(key="plan", value={"version": 2, "status": "approved"})
 artifact = await harness.get_artifact(key="plan")
 ```
@@ -190,7 +192,7 @@ This gives durable retrieval without introducing a separate event type.
 
 Kernel orchestration syscalls for schedulers/workers:
 
-```python
+```pycon
 status = await kernel.get_run_status(run_id="billing_run")
 resume_point = await kernel.resume_point(run_id="billing_run")
 active_runs = await kernel.list_active_runs(tenant_id=tenant.tenant_id)
@@ -203,6 +205,8 @@ await kernel.acquire_run_lease(
 ```
 
 Use this decision rule:
+
+Model calls in all three layers use the same default flow: `ModelCallOptions(api_mode="auto")` (Responses when supported, chat-completions fallback otherwise).
 
 * **Kernel**: when you want minimal deterministic primitives (`step_model`, `step_tool`, `run_workflow`)
 * **Harness**: when you need structured long-running discipline and typed task progress

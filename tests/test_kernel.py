@@ -7,11 +7,17 @@ import pytest
 from pydantic import BaseModel
 
 from artana import KernelModelClient
-from artana.events import EventType
+from artana.events import EventType, ModelCompletedPayload, ModelRequestedPayload
 from artana.kernel import ArtanaKernel
 from artana.middleware import CapabilityGuardMiddleware
 from artana.models import TenantContext
-from artana.ports.model import ModelRequest, ModelResult, ModelUsage, ToolCall
+from artana.ports.model import (
+    ModelCallOptions,
+    ModelRequest,
+    ModelResult,
+    ModelUsage,
+    ToolCall,
+)
 from artana.store import SQLiteStore
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
@@ -56,6 +62,27 @@ class FakeModelPortWithToolCall:
                     tool_name="submit_transfer",
                     arguments_json='{"account_id":"acc_1","amount":"10"}',
                 ),
+            ),
+        )
+
+
+class FakeResponsesModelPort:
+    async def complete(
+        self, request: ModelRequest[OutputModelT]
+    ) -> ModelResult[OutputModelT]:
+        output = request.output_schema.model_validate({"approved": True, "reason": "responses"})
+        return ModelResult(
+            output=output,
+            usage=ModelUsage(prompt_tokens=8, completion_tokens=3, cost_usd=0.02),
+            api_mode_used="responses",
+            response_id="resp_kernel_1",
+            response_output_items=(
+                {
+                    "type": "function_call",
+                    "name": "lookup_weather",
+                    "arguments": '{"city":"SF"}',
+                    "call_id": "call_kernel_1",
+                },
             ),
         )
 
@@ -220,5 +247,51 @@ async def test_chat_replays_tools_without_reexecuting_completed_tool(tmp_path: P
             "model_completed",
             "run_summary",
         ]
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_step_model_persists_responses_metadata(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = FakeResponsesModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    tenant = TenantContext(
+        tenant_id="org_5",
+        capabilities=frozenset(),
+        budget_usd_limit=1.0,
+    )
+
+    try:
+        result = await KernelModelClient(kernel=kernel).step(
+            run_id="run_responses_metadata",
+            prompt="Respond in schema",
+            model="openai/gpt-5.3-codex",
+            tenant=tenant,
+            output_schema=Decision,
+            model_options=ModelCallOptions(
+                api_mode="responses",
+                reasoning_effort="high",
+                verbosity="medium",
+                previous_response_id="resp_prev_1",
+            ),
+        )
+        assert result.api_mode_used == "responses"
+        assert result.response_id == "resp_kernel_1"
+        assert len(result.response_output_items) == 1
+
+        events = await store.get_events_for_run("run_responses_metadata")
+        requested_payload = events[1].payload
+        completed_payload = events[2].payload
+        assert isinstance(requested_payload, ModelRequestedPayload)
+        assert isinstance(completed_payload, ModelCompletedPayload)
+        assert requested_payload.api_mode == "responses"
+        assert requested_payload.reasoning_effort == "high"
+        assert requested_payload.verbosity == "medium"
+        assert requested_payload.previous_response_id == "resp_prev_1"
+        assert requested_payload.responses_input_items is not None
+        assert completed_payload.api_mode_used == "responses"
+        assert completed_payload.response_id == "resp_kernel_1"
+        assert len(completed_payload.responses_output_items) == 1
     finally:
         await kernel.close()

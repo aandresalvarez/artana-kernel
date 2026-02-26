@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from typing import cast
 
 from artana._kernel.replay import (
     ModelStepResult,
@@ -29,7 +30,7 @@ from artana.events import (
 from artana.json_utils import sha256_hex
 from artana.middleware.base import KernelMiddleware
 from artana.models import TenantContext
-from artana.ports.model import ModelPort, ModelRequest, ToolDefinition
+from artana.ports.model import ModelCallOptions, ModelPort, ModelRequest, ToolDefinition
 from artana.store.base import EventStore
 
 
@@ -71,11 +72,19 @@ async def get_or_execute_model_step(
     output_schema: type[OutputT],
     tool_definitions: Sequence[ToolDefinition],
     events: Sequence[KernelEvent],
+    model_options: ModelCallOptions | None = None,
+    responses_input_items: list[dict[str, object]] | None = None,
     step_key: str | None = None,
     parent_step_key: str | None = None,
     replay_policy: ReplayPolicy = "strict",
     context_version: ContextVersion | None = None,
 ) -> ModelStepResult[OutputT]:
+    resolved_model_options = model_options or ModelCallOptions()
+    canonical_responses_input_items = (
+        _canonicalize_items(responses_input_items)
+        if responses_input_items is not None
+        else None
+    )
     tool_signatures = tool_signatures_from_definitions(tool_definitions)
     normalized_tool_names = sorted(tool.name for tool in tool_definitions)
     signature_tokens = [_signature_token(signature) for signature in tool_signatures]
@@ -84,6 +93,8 @@ async def get_or_execute_model_step(
         prompt=prompt,
         messages=messages,
         model=model,
+        model_options=resolved_model_options,
+        responses_input_items=canonical_responses_input_items,
         allowed_tool_signatures=tool_signatures,
         step_key=step_key,
         replay_policy=replay_policy,
@@ -133,6 +144,11 @@ async def get_or_execute_model_step(
                 model=model,
                 prompt=prompt,
                 messages=list(messages),
+                api_mode=resolved_model_options.api_mode,
+                reasoning_effort=resolved_model_options.reasoning_effort,
+                verbosity=resolved_model_options.verbosity,
+                previous_response_id=resolved_model_options.previous_response_id,
+                responses_input_items=canonical_responses_input_items,
                 allowed_tools=normalized_tool_names,
                 allowed_tool_signatures=tool_signatures,
                 allowed_tools_hash=compute_allowed_tools_hash(signature_tokens),
@@ -156,6 +172,7 @@ async def get_or_execute_model_step(
             messages=messages,
             output_schema=output_schema,
             allowed_tools=tool_definitions,
+            model_options=resolved_model_options,
         )
     )
     completed_event = await _append_event_with_parent(
@@ -178,6 +195,9 @@ async def get_or_execute_model_step(
                 )
                 for tool_call in result.tool_calls
             ],
+            api_mode_used=result.api_mode_used,
+            response_id=result.response_id,
+            responses_output_items=_canonicalize_items(result.response_output_items),
         ),
     )
     for middleware_item in middleware:
@@ -193,6 +213,9 @@ async def get_or_execute_model_step(
         usage=result.usage,
         tool_calls=result.tool_calls,
         replayed=False,
+        api_mode_used=result.api_mode_used,
+        response_id=result.response_id,
+        response_output_items=result.response_output_items,
         replayed_with_drift=False,
     )
 
@@ -257,3 +280,15 @@ def _fallback_system_prompt_hash(*, prompt: str, messages: tuple[ChatMessage, ..
     if system_messages:
         return sha256_hex("\n".join(system_messages))
     return sha256_hex(prompt)
+
+
+def _canonicalize_items(
+    items: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        cast(
+            dict[str, object],
+            json.loads(json.dumps(item, sort_keys=True, separators=(",", ":"))),
+        )
+        for item in items
+    ]

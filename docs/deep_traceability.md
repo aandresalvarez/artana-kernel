@@ -2,6 +2,11 @@
 
 This document describes the deep traceability features added to Artana harness and kernel execution.
 
+Code block contract for this document:
+
+* `pycon` blocks are in-context snippets.
+* Runnable end-to-end scripts live in `examples/` and target tests under `tests/`.
+
 ## Goals
 
 Deep traceability is designed to make runs easy to inspect without breaking replay determinism:
@@ -41,7 +46,7 @@ Current built-in channels:
 
 You can emit additional custom channels with:
 
-```python
+```pycon
 await harness.write_summary(
     summary_type="trace::my_channel",
     payload={"k": "v"},
@@ -112,7 +117,7 @@ Payload includes:
 
 Both stores support an optional async callback on append:
 
-```python
+```pycon
 from artana.store import PostgresStore, SQLiteStore
 
 async def on_event(event):
@@ -126,7 +131,7 @@ The callback runs after each successful append.
 
 Kernel also exposes store-agnostic event streaming:
 
-```python
+```pycon
 async for event in kernel.stream_events(run_id="run_1", since_seq=0, follow=True):
     print(event.seq, event.event_type.value)
 ```
@@ -135,7 +140,7 @@ async for event in kernel.stream_events(run_id="run_1", since_seq=0, follow=True
 
 Kernel exposes:
 
-```python
+```pycon
 summary = await kernel.explain_run(run_id)
 ```
 
@@ -160,7 +165,7 @@ Harness supports:
 
 Usage:
 
-```python
+```pycon
 await harness.run(run_id="run_1", tenant=tenant, trace_level="verbose")
 ```
 
@@ -184,7 +189,7 @@ Behavior:
 
 - `BaseHarness.run(..., trace_level=...)`
 - `BaseHarness.emit_summary(..., parent_step_key=...)`
-- `BaseHarness.run_model(..., parent_step_key=...)`
+- `BaseHarness.run_model(..., model_options=..., parent_step_key=...)`
 - `BaseHarness.run_tool(..., parent_step_key=...)`
 
 ### Store

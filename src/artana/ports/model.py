@@ -1,6 +1,10 @@
 from artana.ports.model_adapter import LiteLLMAdapter
 from artana.ports.model_types import (
     LiteLLMCompletionFn,
+    LiteLLMResponsesFn,
+    ModelAPIMode,
+    ModelAPIModeUsed,
+    ModelCallOptions,
     ModelPermanentError,
     ModelPort,
     ModelRequest,
@@ -9,14 +13,21 @@ from artana.ports.model_types import (
     ModelTransientError,
     ModelUsage,
     OutputT,
+    ReasoningEffort,
     SupportsModelDump,
+    SupportsModelDumpJSON,
     ToolCall,
     ToolDefinition,
+    VerbosityLevel,
 )
 
 __all__ = [
     "LiteLLMAdapter",
     "LiteLLMCompletionFn",
+    "LiteLLMResponsesFn",
+    "ModelAPIMode",
+    "ModelAPIModeUsed",
+    "ModelCallOptions",
     "ModelPermanentError",
     "ModelPort",
     "ModelRequest",
@@ -25,8 +36,10 @@ __all__ = [
     "ModelTransientError",
     "ModelUsage",
     "OutputT",
+    "ReasoningEffort",
     "SupportsModelDump",
+    "SupportsModelDumpJSON",
     "ToolCall",
     "ToolDefinition",
+    "VerbosityLevel",
 ]
-

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from typing import cast
 
 from pydantic import BaseModel
 
@@ -31,6 +32,27 @@ def serialize_tools(tools: Sequence[ToolDefinition]) -> list[dict[str, object]]:
                     "description": tool.description,
                     "parameters": dict(schema_obj),
                 },
+            }
+        )
+    return serialized
+
+
+def serialize_tools_for_responses(
+    tools: Sequence[ToolDefinition],
+) -> list[dict[str, object]]:
+    serialized: list[dict[str, object]] = []
+    for tool in tools:
+        schema_obj = json.loads(tool.arguments_schema_json)
+        if not isinstance(schema_obj, Mapping):
+            raise TypeError(
+                f"Tool schema for {tool.name} must be a JSON object, got {type(schema_obj)!r}."
+            )
+        serialized.append(
+            {
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": dict(schema_obj),
             }
         )
     return serialized
@@ -69,6 +91,51 @@ def serialize_messages(
     return serialized
 
 
+def serialize_messages_for_responses(
+    messages: Sequence[ChatMessage], *, fallback_prompt: str
+) -> list[dict[str, object]]:
+    if len(messages) == 0:
+        return [{"role": "user", "content": fallback_prompt}]
+
+    serialized: list[dict[str, object]] = []
+    for message in messages:
+        if message.role == "tool":
+            if message.tool_call_id is None or message.name is None:
+                raise ValueError(
+                    "Tool chat messages require both tool_call_id and name."
+                )
+            serialized.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": message.tool_call_id,
+                    "output": message.content,
+                }
+            )
+            continue
+
+        if message.role == "assistant" and message.tool_calls:
+            if message.content != "":
+                serialized.append(
+                    {
+                        "role": "assistant",
+                        "content": message.content,
+                    }
+                )
+            for tool_call in message.tool_calls:
+                serialized.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tool_call.id,
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    }
+                )
+            continue
+
+        serialized.append({"role": message.role, "content": message.content})
+    return serialized
+
+
 def normalize_response(response_obj: object) -> Mapping[str, object]:
     if isinstance(response_obj, Mapping):
         return response_obj
@@ -101,13 +168,57 @@ def extract_output_json(response: Mapping[str, object]) -> str | None:
     return None
 
 
+def extract_output_json_from_responses(response: Mapping[str, object]) -> str | None:
+    output_text_obj = response.get("output_text")
+    if isinstance(output_text_obj, str):
+        return output_text_obj
+
+    output_obj = response.get("output")
+    if not isinstance(output_obj, Sequence):
+        return None
+
+    for item in output_obj:
+        if not isinstance(item, Mapping):
+            continue
+
+        item_type = item.get("type")
+        if item_type == "output_text":
+            text_obj = item.get("text")
+            if isinstance(text_obj, str):
+                return text_obj
+            value_obj = item.get("value")
+            if isinstance(value_obj, str):
+                return value_obj
+
+        if item_type != "message":
+            continue
+
+        content_obj = item.get("content")
+        if not isinstance(content_obj, Sequence):
+            continue
+        for part in content_obj:
+            if not isinstance(part, Mapping):
+                continue
+            part_text = part.get("text")
+            if isinstance(part_text, str):
+                return part_text
+            part_value = part.get("value")
+            if isinstance(part_value, str):
+                return part_value
+    return None
+
+
 def extract_usage(response: Mapping[str, object]) -> ModelUsage:
     usage_obj = response.get("usage")
     if not isinstance(usage_obj, Mapping):
         return ModelUsage(prompt_tokens=0, completion_tokens=0, cost_usd=0.0)
 
     prompt_tokens = as_int(usage_obj.get("prompt_tokens"))
+    if prompt_tokens == 0:
+        prompt_tokens = as_int(usage_obj.get("input_tokens"))
     completion_tokens = as_int(usage_obj.get("completion_tokens"))
+    if completion_tokens == 0:
+        completion_tokens = as_int(usage_obj.get("output_tokens"))
     cost_usd = as_float(response.get("_response_cost"))
     if cost_usd == 0.0:
         cost_usd = as_float(response.get("response_cost"))
@@ -162,6 +273,93 @@ def extract_tool_calls(response: Mapping[str, object]) -> tuple[ToolCall, ...]:
             )
         )
     return tuple(parsed)
+
+
+def extract_tool_calls_from_responses(
+    response: Mapping[str, object],
+) -> tuple[ToolCall, ...]:
+    output_obj = response.get("output")
+    if not isinstance(output_obj, Sequence):
+        return ()
+
+    parsed: list[ToolCall] = []
+    for item in output_obj:
+        if not isinstance(item, Mapping):
+            continue
+        item_type = item.get("type")
+        if item_type != "function_call":
+            continue
+        tool_name_obj = item.get("name")
+        arguments_obj = item.get("arguments")
+        tool_call_id_obj = item.get("call_id")
+        if not isinstance(tool_name_obj, str):
+            continue
+        if isinstance(arguments_obj, str):
+            arguments_json = arguments_obj
+        elif isinstance(arguments_obj, Mapping):
+            arguments_json = json.dumps(dict(arguments_obj))
+        else:
+            continue
+        try:
+            canonical_arguments_json = canonicalize_json_object(arguments_json)
+        except Exception as exc:
+            raise ValueError(
+                f"Tool call {tool_name_obj!r} returned malformed arguments JSON."
+            ) from exc
+        parsed.append(
+            ToolCall(
+                tool_name=tool_name_obj,
+                arguments_json=canonical_arguments_json,
+                tool_call_id=tool_call_id_obj
+                if isinstance(tool_call_id_obj, str)
+                else None,
+            )
+        )
+    return tuple(parsed)
+
+
+def extract_response_id(response: Mapping[str, object]) -> str | None:
+    response_id = response.get("id")
+    if isinstance(response_id, str):
+        return response_id
+    return None
+
+
+def extract_responses_output_items(
+    response: Mapping[str, object],
+) -> tuple[dict[str, object], ...]:
+    output_obj = response.get("output")
+    if not isinstance(output_obj, Sequence):
+        return ()
+
+    normalized: list[dict[str, object]] = []
+    for item in output_obj:
+        if not isinstance(item, Mapping):
+            continue
+        canonical_item = _canonicalize_mapping(item)
+        normalized.append(canonical_item)
+    return tuple(normalized)
+
+
+def is_responses_unsupported_exception(exc: Exception) -> bool:
+    status_code = status_code_from_exception(exc)
+    message = str(exc).lower()
+    unsupported_patterns = (
+        "responses api",
+        "/v1/responses",
+        "unsupported endpoint",
+        "does not support responses",
+        "not supported for this model",
+        "unsupported parameter",
+        "unknown parameter",
+        "unrecognized request argument",
+        "unknown argument",
+    )
+    if status_code in {404, 405, 501}:
+        return True
+    if status_code in {400, 422} and any(pattern in message for pattern in unsupported_patterns):
+        return True
+    return any(pattern in message for pattern in unsupported_patterns)
 
 
 def is_transient_exception(exc: Exception) -> bool:
@@ -232,3 +430,21 @@ def compute_litellm_cost(response: Mapping[str, object]) -> float | None:
         return computed
     return None
 
+
+def _canonicalize_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _canonicalize_mapping(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_canonicalize_value(item) for item in value]
+    return value
+
+
+def _canonicalize_mapping(value: Mapping[object, object]) -> dict[str, object]:
+    normalized = {
+        str(key): _canonicalize_value(nested)
+        for key, nested in value.items()
+    }
+    return cast(
+        dict[str, object],
+        json.loads(json.dumps(normalized, sort_keys=True, separators=(",", ":"))),
+    )

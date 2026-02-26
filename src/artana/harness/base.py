@@ -33,7 +33,7 @@ from artana.kernel import (
     resolve_tool_resolutions,
 )
 from artana.models import TenantContext
-from artana.ports.model import ToolDefinition
+from artana.ports.model import ModelCallOptions, ToolDefinition
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 HarnessResultT = TypeVar("HarnessResultT")
@@ -513,6 +513,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         run_id: str | None = None,
         tenant: TenantContext | None = None,
         visible_tool_names: set[str] | None = None,
+        model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy | None = None,
         context_version: ContextVersion | None = None,
         parent_step_key: str | None = None,
@@ -534,6 +535,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
                 else self._next_step_key(prefix="model")
             ),
             visible_tool_names=visible_tool_names,
+            model_options=model_options,
             replay_policy=replay_policy,
             context_version=context_version,
             parent_step_key=parent_step_key,
@@ -652,6 +654,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         output_schema: type[OutputT],
         step_key: str,
         visible_tool_names: set[str] | None = None,
+        model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy | None = None,
         context_version: ContextVersion | None = None,
         parent_step_key: str | None = None,
@@ -670,6 +673,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
                 output_schema=output_schema,
                 step_key=required_step_key,
                 visible_tool_names=visible_tool_names,
+                model_options=model_options,
                 replay_policy=(
                     self._replay_policy if replay_policy is None else replay_policy
                 ),
@@ -726,6 +730,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         output_schema: type[OutputT],
         step_key: str,
         visible_tool_names: set[str] | None = None,
+        model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy | None = None,
         context_version: ContextVersion | None = None,
         parent_step_key: str | None = None,
@@ -745,6 +750,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
                 output_schema=output_schema,
                 step_key=required_step_key,
                 visible_tool_names=visible_tool_names,
+                model_options=model_options,
                 replay_policy=(
                     self._replay_policy if replay_policy is None else replay_policy
                 ),

@@ -455,6 +455,7 @@ When `experience_store` and `task_category` are configured:
 Create tools that run specialized child agents with inherited governance and durable lineage.
 ```python
 from artana.agent import SubAgentFactory
+from artana.ports.model import ModelCallOptions
 
 # Parent tenant context is inherited from ToolExecutionContext automatically.
 factory = SubAgentFactory(kernel=kernel)
@@ -485,13 +486,32 @@ await ctx.pause(reason="Needs review", step_key="approval_gate")
 ### Raw Kernel Primitives
 If you are building your own custom orchestration loop:
 ```python
-await kernel.step_model(
+first = await kernel.step_model(
     run_id=run_id,
     tenant=tenant,
-    model="gpt-4o",
+    model="openai/gpt-5.3-codex",
     input=ModelInput.from_prompt("..."),
     output_schema=MySchema,
-    step_key="turn_1"
+    model_options=ModelCallOptions(
+        api_mode="auto",
+        reasoning_effort="high",
+        verbosity="medium",
+    ),
+    step_key="turn_1",
+)
+
+# Carry forward the previous response chain explicitly.
+second = await kernel.step_model(
+    run_id=run_id,
+    tenant=tenant,
+    model="openai/gpt-5.3-codex",
+    input=ModelInput.from_prompt("continue"),
+    output_schema=MySchema,
+    model_options=ModelCallOptions(
+        api_mode="responses",
+        previous_response_id=first.response_id,
+    ),
+    step_key="turn_2",
 )
 
 await kernel.step_tool(
@@ -585,6 +605,7 @@ Run examples from the repository root:
 - **`05_hard_triplets_workflow.py`**: Demonstrates the strict `run_workflow` pattern interleaving LLM calls, deterministic Python math, and a durable Human-In-The-Loop pause.
 - **`06_triplets_swarm.py`**: Demonstrates multi-agent orchestration (lead agent + extractor/adjudicator sub-agents + deterministic graph math tool) on the shared Kernel ledger.
 - **`07_adaptive_agent_learning.py`**: Demonstrates inter-run experience learning where Run 1 discovers a durable rule and Run 2 succeeds immediately using injected past learnings.
+- **`08_responses_mode.py`**: Demonstrates Responses-mode options (`api_mode`, `reasoning_effort`, `verbosity`) and chaining with `previous_response_id`.
 - **`golden_example.py`**: Canonical production-leaning example testing unknown tool outcomes and reconciliation.
 
 ## Growth Path

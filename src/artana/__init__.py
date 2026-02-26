@@ -53,6 +53,7 @@ from artana.kernel import (
     pydantic_step_serde,
 )
 from artana.models import TenantContext
+from artana.ports.model import ModelCallOptions
 from artana.safety import (
     ApprovalGatePolicy,
     IntentPlanRecord,
@@ -116,6 +117,7 @@ __all__ = [
     "TaskProgressValidationError",
     "TaskUnit",
     "TenantContext",
+    "ModelCallOptions",
     "ToolFingerprint",
     "SafetyPolicyConfig",
     "ToolSafetyPolicy",
