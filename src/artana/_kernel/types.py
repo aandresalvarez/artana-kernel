@@ -81,6 +81,7 @@ type RunRef = RunHandle
 type ReplayPolicy = Literal["strict", "allow_prompt_drift", "fork_on_drift"]
 type TraceLevel = Literal["minimal", "stage", "verbose"]
 type RunLifecycleStatus = Literal["active", "paused", "failed", "completed"]
+type RunProgressStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +134,18 @@ class RunStatus:
     updated_at: datetime
     blocked_on: str | None = None
     failure_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RunProgress:
+    run_id: str
+    status: RunProgressStatus
+    percent: int
+    current_stage: str | None
+    completed_stages: tuple[str, ...]
+    started_at: datetime
+    updated_at: datetime
+    eta_seconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

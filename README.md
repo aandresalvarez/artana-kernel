@@ -111,6 +111,7 @@ Initial implementation aligned with the Artana Kernel PRD:
   - `approve_tool_call(...)`
 - Extended kernel syscalls for orchestration/scheduling:
   - `get_run_status(...)`, `list_active_runs(...)`, `resume_point(...)`
+  - `get_run_progress(...)`, `stream_run_progress(...)`
   - `checkpoint(...)`
   - `set_artifact(...)`, `get_artifact(...)`, `list_artifacts(...)`
   - `block_run(...)`, `unblock_run(...)`
@@ -127,6 +128,8 @@ Initial implementation aligned with the Artana Kernel PRD:
   - `intent_id`
   - `amount_usd`
 - Kernel contracts reference: `docs/kernel_contracts.md`
+- Compatibility matrix: `docs/compatibility_matrix.md`
+- Release notes: `CHANGELOG.md`
 - Deep traceability reference: `docs/deep_traceability.md`
 - Generated behavior index reference: `docs/kernel_behavior_index.json`
 - OS-grade safety and harness chapter: `docs/Chapter6.md`
@@ -690,6 +693,7 @@ await kernel.step_tool(
 Additional orchestration syscalls:
 ```python
 status = await kernel.get_run_status(run_id=run_id)
+progress = await kernel.get_run_progress(run_id=run_id)
 resume_point = await kernel.resume_point(run_id=run_id)
 active = await kernel.list_active_runs(tenant_id=tenant.tenant_id)
 
@@ -757,6 +761,14 @@ canonical_args_json, schema_hash = kernel.canonicalize_tool_args(
 )
 fingerprint = kernel.tool_fingerprint(tool_name="transfer_funds")
 ```
+
+## Release and Compatibility
+
+- Runtime and store compatibility expectations are documented in `docs/compatibility_matrix.md`.
+- Release notes and breaking-change callouts live in `CHANGELOG.md`.
+- Store backends expose schema info via `get_schema_info()`:
+  - `SQLiteStore.get_schema_info()`
+  - `PostgresStore.get_schema_info()`
 
 ## Examples
 

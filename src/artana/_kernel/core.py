@@ -31,6 +31,8 @@ from artana._kernel.types import (
     RunHandle,
     RunLease,
     RunLifecycleStatus,
+    RunProgress,
+    RunProgressStatus,
     RunRef,
     RunStatus,
     StepModelResult,
@@ -332,6 +334,79 @@ class ArtanaKernel:
             updated_at=last_event.timestamp,
             blocked_on=blocked_on,
             failure_reason=failure_reason,
+        )
+
+    async def get_run_progress(self, *, run_id: str) -> RunProgress:
+        events = await self._store.get_events_for_run(run_id)
+        if not events:
+            raise ValueError(f"No events found for run_id={run_id!r}.")
+        lifecycle_status, _, _ = _derive_run_status(events)
+        status = _run_progress_status_from_lifecycle(lifecycle_status)
+        started_at = events[0].timestamp
+        updated_at = events[-1].timestamp
+
+        task_progress_summary = await self.get_latest_run_summary(
+            run_id=run_id,
+            summary_type="task_progress",
+        )
+        task_units = _task_progress_units(task_progress_summary)
+
+        completed_stages: tuple[str, ...] = ()
+        current_stage: str | None = None
+        percent = 100 if status == "completed" else 0
+        eta_seconds: int | None = 0 if status == "completed" else None
+
+        if task_units:
+            total_units = len(task_units)
+            completed_units = sum(1 for _, state in task_units if state == "done")
+            completed_stages = tuple(unit_id for unit_id, state in task_units if state == "done")
+            in_progress_stage = next(
+                (unit_id for unit_id, state in task_units if state == "in_progress"),
+                None,
+            )
+            pending_stage = next(
+                (unit_id for unit_id, state in task_units if state == "pending"),
+                None,
+            )
+
+            if status == "completed":
+                percent = 100
+                eta_seconds = 0
+                current_stage = completed_stages[-1] if completed_stages else None
+            else:
+                percent = _clamp_percent(int((completed_units * 100) / total_units))
+                current_stage = in_progress_stage or pending_stage
+                if current_stage is None and completed_stages:
+                    current_stage = completed_stages[-1]
+                if status == "running" and completed_units > 0:
+                    remaining = total_units - completed_units
+                    if remaining <= 0:
+                        eta_seconds = 0
+                    else:
+                        elapsed_seconds = max(
+                            0.0,
+                            (updated_at - started_at).total_seconds(),
+                        )
+                        eta_seconds = max(
+                            0,
+                            int((elapsed_seconds / completed_units) * remaining),
+                        )
+
+        if current_stage is None:
+            explain = await self.explain_run(run_id)
+            explain_last_stage = explain.get("last_stage")
+            if isinstance(explain_last_stage, str) and explain_last_stage != "":
+                current_stage = explain_last_stage
+
+        return RunProgress(
+            run_id=run_id,
+            status=status,
+            percent=percent,
+            current_stage=current_stage,
+            completed_stages=completed_stages,
+            started_at=started_at,
+            updated_at=updated_at,
+            eta_seconds=eta_seconds,
         )
 
     async def list_active_runs(
@@ -683,6 +758,31 @@ class ArtanaKernel:
             if event.seq <= since_seq:
                 continue
             yield event
+
+    async def stream_run_progress(
+        self,
+        *,
+        run_id: str,
+        since_seq: int = 0,
+        follow: bool = False,
+        poll_interval_seconds: float = 0.5,
+        idle_timeout_seconds: float | None = None,
+    ) -> AsyncIterator[RunProgress]:
+        last_progress: RunProgress | None = None
+        if since_seq == 0:
+            last_progress = await self.get_run_progress(run_id=run_id)
+            yield last_progress
+        async for _event in self.stream_events(
+            run_id=run_id,
+            since_seq=since_seq,
+            follow=follow,
+            poll_interval_seconds=poll_interval_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+        ):
+            current_progress = await self.get_run_progress(run_id=run_id)
+            if last_progress is None or current_progress != last_progress:
+                last_progress = current_progress
+                yield current_progress
 
     async def acquire_run_lease(
         self,
@@ -1669,6 +1769,57 @@ def _run_status_from_snapshot(snapshot: RunStateSnapshotRecord) -> RunStatus:
         blocked_on=snapshot.blocked_on,
         failure_reason=snapshot.failure_reason,
     )
+
+
+def _run_progress_status_from_lifecycle(status: RunLifecycleStatus) -> RunProgressStatus:
+    if status in {"active", "paused"}:
+        return "running"
+    if status == "completed":
+        return "completed"
+    if status == "failed":
+        return "failed"
+    return "running"
+
+
+def _task_progress_units(
+    summary: RunSummaryPayload | None,
+) -> tuple[tuple[str, str], ...] | None:
+    if summary is None:
+        return None
+    try:
+        payload_raw = json.loads(summary.summary_json)
+    except json.JSONDecodeError:
+        return None
+    units_raw: object
+    if isinstance(payload_raw, dict):
+        units_raw = payload_raw.get("units")
+    elif isinstance(payload_raw, list):
+        units_raw = payload_raw
+    else:
+        return None
+    if not isinstance(units_raw, list):
+        return None
+
+    parsed: list[tuple[str, str]] = []
+    for unit_raw in units_raw:
+        if not isinstance(unit_raw, dict):
+            continue
+        unit_id = unit_raw.get("id")
+        state = unit_raw.get("state")
+        if not isinstance(unit_id, str) or unit_id == "":
+            continue
+        if state not in {"pending", "in_progress", "done"}:
+            continue
+        parsed.append((unit_id, state))
+    return tuple(parsed)
+
+
+def _clamp_percent(value: int) -> int:
+    if value < 0:
+        return 0
+    if value > 100:
+        return 100
+    return value
 
 
 def _normalize_risk_level(value: str) -> Literal["low", "medium", "high", "critical"]:

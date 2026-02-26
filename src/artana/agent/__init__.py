@@ -1,5 +1,9 @@
 from artana.agent.autonomous import AgentRunFailed, AutonomousAgent, MaxIterationsExceeded
-from artana.agent.client import KernelModelClient, SingleStepModelClient
+from artana.agent.client import (
+    KernelModelClient,
+    ModelClientCapabilities,
+    SingleStepModelClient,
+)
 from artana.agent.compaction import CompactionStrategy, estimate_tokens
 from artana.agent.context import ContextBuilder
 from artana.agent.experience import (
@@ -23,6 +27,7 @@ __all__ = [
     "ExperienceStore",
     "InMemoryMemoryStore",
     "KernelModelClient",
+    "ModelClientCapabilities",
     "MemoryStore",
     "ReflectionResult",
     "RuleType",

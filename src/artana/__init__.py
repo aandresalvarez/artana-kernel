@@ -9,6 +9,7 @@ from artana.agent import (
     ExperienceStore,
     KernelModelClient,
     MaxIterationsExceeded,
+    ModelClientCapabilities,
     ReflectionResult,
     RuleType,
     SingleStepModelClient,
@@ -47,6 +48,8 @@ from artana.kernel import (
     RunHandle,
     RunLease,
     RunLifecycleStatus,
+    RunProgress,
+    RunProgressStatus,
     RunRef,
     RunStatus,
     StepModelResult,
@@ -71,7 +74,7 @@ from artana.safety import (
     ToolLimitPolicy,
     ToolSafetyPolicy,
 )
-from artana.store import PostgresStore, SQLiteStore
+from artana.store import PostgresStore, SQLiteStore, StoreSchemaInfo
 from artana.testing import MockModelPort
 from artana.tools import CodingHarnessTools, ObservabilityTools
 from artana.util import StepKey
@@ -88,6 +91,7 @@ __all__ = [
     "ApprovalRequiredError",
     "CodingHarnessTools",
     "KernelModelClient",
+    "ModelClientCapabilities",
     "CompactionStrategy",
     "ContextBuilder",
     "DraftVerifyLoopConfig",
@@ -122,10 +126,13 @@ __all__ = [
     "RunLease",
     "RunHandle",
     "RunLifecycleStatus",
+    "RunProgress",
+    "RunProgressStatus",
     "RunRef",
     "RunStatus",
     "SingleStepModelClient",
     "SQLiteStore",
+    "StoreSchemaInfo",
     "StepModelResult",
     "StepToolResult",
     "StepSerde",

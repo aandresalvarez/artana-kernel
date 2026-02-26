@@ -25,6 +25,7 @@ from artana.store.base import (
     RunLeaseRecord,
     RunStateLifecycleStatus,
     RunStateSnapshotRecord,
+    StoreSchemaInfo,
     ToolSemanticOutcomeRecord,
 )
 from artana.store.snapshot_state import (
@@ -33,6 +34,7 @@ from artana.store.snapshot_state import (
 )
 
 _PAYLOAD_ADAPTER: TypeAdapter[EventPayload] = TypeAdapter(EventPayload)
+SQLITE_STORE_SCHEMA_VERSION = "1"
 
 
 class SQLiteStore(EventStore):
@@ -61,6 +63,12 @@ class SQLiteStore(EventStore):
         self._append_lock = asyncio.Lock()
         self._lease_lock = asyncio.Lock()
         self._on_event = on_event
+
+    async def get_schema_info(self) -> StoreSchemaInfo:
+        return StoreSchemaInfo(
+            backend="sqlite",
+            schema_version=SQLITE_STORE_SCHEMA_VERSION,
+        )
 
     async def append_event(
         self,

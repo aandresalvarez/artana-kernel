@@ -59,6 +59,12 @@ class RunLeaseRecord:
     lease_expires_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class StoreSchemaInfo:
+    backend: Literal["sqlite", "postgres"]
+    schema_version: str
+
+
 RunStateLifecycleStatus = Literal["active", "paused", "failed", "completed"]
 
 
@@ -166,6 +172,12 @@ class SupportsRunLeasing(Protocol):
         *,
         run_id: str,
     ) -> RunLeaseRecord | None:
+        ...
+
+
+@runtime_checkable
+class SupportsStoreSchemaInfo(Protocol):
+    async def get_schema_info(self) -> StoreSchemaInfo:
         ...
 
 

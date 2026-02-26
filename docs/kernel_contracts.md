@@ -18,6 +18,8 @@ High-level ergonomics note:
 
 - `KernelModelClient.step(...)` / `SingleStepModelClient.step(...)` generate a deterministic step key when `step_key` is omitted.
 - For long-lived workflows where you intentionally evolve prompts/options, explicit `StepKey(...)` values are still recommended.
+- `KernelModelClient.capabilities()` exposes whether the bound kernel supports `replay_policy` and `context_version`.
+- Mixed-version compatibility: if unsupported kwargs are detected, the client retries once without unsupported kwargs and emits a warning.
 
 ## Kernel Policy Modes
 
@@ -30,6 +32,8 @@ High-level ergonomics note:
 Kernel orchestration syscalls now include:
 
 - `get_run_status(run_id)`
+- `get_run_progress(run_id)`
+- `stream_run_progress(run_id, since_seq=0, follow=False, ...)`
 - `list_active_runs(tenant_id, ...)`
 - `resume_point(run_id)`
 - `block_run(...)`
@@ -41,6 +45,14 @@ Status semantics:
 - `paused`: latest unresolved `pause_requested` exists.
 - `failed`: harness-level failure recorded.
 - `completed`: harness sleep recorded with completed status.
+
+Run progress semantics:
+
+- `status`: `running|completed|failed` (`queued` and `cancelled` are reserved for future lifecycle support).
+- `percent`: deterministic integer in `[0, 100]`.
+- `current_stage`: best-known active stage from `task_progress` summaries, otherwise `explain_run().last_stage`.
+- `completed_stages`: ordered stage ids from `task_progress` entries with `state=done`.
+- `eta_seconds`: provided only when deterministic signal is sufficient; otherwise `null`.
 
 ## Model Request Invariants
 
@@ -243,6 +255,14 @@ Run-lease contracts for multi-worker schedulers:
 - `renew_run_lease(run_id, worker_id, ttl_seconds)`
 - `release_run_lease(run_id, worker_id)`
 - `get_run_lease(run_id)`
+
+## Versioning and Compatibility Contracts
+
+- Tagged `0.x` releases are tracked in `CHANGELOG.md`.
+- Runtime and store compatibility matrix is published in `docs/compatibility_matrix.md`.
+- Store backends expose schema metadata via `get_schema_info()` returning:
+  - `backend`: `sqlite|postgres`
+  - `schema_version`: backend schema contract version string
 
 ## CLI Operational Contracts
 

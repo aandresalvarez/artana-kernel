@@ -25,6 +25,7 @@ from artana.store.base import (
     RunLeaseRecord,
     RunStateLifecycleStatus,
     RunStateSnapshotRecord,
+    StoreSchemaInfo,
     ToolSemanticOutcomeRecord,
 )
 from artana.store.snapshot_state import (
@@ -33,6 +34,7 @@ from artana.store.snapshot_state import (
 )
 
 _PAYLOAD_ADAPTER: TypeAdapter[EventPayload] = TypeAdapter(EventPayload)
+POSTGRES_STORE_SCHEMA_VERSION = "1"
 
 
 class PostgresStore(EventStore):
@@ -70,6 +72,12 @@ class PostgresStore(EventStore):
 
         self._pool: asyncpg.Pool | None = None
         self._pool_lock = asyncio.Lock()
+
+    async def get_schema_info(self) -> StoreSchemaInfo:
+        return StoreSchemaInfo(
+            backend="postgres",
+            schema_version=POSTGRES_STORE_SCHEMA_VERSION,
+        )
 
     async def append_event(
         self,
