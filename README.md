@@ -776,6 +776,7 @@ Run examples from the repository root:
 ## Growth Path
 
 - **Phase 1 (Shipped):** SQLite backend, strict replay semantics, Autonomous Agent runtime (compaction/memory/progressive skills/sub-agents), inter-run Experience Engine (tenant/task rule memory + reflection), Workflow contexts.
-- **Phase 2 (In progress):** Postgres backend for multi-worker concurrency (now available), plus Snapshotting and Advanced Observability (Logfire tracing decorators).
+- **Phase 2 (Shipped):** Postgres backend for multi-worker concurrency, run-state snapshot acceleration for status/resume/explain/list APIs, and deep traceability/CLI observability surfaces.
+- **External Tracing (Deferred):** Logfire/OpenTelemetry decorators are intentionally deferred until cross-service tracing requirements justify the integration overhead.
 - **Phase 3:** Optional integration with Temporal, distributed execution model, enterprise policy engines (OPA).
  

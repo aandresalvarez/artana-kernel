@@ -205,6 +205,23 @@ artana run tail <run_id> --db .state.db --since-seq 0
 
 Use `--dsn postgresql://...` for shared deployments.
 
+### 11. External tracing status (deferred)
+
+Current production path is ledger-native traceability:
+
+- lifecycle events
+- `trace::...` run summaries
+- CLI/event-stream inspection
+
+External tracing decorators (Logfire/OpenTelemetry) are intentionally deferred.
+Trigger conditions for enabling them:
+
+- need to correlate kernel spans with external services/APIs across process boundaries
+- incident-response workflows requiring centralized distributed-trace timelines
+- clear SLO/MTTR evidence that built-in ledger traces are insufficient
+
+Until those triggers appear, Artana keeps observability deterministic and store-native.
+
 ## API surface
 
 ### Kernel

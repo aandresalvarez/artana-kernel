@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from artana.events import EventPayload, EventType, KernelEvent, RunSummaryPayload
 
@@ -57,6 +57,31 @@ class RunLeaseRecord:
     run_id: str
     worker_id: str
     lease_expires_at: datetime
+
+
+RunStateLifecycleStatus = Literal["active", "paused", "failed", "completed"]
+
+
+@dataclass(frozen=True, slots=True)
+class RunStateSnapshotRecord:
+    run_id: str
+    tenant_id: str
+    last_event_seq: int
+    last_event_type: str
+    updated_at: datetime
+    status: RunStateLifecycleStatus
+    blocked_on: str | None
+    failure_reason: str | None
+    last_step_key: str | None
+    drift_count: int
+    last_stage: str | None
+    last_tool: str | None
+    model_cost_total: float
+    open_pause_count: int
+    # Internal explain_run acceleration fields.
+    explain_status: Literal["completed", "failed"] = "completed"
+    explain_failure_reason: str | None = None
+    explain_failure_step: str | None = None
 
 
 @runtime_checkable
@@ -141,4 +166,23 @@ class SupportsRunLeasing(Protocol):
         *,
         run_id: str,
     ) -> RunLeaseRecord | None:
+        ...
+
+
+@runtime_checkable
+class SupportsRunStateSnapshots(Protocol):
+    async def get_run_state_snapshot(
+        self,
+        *,
+        run_id: str,
+    ) -> RunStateSnapshotRecord | None:
+        ...
+
+    async def list_run_state_snapshots(
+        self,
+        *,
+        tenant_id: str,
+        since: datetime | None = None,
+        status: RunStateLifecycleStatus | None = None,
+    ) -> list[RunStateSnapshotRecord]:
         ...

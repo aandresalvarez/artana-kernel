@@ -72,10 +72,12 @@ from artana.ports.tool import LocalToolRegistry, ToolPort, ToolRiskLevel
 from artana.safety import IntentPlanRecord
 from artana.store.base import (
     EventStore,
+    RunStateSnapshotRecord,
     SupportsEventStreaming,
     SupportsModelCostAggregation,
     SupportsRunIndexing,
     SupportsRunLeasing,
+    SupportsRunStateSnapshots,
 )
 
 WorkflowOutputT = TypeVar("WorkflowOutputT")
@@ -219,6 +221,24 @@ class ArtanaKernel:
         self,
         run_id: str,
     ) -> dict[str, object]:
+        if isinstance(self._store, SupportsRunStateSnapshots):
+            snapshot = await self._store.get_run_state_snapshot(run_id=run_id)
+            if snapshot is not None:
+                status = snapshot.explain_status
+                snapshot_failure_reason = snapshot.explain_failure_reason
+                if status == "completed" and snapshot_failure_reason is not None:
+                    status = "failed"
+                return {
+                    "status": status,
+                    "last_stage": snapshot.last_stage,
+                    "last_tool": snapshot.last_tool,
+                    "drift_count": snapshot.drift_count,
+                    "drift_events": snapshot.drift_count,
+                    "failure_reason": snapshot_failure_reason,
+                    "failure_step": snapshot.explain_failure_step,
+                    "cost_total": snapshot.model_cost_total,
+                }
+
         events = await self._store.get_events_for_run(run_id)
         if not events:
             raise ValueError(f"No events found for run_id={run_id!r}.")
@@ -293,6 +313,11 @@ class ArtanaKernel:
         }
 
     async def get_run_status(self, *, run_id: str) -> RunStatus:
+        if isinstance(self._store, SupportsRunStateSnapshots):
+            snapshot = await self._store.get_run_state_snapshot(run_id=run_id)
+            if snapshot is not None:
+                return _run_status_from_snapshot(snapshot)
+
         events = await self._store.get_events_for_run(run_id)
         if not events:
             raise ValueError(f"No events found for run_id={run_id!r}.")
@@ -316,6 +341,21 @@ class ArtanaKernel:
         status: RunLifecycleStatus | None = None,
         since: datetime | None = None,
     ) -> tuple[RunStatus, ...]:
+        if isinstance(self._store, SupportsRunStateSnapshots):
+            snapshots = await self._store.list_run_state_snapshots(
+                tenant_id=tenant_id,
+                since=since,
+                status=status,
+            )
+            snapshot_statuses = tuple(_run_status_from_snapshot(snapshot) for snapshot in snapshots)
+            if status is None:
+                return tuple(
+                    run_status
+                    for run_status in snapshot_statuses
+                    if run_status.status in {"active", "paused"}
+                )
+            return snapshot_statuses
+
         if not isinstance(self._store, SupportsRunIndexing):
             raise RuntimeError(
                 "list_active_runs requires a store implementing SupportsRunIndexing."
@@ -337,6 +377,16 @@ class ArtanaKernel:
         return tuple(statuses)
 
     async def resume_point(self, *, run_id: str) -> ResumePoint:
+        if isinstance(self._store, SupportsRunStateSnapshots):
+            snapshot = await self._store.get_run_state_snapshot(run_id=run_id)
+            if snapshot is not None:
+                return ResumePoint(
+                    run_id=run_id,
+                    last_event_seq=snapshot.last_event_seq,
+                    last_step_key=snapshot.last_step_key,
+                    blocked_on=snapshot.blocked_on,
+                )
+
         events = await self._store.get_events_for_run(run_id)
         if not events:
             raise ValueError(f"No events found for run_id={run_id!r}.")
@@ -1606,6 +1656,19 @@ def _latest_step_key(events: Sequence[KernelEvent]) -> str | None:
         if isinstance(event.parent_step_key, str):
             return event.parent_step_key
     return None
+
+
+def _run_status_from_snapshot(snapshot: RunStateSnapshotRecord) -> RunStatus:
+    return RunStatus(
+        run_id=snapshot.run_id,
+        tenant_id=snapshot.tenant_id,
+        status=snapshot.status,
+        last_event_seq=snapshot.last_event_seq,
+        last_event_type=snapshot.last_event_type,
+        updated_at=snapshot.updated_at,
+        blocked_on=snapshot.blocked_on,
+        failure_reason=snapshot.failure_reason,
+    )
 
 
 def _normalize_risk_level(value: str) -> Literal["low", "medium", "high", "critical"]:

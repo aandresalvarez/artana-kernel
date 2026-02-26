@@ -12,8 +12,12 @@ import pytest
 from artana.events import (
     ChatMessage,
     EventType,
+    HarnessSleepPayload,
     ModelCompletedPayload,
     ModelRequestedPayload,
+    PauseRequestedPayload,
+    ResumeRequestedPayload,
+    RunStartedPayload,
     RunSummaryPayload,
     ToolCompletedPayload,
     ToolRequestedPayload,
@@ -323,6 +327,129 @@ async def test_tool_policy_columns_and_aggregates_are_queryable(store: PostgresS
             "idx_kernel_events_tenant_tool_time",
             "idx_kernel_events_run_tool_seq",
             "idx_kernel_events_tool_semantic",
+        }.issubset(indexes)
+    finally:
+        await schema_connection.close()
+
+
+@pytest.mark.asyncio
+async def test_run_state_snapshots_are_queryable(store: PostgresStore) -> None:
+    run_active = _run_id("run_pg_snapshot_active")
+    run_done = _run_id("run_pg_snapshot_done")
+
+    await store.append_event(
+        run_id=run_active,
+        tenant_id="tenant_pg_snapshot",
+        event_type=EventType.RUN_STARTED,
+        payload=RunStartedPayload(),
+    )
+    await store.append_event(
+        run_id=run_active,
+        tenant_id="tenant_pg_snapshot",
+        event_type=EventType.PAUSE_REQUESTED,
+        payload=PauseRequestedPayload(
+            reason="approval needed",
+            context_json='{"approval_key":"approval_pg_1"}',
+        ),
+    )
+    await store.append_event(
+        run_id=run_active,
+        tenant_id="tenant_pg_snapshot",
+        event_type=EventType.RESUME_REQUESTED,
+        payload=ResumeRequestedPayload(),
+    )
+    await store.append_event(
+        run_id=run_active,
+        tenant_id="tenant_pg_snapshot",
+        event_type=EventType.MODEL_COMPLETED,
+        payload=ModelCompletedPayload(
+            model="gpt-4o-mini",
+            output_json='{"ok":true}',
+            prompt_tokens=3,
+            completion_tokens=2,
+            cost_usd=0.2,
+        ),
+    )
+
+    await store.append_event(
+        run_id=run_done,
+        tenant_id="tenant_pg_snapshot",
+        event_type=EventType.RUN_STARTED,
+        payload=RunStartedPayload(),
+    )
+    await store.append_event(
+        run_id=run_done,
+        tenant_id="tenant_pg_snapshot",
+        event_type=EventType.HARNESS_SLEEP,
+        payload=HarnessSleepPayload(status="completed"),
+    )
+
+    snapshot = await store.get_run_state_snapshot(run_id=run_active)
+    assert snapshot is not None
+    assert snapshot.status == "active"
+    assert snapshot.blocked_on is None
+    assert snapshot.model_cost_total == pytest.approx(0.2)
+    assert snapshot.last_event_type == EventType.MODEL_COMPLETED.value
+
+    active = await store.list_run_state_snapshots(
+        tenant_id="tenant_pg_snapshot",
+        status="active",
+    )
+    assert [item.run_id for item in active] == [run_active]
+
+    completed = await store.list_run_state_snapshots(
+        tenant_id="tenant_pg_snapshot",
+        status="completed",
+    )
+    assert [item.run_id for item in completed] == [run_done]
+
+    recent = await store.list_run_state_snapshots(
+        tenant_id="tenant_pg_snapshot",
+        since=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    assert {item.run_id for item in recent} == {run_active, run_done}
+
+    schema_connection = await asyncpg.connect(_dsn_for_tests())
+    try:
+        column_rows = await schema_connection.fetch(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'run_state_snapshots'
+            """
+        )
+        columns = {str(row["column_name"]) for row in column_rows}
+        assert {
+            "run_id",
+            "tenant_id",
+            "last_event_seq",
+            "last_event_type",
+            "updated_at",
+            "status",
+            "blocked_on",
+            "failure_reason",
+            "last_step_key",
+            "drift_count",
+            "last_stage",
+            "last_tool",
+            "model_cost_total",
+            "open_pause_count",
+            "explain_status",
+            "explain_failure_reason",
+            "explain_failure_step",
+        }.issubset(columns)
+
+        index_rows = await schema_connection.fetch(
+            """
+            SELECT indexname
+            FROM pg_indexes
+            WHERE tablename = 'run_state_snapshots'
+            """
+        )
+        indexes = {str(row["indexname"]) for row in index_rows}
+        assert {
+            "idx_run_state_snapshots_tenant_updated",
+            "idx_run_state_snapshots_tenant_status_updated",
         }.issubset(indexes)
     finally:
         await schema_connection.close()

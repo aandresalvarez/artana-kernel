@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
 
 import pytest
 from pydantic import BaseModel
 
-from artana.events import EventType, HarnessSleepPayload
+from artana.events import (
+    EventPayload,
+    EventType,
+    HarnessSleepPayload,
+    KernelEvent,
+    RunSummaryPayload,
+)
 from artana.kernel import ArtanaKernel
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage
 from artana.store import SQLiteStore
+from artana.store.base import EventStore, SupportsModelCostAggregation, SupportsRunIndexing
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
@@ -28,6 +36,55 @@ class PlainModelPort:
             output=output,
             usage=ModelUsage(prompt_tokens=1, completion_tokens=1, cost_usd=0.001),
         )
+
+
+class SnapshotBlindStore(EventStore, SupportsRunIndexing, SupportsModelCostAggregation):
+    def __init__(self, inner: SQLiteStore) -> None:
+        self._inner = inner
+
+    async def append_event(
+        self,
+        *,
+        run_id: str,
+        tenant_id: str,
+        event_type: EventType,
+        payload: EventPayload,
+        parent_step_key: str | None = None,
+    ) -> KernelEvent:
+        return await self._inner.append_event(
+            run_id=run_id,
+            tenant_id=tenant_id,
+            event_type=event_type,
+            payload=payload,
+            parent_step_key=parent_step_key,
+        )
+
+    async def get_events_for_run(self, run_id: str) -> list[KernelEvent]:
+        return await self._inner.get_events_for_run(run_id)
+
+    async def get_latest_run_summary(
+        self,
+        run_id: str,
+        summary_type: str,
+    ) -> RunSummaryPayload | None:
+        return await self._inner.get_latest_run_summary(run_id, summary_type)
+
+    async def verify_run_chain(self, run_id: str) -> bool:
+        return await self._inner.verify_run_chain(run_id)
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+    async def list_run_ids(
+        self,
+        *,
+        tenant_id: str | None = None,
+        since: datetime | None = None,
+    ) -> list[str]:
+        return await self._inner.list_run_ids(tenant_id=tenant_id, since=since)
+
+    async def get_model_cost_sum_for_run(self, run_id: str) -> float:
+        return await self._inner.get_model_cost_sum_for_run(run_id)
 
 
 def _tenant(*, capabilities: frozenset[str] = frozenset()) -> TenantContext:
@@ -312,3 +369,40 @@ async def test_list_active_runs_filters_terminal_runs(tmp_path: Path) -> None:
         assert {run.run_id for run in paused_runs} == {"run_paused"}
     finally:
         await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_run_state_snapshot_path_matches_fallback_path(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    snapshot_kernel = ArtanaKernel(store=store, model_port=PlainModelPort())
+    fallback_kernel = ArtanaKernel(store=SnapshotBlindStore(store), model_port=PlainModelPort())
+    tenant = _tenant()
+    try:
+        await snapshot_kernel.start_run(tenant=tenant, run_id="run_snapshot_compare")
+        await snapshot_kernel.block_run(
+            run_id="run_snapshot_compare",
+            tenant=tenant,
+            reason="approval needed",
+            unblock_key="approval_1",
+        )
+        await snapshot_kernel.unblock_run(
+            run_id="run_snapshot_compare",
+            tenant=tenant,
+            unblock_key="approval_1",
+        )
+
+        assert await snapshot_kernel.get_run_status(
+            run_id="run_snapshot_compare"
+        ) == await fallback_kernel.get_run_status(run_id="run_snapshot_compare")
+        assert await snapshot_kernel.resume_point(
+            run_id="run_snapshot_compare"
+        ) == await fallback_kernel.resume_point(run_id="run_snapshot_compare")
+        assert await snapshot_kernel.explain_run(
+            "run_snapshot_compare"
+        ) == await fallback_kernel.explain_run("run_snapshot_compare")
+        assert await snapshot_kernel.list_active_runs(
+            tenant_id=tenant.tenant_id
+        ) == await fallback_kernel.list_active_runs(tenant_id=tenant.tenant_id)
+    finally:
+        await fallback_kernel.close()
+        await snapshot_kernel.close()

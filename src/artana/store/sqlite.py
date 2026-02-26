@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import aiosqlite
@@ -19,7 +20,17 @@ from artana.events import (
     ToolRequestedPayload,
     compute_event_hash,
 )
-from artana.store.base import EventStore, RunLeaseRecord, ToolSemanticOutcomeRecord
+from artana.store.base import (
+    EventStore,
+    RunLeaseRecord,
+    RunStateLifecycleStatus,
+    RunStateSnapshotRecord,
+    ToolSemanticOutcomeRecord,
+)
+from artana.store.snapshot_state import (
+    apply_event_to_run_state_snapshot,
+    initialize_run_state_snapshot,
+)
 
 _PAYLOAD_ADAPTER: TypeAdapter[EventPayload] = TypeAdapter(EventPayload)
 
@@ -421,6 +432,91 @@ class SQLiteStore(EventStore):
             run_ids.append(run_id_obj)
         return run_ids
 
+    async def get_run_state_snapshot(
+        self,
+        *,
+        run_id: str,
+    ) -> RunStateSnapshotRecord | None:
+        connection = await self._ensure_connection()
+        cursor = await connection.execute(
+            """
+            SELECT
+                run_id,
+                tenant_id,
+                last_event_seq,
+                last_event_type,
+                updated_at,
+                status,
+                blocked_on,
+                failure_reason,
+                last_step_key,
+                drift_count,
+                last_stage,
+                last_tool,
+                model_cost_total,
+                open_pause_count,
+                explain_status,
+                explain_failure_reason,
+                explain_failure_step
+            FROM run_state_snapshots
+            WHERE run_id = ?
+            LIMIT 1
+            """,
+            (run_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return None
+        return _snapshot_from_row(row)
+
+    async def list_run_state_snapshots(
+        self,
+        *,
+        tenant_id: str,
+        since: datetime | None = None,
+        status: RunStateLifecycleStatus | None = None,
+    ) -> list[RunStateSnapshotRecord]:
+        connection = await self._ensure_connection()
+        where_clauses = ["tenant_id = ?"]
+        parameters: list[object] = [tenant_id]
+        if since is not None:
+            where_clauses.append("updated_at >= ?")
+            parameters.append(since.isoformat())
+        if status is not None:
+            where_clauses.append("status = ?")
+            parameters.append(status)
+        where_sql = " AND ".join(where_clauses)
+        cursor = await connection.execute(
+            f"""
+            SELECT
+                run_id,
+                tenant_id,
+                last_event_seq,
+                last_event_type,
+                updated_at,
+                status,
+                blocked_on,
+                failure_reason,
+                last_step_key,
+                drift_count,
+                last_stage,
+                last_tool,
+                model_cost_total,
+                open_pause_count,
+                explain_status,
+                explain_failure_reason,
+                explain_failure_step
+            FROM run_state_snapshots
+            WHERE {where_sql}
+            ORDER BY updated_at DESC
+            """,
+            tuple(parameters),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [_snapshot_from_row(row) for row in rows]
+
     async def stream_events(
         self,
         run_id: str,
@@ -758,6 +854,41 @@ class SQLiteStore(EventStore):
                     ON run_leases (lease_expires_at)
                     """
                 )
+                await connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS run_state_snapshots (
+                        run_id TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL,
+                        last_event_seq INTEGER NOT NULL,
+                        last_event_type TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        blocked_on TEXT,
+                        failure_reason TEXT,
+                        last_step_key TEXT,
+                        drift_count INTEGER NOT NULL,
+                        last_stage TEXT,
+                        last_tool TEXT,
+                        model_cost_total REAL NOT NULL,
+                        open_pause_count INTEGER NOT NULL,
+                        explain_status TEXT NOT NULL,
+                        explain_failure_reason TEXT,
+                        explain_failure_step TEXT
+                    )
+                    """
+                )
+                await connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_run_state_snapshots_tenant_updated
+                    ON run_state_snapshots (tenant_id, updated_at DESC)
+                    """
+                )
+                await connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_run_state_snapshots_tenant_status_updated
+                    ON run_state_snapshots (tenant_id, status, updated_at DESC)
+                    """
+                )
                 await connection.commit()
                 return
             except aiosqlite.OperationalError as exc:
@@ -870,11 +1001,112 @@ class SQLiteStore(EventStore):
                     tool_amount_usd,
                 ),
             )
+            await self._upsert_run_state_snapshot(connection=connection, event=event)
             await connection.commit()
             return event
         except Exception:
             await _rollback_quietly(connection)
             raise
+
+    async def _upsert_run_state_snapshot(
+        self,
+        *,
+        connection: aiosqlite.Connection,
+        event: KernelEvent,
+    ) -> None:
+        existing_cursor = await connection.execute(
+            """
+            SELECT
+                run_id,
+                tenant_id,
+                last_event_seq,
+                last_event_type,
+                updated_at,
+                status,
+                blocked_on,
+                failure_reason,
+                last_step_key,
+                drift_count,
+                last_stage,
+                last_tool,
+                model_cost_total,
+                open_pause_count,
+                explain_status,
+                explain_failure_reason,
+                explain_failure_step
+            FROM run_state_snapshots
+            WHERE run_id = ?
+            LIMIT 1
+            """,
+            (event.run_id,),
+        )
+        row = await existing_cursor.fetchone()
+        await existing_cursor.close()
+
+        next_snapshot = (
+            apply_event_to_run_state_snapshot(snapshot=_snapshot_from_row(row), event=event)
+            if row is not None
+            else initialize_run_state_snapshot(event=event)
+        )
+        await connection.execute(
+            """
+            INSERT INTO run_state_snapshots (
+                run_id,
+                tenant_id,
+                last_event_seq,
+                last_event_type,
+                updated_at,
+                status,
+                blocked_on,
+                failure_reason,
+                last_step_key,
+                drift_count,
+                last_stage,
+                last_tool,
+                model_cost_total,
+                open_pause_count,
+                explain_status,
+                explain_failure_reason,
+                explain_failure_step
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                last_event_seq = excluded.last_event_seq,
+                last_event_type = excluded.last_event_type,
+                updated_at = excluded.updated_at,
+                status = excluded.status,
+                blocked_on = excluded.blocked_on,
+                failure_reason = excluded.failure_reason,
+                last_step_key = excluded.last_step_key,
+                drift_count = excluded.drift_count,
+                last_stage = excluded.last_stage,
+                last_tool = excluded.last_tool,
+                model_cost_total = excluded.model_cost_total,
+                open_pause_count = excluded.open_pause_count,
+                explain_status = excluded.explain_status,
+                explain_failure_reason = excluded.explain_failure_reason,
+                explain_failure_step = excluded.explain_failure_step
+            """,
+            (
+                next_snapshot.run_id,
+                next_snapshot.tenant_id,
+                next_snapshot.last_event_seq,
+                next_snapshot.last_event_type,
+                next_snapshot.updated_at.isoformat(),
+                next_snapshot.status,
+                next_snapshot.blocked_on,
+                next_snapshot.failure_reason,
+                next_snapshot.last_step_key,
+                next_snapshot.drift_count,
+                next_snapshot.last_stage,
+                next_snapshot.last_tool,
+                next_snapshot.model_cost_total,
+                next_snapshot.open_pause_count,
+                next_snapshot.explain_status,
+                next_snapshot.explain_failure_reason,
+                next_snapshot.explain_failure_step,
+            ),
+        )
 
     async def _sum_model_cost_via_events(self, *, run_id: str) -> float:
         events = await self.get_events_for_run(run_id)
@@ -913,6 +1145,110 @@ class SQLiteStore(EventStore):
         if delay > 1.0:
             return 1.0
         return float(delay)
+
+
+def _snapshot_from_row(row: aiosqlite.Row) -> RunStateSnapshotRecord:
+    run_id_obj: object = row["run_id"]
+    tenant_id_obj: object = row["tenant_id"]
+    seq_obj: object = row["last_event_seq"]
+    event_type_obj: object = row["last_event_type"]
+    updated_at_obj: object = row["updated_at"]
+    status_obj: object = row["status"]
+    blocked_on_obj: object = row["blocked_on"]
+    failure_reason_obj: object = row["failure_reason"]
+    last_step_key_obj: object = row["last_step_key"]
+    drift_count_obj: object = row["drift_count"]
+    last_stage_obj: object = row["last_stage"]
+    last_tool_obj: object = row["last_tool"]
+    model_cost_total_obj: object = row["model_cost_total"]
+    open_pause_count_obj: object = row["open_pause_count"]
+    explain_status_obj: object = row["explain_status"]
+    explain_failure_reason_obj: object = row["explain_failure_reason"]
+    explain_failure_step_obj: object = row["explain_failure_step"]
+
+    if not isinstance(run_id_obj, str):
+        raise TypeError(f"Invalid run_id row type: {type(run_id_obj)!r}")
+    if not isinstance(tenant_id_obj, str):
+        raise TypeError(f"Invalid tenant_id row type: {type(tenant_id_obj)!r}")
+    if not isinstance(seq_obj, int):
+        raise TypeError(f"Invalid last_event_seq row type: {type(seq_obj)!r}")
+    if not isinstance(event_type_obj, str):
+        raise TypeError(f"Invalid last_event_type row type: {type(event_type_obj)!r}")
+    if not isinstance(updated_at_obj, str):
+        raise TypeError(f"Invalid updated_at row type: {type(updated_at_obj)!r}")
+    if not isinstance(status_obj, str):
+        raise TypeError(f"Invalid status row type: {type(status_obj)!r}")
+    if blocked_on_obj is not None and not isinstance(blocked_on_obj, str):
+        raise TypeError(f"Invalid blocked_on row type: {type(blocked_on_obj)!r}")
+    if failure_reason_obj is not None and not isinstance(failure_reason_obj, str):
+        raise TypeError(f"Invalid failure_reason row type: {type(failure_reason_obj)!r}")
+    if last_step_key_obj is not None and not isinstance(last_step_key_obj, str):
+        raise TypeError(f"Invalid last_step_key row type: {type(last_step_key_obj)!r}")
+    if not isinstance(drift_count_obj, int):
+        raise TypeError(f"Invalid drift_count row type: {type(drift_count_obj)!r}")
+    if last_stage_obj is not None and not isinstance(last_stage_obj, str):
+        raise TypeError(f"Invalid last_stage row type: {type(last_stage_obj)!r}")
+    if last_tool_obj is not None and not isinstance(last_tool_obj, str):
+        raise TypeError(f"Invalid last_tool row type: {type(last_tool_obj)!r}")
+    if not isinstance(model_cost_total_obj, (int, float)):
+        raise TypeError(f"Invalid model_cost_total row type: {type(model_cost_total_obj)!r}")
+    if not isinstance(open_pause_count_obj, int):
+        raise TypeError(f"Invalid open_pause_count row type: {type(open_pause_count_obj)!r}")
+    if not isinstance(explain_status_obj, str):
+        raise TypeError(f"Invalid explain_status row type: {type(explain_status_obj)!r}")
+    if explain_failure_reason_obj is not None and not isinstance(explain_failure_reason_obj, str):
+        raise TypeError(
+            f"Invalid explain_failure_reason row type: {type(explain_failure_reason_obj)!r}"
+        )
+    if explain_failure_step_obj is not None and not isinstance(explain_failure_step_obj, str):
+        raise TypeError(
+            f"Invalid explain_failure_step row type: {type(explain_failure_step_obj)!r}"
+        )
+
+    updated_at = datetime.fromisoformat(updated_at_obj)
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    status = _coerce_snapshot_status(status_obj)
+    explain_status = _coerce_explain_status(explain_status_obj)
+    return RunStateSnapshotRecord(
+        run_id=run_id_obj,
+        tenant_id=tenant_id_obj,
+        last_event_seq=seq_obj,
+        last_event_type=event_type_obj,
+        updated_at=updated_at,
+        status=status,
+        blocked_on=blocked_on_obj,
+        failure_reason=failure_reason_obj,
+        last_step_key=last_step_key_obj,
+        drift_count=drift_count_obj,
+        last_stage=last_stage_obj,
+        last_tool=last_tool_obj,
+        model_cost_total=float(model_cost_total_obj),
+        open_pause_count=open_pause_count_obj,
+        explain_status=explain_status,
+        explain_failure_reason=explain_failure_reason_obj,
+        explain_failure_step=explain_failure_step_obj,
+    )
+
+
+def _coerce_snapshot_status(status: str) -> RunStateLifecycleStatus:
+    if status == "active":
+        return "active"
+    if status == "paused":
+        return "paused"
+    if status == "failed":
+        return "failed"
+    if status == "completed":
+        return "completed"
+    raise TypeError(f"Invalid snapshot status value: {status!r}")
+
+
+def _coerce_explain_status(status: str) -> Literal["completed", "failed"]:
+    if status == "completed":
+        return "completed"
+    if status == "failed":
+        return "failed"
+    raise TypeError(f"Invalid snapshot explain_status value: {status!r}")
 
 
 def _tool_columns_from_payload(
