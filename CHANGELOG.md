@@ -14,6 +14,8 @@ All notable changes to `artana-kernel` are documented in this file.
 - Progress types:
   - `RunProgressStatus`
   - `RunProgress`
+- Postgres read-path retry hardening for transient connection-lifecycle failures
+  (for example connection-closed mid-operation).
 - Store schema metadata contract:
   - `StoreSchemaInfo`
   - `SQLiteStore.get_schema_info()`
@@ -25,6 +27,8 @@ All notable changes to `artana-kernel` are documented in this file.
 
 - Expanded kernel contracts for run progress and mixed-version client behavior.
 - Added release/compatibility references in `README.md`.
+- Documented event-loop ownership expectations and FastAPI lifespan usage for long-lived kernel/store instances.
+- Documented Postgres transient read retry semantics in contracts/compatibility docs.
 
 ## [0.1.0] - 2026-02-26
 

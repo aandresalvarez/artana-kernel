@@ -31,6 +31,12 @@ This matrix defines runtime API and store schema compatibility for `0.x` release
 
 Both backends expose their declared schema via `get_schema_info()`.
 
+## Store runtime behavior compatibility
+
+| Store backend | Behavior | Compatibility expectation |
+| --- | --- | --- |
+| Postgres (`PostgresStore`) | Read-path retries for transient connection-lifecycle failures with pool invalidation/reconnect | Supported in current `0.1.x`; tuned by `max_retry_attempts` and `retry_backoff_seconds`. |
+
 ## Upgrade guidance
 
 - Read `CHANGELOG.md` before upgrading.

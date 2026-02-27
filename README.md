@@ -491,6 +491,45 @@ kernel = ArtanaKernel(
 )
 ```
 
+### Event Loop Ownership
+`ArtanaKernel` and `PostgresStore` are async, loop-affine runtime objects.
+
+- Initialize one long-lived kernel/store per process on your app event loop.
+- Reuse that instance across requests; do not wrap each call with `asyncio.run(...)`.
+- If sync handlers must call kernel APIs, bridge to the owning loop (for example
+  with `anyio.from_thread.run(...)`).
+- Call `await kernel.close()` once during application shutdown after in-flight
+  work is drained.
+
+FastAPI lifespan pattern:
+```python
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    kernel = ArtanaKernel(
+        store=PostgresStore("postgresql://user:pass@localhost:5432/artana"),
+        model_port=LiteLLMAdapter(),
+    )
+    app.state.artana_kernel = kernel
+    try:
+        yield
+    finally:
+        await kernel.close()
+
+app = FastAPI(lifespan=lifespan)
+
+@app.get("/runs/{run_id}/progress")
+async def run_progress(run_id: str, request: Request):
+    kernel: ArtanaKernel = request.app.state.artana_kernel
+    return await kernel.get_run_progress(run_id=run_id)
+```
+
+`PostgresStore` also retries transient read-path connection lifecycle failures
+(for example `ConnectionDoesNotExistError`) up to `max_retry_attempts`, with
+pool invalidation/reconnect between attempts.
+
 Use `KernelPolicy.enforced()` for baseline enforcement. Use
 `KernelPolicy.enforced_v2()` + `SafetyPolicyMiddleware` when tools can create
 external side effects (payments, emails, deletes, transfers).

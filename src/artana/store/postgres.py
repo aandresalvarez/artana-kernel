@@ -5,7 +5,7 @@ import hashlib
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Literal, TypeVar
 from uuid import uuid4
 
 import asyncpg  # type: ignore[import-untyped]
@@ -35,6 +35,7 @@ from artana.store.snapshot_state import (
 
 _PAYLOAD_ADAPTER: TypeAdapter[EventPayload] = TypeAdapter(EventPayload)
 POSTGRES_STORE_SCHEMA_VERSION = "1"
+_ReadResultT = TypeVar("_ReadResultT")
 
 
 class PostgresStore(EventStore):
@@ -114,18 +115,16 @@ class PostgresStore(EventStore):
         raise RuntimeError("Failed to append event due to repeated Postgres write contention.")
 
     async def get_events_for_run(self, run_id: str) -> list[KernelEvent]:
-        pool = await self._ensure_pool()
-        async with pool.acquire() as connection:
-            rows = await connection.fetch(
-                """
-                SELECT run_id, seq, event_id, tenant_id, event_type, prev_event_hash,
-                       event_hash, parent_step_key, timestamp, payload_json
-                FROM kernel_events
-                WHERE run_id = $1
-                ORDER BY seq ASC
-                """,
-                run_id,
-            )
+        rows = await self._fetch(
+            """
+            SELECT run_id, seq, event_id, tenant_id, event_type, prev_event_hash,
+                   event_hash, parent_step_key, timestamp, payload_json
+            FROM kernel_events
+            WHERE run_id = $1
+            ORDER BY seq ASC
+            """,
+            run_id,
+        )
 
         events: list[KernelEvent] = []
         for row in rows:
@@ -137,22 +136,20 @@ class PostgresStore(EventStore):
         run_id: str,
         summary_type: str,
     ) -> RunSummaryPayload | None:
-        pool = await self._ensure_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                SELECT payload_json
-                FROM kernel_events
-                WHERE run_id = $1
-                  AND event_type = $2
-                  AND (payload_json::jsonb ->> 'summary_type') = $3
-                ORDER BY seq DESC
-                LIMIT 1
-                """,
-                run_id,
-                EventType.RUN_SUMMARY.value,
-                summary_type,
-            )
+        row = await self._fetchrow(
+            """
+            SELECT payload_json
+            FROM kernel_events
+            WHERE run_id = $1
+              AND event_type = $2
+              AND (payload_json::jsonb ->> 'summary_type') = $3
+            ORDER BY seq DESC
+            LIMIT 1
+            """,
+            run_id,
+            EventType.RUN_SUMMARY.value,
+            summary_type,
+        )
 
         if row is None:
             return None
@@ -180,21 +177,19 @@ class PostgresStore(EventStore):
         return payload
 
     async def get_model_cost_sum_for_run(self, run_id: str) -> float:
-        pool = await self._ensure_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                SELECT COALESCE(
-                    SUM((payload_json::jsonb ->> 'cost_usd')::double precision),
-                    0.0
-                ) AS total_cost
-                FROM kernel_events
-                WHERE run_id = $1
-                  AND event_type = $2
-                """,
-                run_id,
-                EventType.MODEL_COMPLETED.value,
-            )
+        row = await self._fetchrow(
+            """
+            SELECT COALESCE(
+                SUM((payload_json::jsonb ->> 'cost_usd')::double precision),
+                0.0
+            ) AS total_cost
+            FROM kernel_events
+            WHERE run_id = $1
+              AND event_type = $2
+            """,
+            run_id,
+            EventType.MODEL_COMPLETED.value,
+        )
 
         if row is None:
             return 0.0
@@ -211,20 +206,18 @@ class PostgresStore(EventStore):
         )
 
     async def get_tool_request_count_for_run(self, *, run_id: str, tool_name: str) -> int:
-        pool = await self._ensure_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                SELECT COUNT(*) AS total_count
-                FROM kernel_events
-                WHERE run_id = $1
-                  AND event_type = $2
-                  AND tool_name = $3
-                """,
-                run_id,
-                EventType.TOOL_REQUESTED.value,
-                tool_name,
-            )
+        row = await self._fetchrow(
+            """
+            SELECT COUNT(*) AS total_count
+            FROM kernel_events
+            WHERE run_id = $1
+              AND event_type = $2
+              AND tool_name = $3
+            """,
+            run_id,
+            EventType.TOOL_REQUESTED.value,
+            tool_name,
+        )
         if row is None:
             return 0
         return _coerce_count(row["total_count"])
@@ -236,22 +229,20 @@ class PostgresStore(EventStore):
         tool_name: str,
         since: datetime,
     ) -> int:
-        pool = await self._ensure_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                SELECT COUNT(*) AS total_count
-                FROM kernel_events
-                WHERE tenant_id = $1
-                  AND event_type = $2
-                  AND tool_name = $3
-                  AND timestamp >= $4
-                """,
-                tenant_id,
-                EventType.TOOL_REQUESTED.value,
-                tool_name,
-                since,
-            )
+        row = await self._fetchrow(
+            """
+            SELECT COUNT(*) AS total_count
+            FROM kernel_events
+            WHERE tenant_id = $1
+              AND event_type = $2
+              AND tool_name = $3
+              AND timestamp >= $4
+            """,
+            tenant_id,
+            EventType.TOOL_REQUESTED.value,
+            tool_name,
+            since,
+        )
         if row is None:
             return 0
         return _coerce_count(row["total_count"])
@@ -263,32 +254,30 @@ class PostgresStore(EventStore):
         tool_name: str,
         semantic_idempotency_key: str,
     ) -> ToolSemanticOutcomeRecord | None:
-        pool = await self._ensure_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                SELECT
-                    c.run_id AS run_id,
-                    c.tool_request_id AS request_id,
-                    c.tool_outcome AS outcome,
-                    r.payload_json AS request_payload_json
-                FROM kernel_events c
-                JOIN kernel_events r
-                    ON c.tool_request_id = r.event_id
-                WHERE c.event_type = $1
-                  AND r.event_type = $2
-                  AND r.tenant_id = $3
-                  AND r.tool_name = $4
-                  AND r.tool_semantic_key = $5
-                ORDER BY c.timestamp DESC, c.seq DESC
-                LIMIT 1
-                """,
-                EventType.TOOL_COMPLETED.value,
-                EventType.TOOL_REQUESTED.value,
-                tenant_id,
-                tool_name,
-                semantic_idempotency_key,
-            )
+        row = await self._fetchrow(
+            """
+            SELECT
+                c.run_id AS run_id,
+                c.tool_request_id AS request_id,
+                c.tool_outcome AS outcome,
+                r.payload_json AS request_payload_json
+            FROM kernel_events c
+            JOIN kernel_events r
+                ON c.tool_request_id = r.event_id
+            WHERE c.event_type = $1
+              AND r.event_type = $2
+              AND r.tenant_id = $3
+              AND r.tool_name = $4
+              AND r.tool_semantic_key = $5
+            ORDER BY c.timestamp DESC, c.seq DESC
+            LIMIT 1
+            """,
+            EventType.TOOL_COMPLETED.value,
+            EventType.TOOL_REQUESTED.value,
+            tenant_id,
+            tool_name,
+            semantic_idempotency_key,
+        )
         if row is None:
             return None
         run_id_obj: object = row["run_id"]
@@ -321,7 +310,6 @@ class PostgresStore(EventStore):
         tenant_id: str | None = None,
         since: datetime | None = None,
     ) -> list[str]:
-        pool = await self._ensure_pool()
         where_clauses: list[str] = []
         params: list[object] = []
         if tenant_id is not None:
@@ -334,17 +322,16 @@ class PostgresStore(EventStore):
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
 
-        async with pool.acquire() as connection:
-            rows = await connection.fetch(
-                f"""
-                SELECT run_id, MAX(timestamp) AS latest_timestamp
-                FROM kernel_events
-                {where_sql}
-                GROUP BY run_id
-                ORDER BY latest_timestamp DESC
-                """,
-                *params,
-            )
+        rows = await self._fetch(
+            f"""
+            SELECT run_id, MAX(timestamp) AS latest_timestamp
+            FROM kernel_events
+            {where_sql}
+            GROUP BY run_id
+            ORDER BY latest_timestamp DESC
+            """,
+            *params,
+        )
         run_ids: list[str] = []
         for row in rows:
             run_id_obj: object = row["run_id"]
@@ -358,34 +345,32 @@ class PostgresStore(EventStore):
         *,
         run_id: str,
     ) -> RunStateSnapshotRecord | None:
-        pool = await self._ensure_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                SELECT
-                    run_id,
-                    tenant_id,
-                    last_event_seq,
-                    last_event_type,
-                    updated_at,
-                    status,
-                    blocked_on,
-                    failure_reason,
-                    last_step_key,
-                    drift_count,
-                    last_stage,
-                    last_tool,
-                    model_cost_total,
-                    open_pause_count,
-                    explain_status,
-                    explain_failure_reason,
-                    explain_failure_step
-                FROM run_state_snapshots
-                WHERE run_id = $1
-                LIMIT 1
-                """,
+        row = await self._fetchrow(
+            """
+            SELECT
                 run_id,
-            )
+                tenant_id,
+                last_event_seq,
+                last_event_type,
+                updated_at,
+                status,
+                blocked_on,
+                failure_reason,
+                last_step_key,
+                drift_count,
+                last_stage,
+                last_tool,
+                model_cost_total,
+                open_pause_count,
+                explain_status,
+                explain_failure_reason,
+                explain_failure_step
+            FROM run_state_snapshots
+            WHERE run_id = $1
+            LIMIT 1
+            """,
+            run_id,
+        )
         if row is None:
             return None
         return _snapshot_from_record(row)
@@ -397,7 +382,6 @@ class PostgresStore(EventStore):
         since: datetime | None = None,
         status: RunStateLifecycleStatus | None = None,
     ) -> list[RunStateSnapshotRecord]:
-        pool = await self._ensure_pool()
         where_clauses = ["tenant_id = $1"]
         params: list[object] = [tenant_id]
         if since is not None:
@@ -407,33 +391,32 @@ class PostgresStore(EventStore):
             params.append(status)
             where_clauses.append(f"status = ${len(params)}")
         where_sql = " AND ".join(where_clauses)
-        async with pool.acquire() as connection:
-            rows = await connection.fetch(
-                f"""
-                SELECT
-                    run_id,
-                    tenant_id,
-                    last_event_seq,
-                    last_event_type,
-                    updated_at,
-                    status,
-                    blocked_on,
-                    failure_reason,
-                    last_step_key,
-                    drift_count,
-                    last_stage,
-                    last_tool,
-                    model_cost_total,
-                    open_pause_count,
-                    explain_status,
-                    explain_failure_reason,
-                    explain_failure_step
-                FROM run_state_snapshots
-                WHERE {where_sql}
-                ORDER BY updated_at DESC
-                """,
-                *params,
-            )
+        rows = await self._fetch(
+            f"""
+            SELECT
+                run_id,
+                tenant_id,
+                last_event_seq,
+                last_event_type,
+                updated_at,
+                status,
+                blocked_on,
+                failure_reason,
+                last_step_key,
+                drift_count,
+                last_stage,
+                last_tool,
+                model_cost_total,
+                open_pause_count,
+                explain_status,
+                explain_failure_reason,
+                explain_failure_step
+            FROM run_state_snapshots
+            WHERE {where_sql}
+            ORDER BY updated_at DESC
+            """,
+            *params,
+        )
         snapshots: list[RunStateSnapshotRecord] = []
         for row in rows:
             snapshots.append(_snapshot_from_record(row))
@@ -567,17 +550,15 @@ class PostgresStore(EventStore):
         return status.endswith("1")
 
     async def get_run_lease(self, *, run_id: str) -> RunLeaseRecord | None:
-        pool = await self._ensure_pool()
-        async with pool.acquire() as connection:
-            row = await connection.fetchrow(
-                """
-                SELECT run_id, worker_id, lease_expires_at
-                FROM run_leases
-                WHERE run_id = $1
-                LIMIT 1
-                """,
-                run_id,
-            )
+        row = await self._fetchrow(
+            """
+            SELECT run_id, worker_id, lease_expires_at
+            FROM run_leases
+            WHERE run_id = $1
+            LIMIT 1
+            """,
+            run_id,
+        )
         if row is None:
             return None
         run_id_obj: object = row["run_id"]
@@ -625,10 +606,15 @@ class PostgresStore(EventStore):
         return True
 
     async def close(self) -> None:
-        if self._pool is None:
+        pool_to_close: asyncpg.Pool | None = None
+        async with self._pool_lock:
+            if self._pool is None:
+                return
+            pool_to_close = self._pool
+            self._pool = None
+        if pool_to_close is None:
             return
-        await self._pool.close()
-        self._pool = None
+        await pool_to_close.close()
 
     async def _ensure_pool(self) -> asyncpg.Pool:
         if self._pool is not None:
@@ -777,6 +763,47 @@ class PostgresStore(EventStore):
                 ON run_state_snapshots (tenant_id, status, updated_at DESC)
                 """
             )
+
+    async def _fetch(self, query: str, *args: object) -> list[asyncpg.Record]:
+        return await self._run_read_with_retry(
+            lambda connection: connection.fetch(query, *args),
+        )
+
+    async def _fetchrow(self, query: str, *args: object) -> asyncpg.Record | None:
+        return await self._run_read_with_retry(
+            lambda connection: connection.fetchrow(query, *args),
+        )
+
+    async def _run_read_with_retry(
+        self,
+        operation: Callable[[asyncpg.Connection], Awaitable[_ReadResultT]],
+    ) -> _ReadResultT:
+        for attempt in range(self._max_retry_attempts):
+            pool = await self._ensure_pool()
+            try:
+                async with pool.acquire() as connection:
+                    return await operation(connection)
+            except Exception as exc:
+                if not _is_retryable_read_exception(exc):
+                    raise
+                if attempt >= self._max_retry_attempts - 1:
+                    raise
+                await self._invalidate_pool()
+                await asyncio.sleep(self._retry_backoff(attempt))
+        raise RuntimeError("Failed to execute Postgres read after connection retries.")
+
+    async def _invalidate_pool(self) -> None:
+        pool_to_close: asyncpg.Pool | None = None
+        async with self._pool_lock:
+            if self._pool is not None:
+                pool_to_close = self._pool
+                self._pool = None
+        if pool_to_close is None:
+            return
+        try:
+            await pool_to_close.close()
+        except Exception:
+            pool_to_close.terminate()
 
     async def _append_event_once(
         self,
@@ -1201,6 +1228,17 @@ def _coerce_explain_status(status: str) -> Literal["completed", "failed"]:
 def _advisory_lock_key(run_id: str) -> int:
     digest = hashlib.sha256(run_id.encode("utf-8")).digest()
     return int.from_bytes(digest[:8], byteorder="big", signed=True)
+
+
+def _is_retryable_read_exception(exc: Exception) -> bool:
+    if isinstance(exc, asyncpg.PostgresConnectionError):
+        return True
+    if isinstance(exc, asyncpg.InterfaceError):
+        message = str(exc).lower()
+        return "closed" in message or "closing" in message or "terminated" in message
+    if isinstance(exc, ConnectionError):
+        return True
+    return False
 
 
 def _is_retryable_unique_violation(exc: asyncpg.UniqueViolationError) -> bool:

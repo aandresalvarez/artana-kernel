@@ -54,6 +54,18 @@ Run progress semantics:
 - `completed_stages`: ordered stage ids from `task_progress` entries with `state=done`.
 - `eta_seconds`: provided only when deterministic signal is sufficient; otherwise `null`.
 
+Event-loop ownership semantics:
+
+- `ArtanaKernel` and `PostgresStore` are loop-affine and are expected to be used from one event loop.
+- Repeated sync access patterns must bridge onto the owning loop instead of repeatedly creating fresh loops with `asyncio.run(...)`.
+- Close the kernel/store once at shutdown after in-flight operations drain.
+
+Postgres read retry semantics:
+
+- `PostgresStore` read APIs retry transient connection-lifecycle failures up to `max_retry_attempts`.
+- On retryable read failure, the store invalidates the current pool and reconnects before retrying.
+- Retry classification includes `asyncpg.PostgresConnectionError` (including `ConnectionDoesNotExistError`) and connection-closed interface errors.
+
 ## Model Request Invariants
 
 Each `model_requested` event stores:
