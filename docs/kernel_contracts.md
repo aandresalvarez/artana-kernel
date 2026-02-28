@@ -18,7 +18,7 @@ High-level ergonomics note:
 
 - `KernelModelClient.step(...)` / `SingleStepModelClient.step(...)` generate a deterministic step key when `step_key` is omitted.
 - For long-lived workflows where you intentionally evolve prompts/options, explicit `StepKey(...)` values are still recommended.
-- `KernelModelClient.capabilities()` exposes whether the bound kernel supports `replay_policy` and `context_version`.
+- `KernelModelClient.capabilities()` exposes whether the bound kernel supports `replay_policy`, `context_version`, and `retry_failed_step`.
 - Mixed-version compatibility: if unsupported kwargs are detected, the client retries once without unsupported kwargs and emits a warning.
 
 ## Kernel Policy Modes
@@ -43,7 +43,7 @@ Status semantics:
 
 - `active`: run is not terminal and not currently paused.
 - `paused`: latest unresolved `pause_requested` exists.
-- `failed`: harness-level failure recorded.
+- `failed`: terminal model/harness failure recorded.
 - `completed`: harness sleep recorded with completed status.
 
 Run progress semantics:
@@ -78,6 +78,7 @@ Each `model_requested` event stores:
 - `allowed_tools`: sorted tool names
 - `allowed_tool_signatures`: `name + tool_version + schema_version + schema_hash`
 - `allowed_tools_hash`: hash of tool signatures (not just tool names)
+- `model_cycle_id`: correlation id for a single request/terminal model cycle
 - `context_version`:
   - `system_prompt_hash`
   - `context_builder_version`
@@ -85,16 +86,31 @@ Each `model_requested` event stores:
 
 Replay validates tool signatures plus model input identity (prompt/messages/options/Responses items).
 
-## Model Completion Metadata
+## Model Terminal Metadata
 
-Each `model_completed` event stores:
+Each `model_terminal` event stores:
 
-- `api_mode_used` (`responses|chat`)
-- `response_id` (optional)
-- `responses_output_items` (full normalized output items)
-- `tool_calls` (canonicalized arguments JSON)
+- `outcome` (`completed|failed|timeout|cancelled|abandoned`)
+- `model_cycle_id`
+- `source_model_requested_event_id`
+- `elapsed_ms`
+- normalized diagnostics fields:
+  - `failure_reason`
+  - `error_category`
+  - `error_class`
+  - `http_status`
+  - `provider_request_id`
+  - `diagnostics_json` (optional structured payload)
+- completion metadata when available:
+  - `api_mode_used` (`responses|chat`)
+  - `response_id` (optional)
+  - `responses_output_items` (full normalized output items)
+  - `tool_calls` (canonicalized arguments JSON)
+  - `cost_usd`
 
-This keeps audit and replay fidelity for both chat-completions and Responses-native providers.
+Invariant:
+
+- For each `model_requested`, exactly one `model_terminal` event follows before the next `model_requested`.
 
 ## Model API Mode Defaults
 
@@ -103,6 +119,20 @@ Artana model calls default to `ModelCallOptions(api_mode="auto")`:
 - use Responses when supported by provider/model routing
 - fallback to chat-completions when Responses is unsupported
 - use `api_mode="responses"` for strict Responses-only behavior
+
+Failed-cycle replay contract:
+
+- Default replay is deterministic and non-retrying for failed model cycles.
+- Repeating the same step replays the existing terminal failure without re-calling the provider.
+- To force a new provider call after a failed terminal cycle, pass `retry_failed_step=True` (new `model_cycle_id`).
+
+Stale-run cleanup contract:
+
+- `cleanup_stale_model_runs(tenant_id, model_timeout_seconds, ...)` closes stale `active` runs with:
+  - `last_event_type = model_requested`, and
+  - no active lease.
+- Cleanup emits a synthetic `model_terminal` with `outcome=abandoned` and `failure_reason=model_timeout_stale_cleanup`.
+- TTL is derived from model timeout and bounded: `max(2*timeout, timeout+120)`, clamped to `[300, 3600]`.
 
 ## Tool Determinism Invariants
 

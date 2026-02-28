@@ -13,8 +13,8 @@ from artana.events import (
     ChatMessage,
     EventType,
     HarnessSleepPayload,
-    ModelCompletedPayload,
     ModelRequestedPayload,
+    ModelTerminalPayload,
     PauseRequestedPayload,
     ResumeRequestedPayload,
     RunStartedPayload,
@@ -151,9 +151,13 @@ async def test_summary_and_cost_queries_match_expected_payloads(store: PostgresS
         await callback_store.append_event(
             run_id=run_id,
             tenant_id="tenant_pg_cost",
-            event_type=EventType.MODEL_COMPLETED,
-            payload=ModelCompletedPayload(
+            event_type=EventType.MODEL_TERMINAL,
+            payload=ModelTerminalPayload(
+                outcome="completed",
                 model="gpt-4o-mini",
+                model_cycle_id="cycle_pg_cost_1",
+                source_model_requested_event_id="event_req_pg_cost_1",
+                elapsed_ms=1,
                 output_json='{"approved":true}',
                 prompt_tokens=10,
                 completion_tokens=5,
@@ -173,9 +177,13 @@ async def test_summary_and_cost_queries_match_expected_payloads(store: PostgresS
         await callback_store.append_event(
             run_id=run_id,
             tenant_id="tenant_pg_cost",
-            event_type=EventType.MODEL_COMPLETED,
-            payload=ModelCompletedPayload(
+            event_type=EventType.MODEL_TERMINAL,
+            payload=ModelTerminalPayload(
+                outcome="completed",
                 model="gpt-4o-mini",
+                model_cycle_id="cycle_pg_cost_2",
+                source_model_requested_event_id="event_req_pg_cost_2",
+                elapsed_ms=1,
                 output_json='{"approved":false}',
                 prompt_tokens=3,
                 completion_tokens=2,
@@ -201,9 +209,9 @@ async def test_summary_and_cost_queries_match_expected_payloads(store: PostgresS
         assert latest_summary.step_key == "task_progress_2"
         assert latest_summary.summary_json == '{"units":[{"id":"t1","state":"done"}]}'
         assert observed == [
-            (1, EventType.MODEL_COMPLETED.value),
+            (1, EventType.MODEL_TERMINAL.value),
             (2, EventType.RUN_SUMMARY.value),
-            (3, EventType.MODEL_COMPLETED.value),
+            (3, EventType.MODEL_TERMINAL.value),
             (4, EventType.RUN_SUMMARY.value),
         ]
     finally:
@@ -361,9 +369,13 @@ async def test_run_state_snapshots_are_queryable(store: PostgresStore) -> None:
     await store.append_event(
         run_id=run_active,
         tenant_id="tenant_pg_snapshot",
-        event_type=EventType.MODEL_COMPLETED,
-        payload=ModelCompletedPayload(
+        event_type=EventType.MODEL_TERMINAL,
+        payload=ModelTerminalPayload(
+            outcome="completed",
             model="gpt-4o-mini",
+            model_cycle_id="cycle_pg_snapshot_1",
+            source_model_requested_event_id="event_req_pg_snapshot_1",
+            elapsed_ms=1,
             output_json='{"ok":true}',
             prompt_tokens=3,
             completion_tokens=2,
@@ -389,7 +401,7 @@ async def test_run_state_snapshots_are_queryable(store: PostgresStore) -> None:
     assert snapshot.status == "active"
     assert snapshot.blocked_on is None
     assert snapshot.model_cost_total == pytest.approx(0.2)
-    assert snapshot.last_event_type == EventType.MODEL_COMPLETED.value
+    assert snapshot.last_event_type == EventType.MODEL_TERMINAL.value
 
     active = await store.list_run_state_snapshots(
         tenant_id="tenant_pg_snapshot",

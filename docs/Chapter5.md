@@ -291,7 +291,7 @@ SELECT
   tenant_id,
   COALESCE(SUM((payload_json::jsonb ->> 'cost_usd')::double precision), 0.0) AS spend
 FROM kernel_events
-WHERE event_type = 'model_completed'
+WHERE event_type = 'model_terminal'
 GROUP BY tenant_id;
 ```
 

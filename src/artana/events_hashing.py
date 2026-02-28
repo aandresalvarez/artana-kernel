@@ -22,6 +22,8 @@ def payload_to_canonical_json(payload: EventPayload) -> str:
             payload_dict.pop("allowed_tool_signatures", None)
         if payload_dict.get("context_version") is None:
             payload_dict.pop("context_version", None)
+        if payload_dict.get("model_cycle_id") is None:
+            payload_dict.pop("model_cycle_id", None)
         messages = payload_dict.get("messages")
         if isinstance(messages, list):
             for message in messages:
@@ -33,7 +35,7 @@ def payload_to_canonical_json(payload: EventPayload) -> str:
                     message.pop("name", None)
                 if message.get("tool_calls") is None:
                     message.pop("tool_calls", None)
-    if payload_dict.get("kind") == "model_completed":
+    if payload_dict.get("kind") == "model_terminal":
         tool_calls = payload_dict.get("tool_calls")
         if isinstance(tool_calls, list):
             for tool_call in tool_calls:
@@ -41,6 +43,23 @@ def payload_to_canonical_json(payload: EventPayload) -> str:
                     continue
                 if tool_call.get("tool_call_id") is None:
                     tool_call.pop("tool_call_id", None)
+        for optional_key in (
+            "failure_reason",
+            "error_category",
+            "error_class",
+            "http_status",
+            "provider_request_id",
+            "diagnostics_json",
+            "output_json",
+            "prompt_tokens",
+            "completion_tokens",
+            "cost_usd",
+            "api_mode_used",
+            "response_id",
+            "step_key",
+        ):
+            if payload_dict.get(optional_key) is None:
+                payload_dict.pop(optional_key, None)
     if payload_dict.get("kind") == "tool_requested":
         # Keep step_key=null for backward compatibility with historical hash chains.
         # Legacy events included `step_key` even when null.

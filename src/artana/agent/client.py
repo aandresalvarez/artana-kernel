@@ -27,6 +27,7 @@ OutputT = TypeVar("OutputT", bound=BaseModel)
 class ModelClientCapabilities:
     supports_replay_policy: bool
     supports_context_version: bool
+    supports_retry_failed_step: bool
 
 
 class _StepModelCompatCallable(Protocol):
@@ -56,6 +57,7 @@ class KernelModelClient:
         model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy = "strict",
         context_version: ContextVersion | None = None,
+        retry_failed_step: bool = False,
     ) -> StepModelResult[OutputT]:
         resolved_step_key = (
             step_key
@@ -81,6 +83,7 @@ class KernelModelClient:
                 model_options=model_options,
                 replay_policy=replay_policy,
                 context_version=context_version,
+                retry_failed_step=retry_failed_step,
             )
         except TypeError as exc:
             unsupported_kwargs = _unsupported_kwargs_from_type_error(exc)
@@ -89,6 +92,8 @@ class KernelModelClient:
                 unsupported_kwargs.add("replay_policy")
             if not capabilities.supports_context_version:
                 unsupported_kwargs.add("context_version")
+            if not capabilities.supports_retry_failed_step:
+                unsupported_kwargs.add("retry_failed_step")
             if not unsupported_kwargs:
                 raise
 
@@ -100,6 +105,10 @@ class KernelModelClient:
                 supports_context_version=(
                     capabilities.supports_context_version
                     and "context_version" not in unsupported_kwargs
+                ),
+                supports_retry_failed_step=(
+                    capabilities.supports_retry_failed_step
+                    and "retry_failed_step" not in unsupported_kwargs
                 ),
             )
             warnings.warn(
@@ -122,6 +131,8 @@ class KernelModelClient:
                 fallback_kwargs["replay_policy"] = replay_policy
             if "context_version" not in unsupported_kwargs:
                 fallback_kwargs["context_version"] = context_version
+            if "retry_failed_step" not in unsupported_kwargs:
+                fallback_kwargs["retry_failed_step"] = retry_failed_step
             step_model = cast(_StepModelCompatCallable, self._kernel.step_model)
             fallback_result = await step_model(**fallback_kwargs)
             return cast(StepModelResult[OutputT], fallback_result)
@@ -151,6 +162,7 @@ def _infer_step_model_capabilities(kernel: ArtanaKernel) -> ModelClientCapabilit
         return ModelClientCapabilities(
             supports_replay_policy=True,
             supports_context_version=True,
+            supports_retry_failed_step=True,
         )
     has_var_keyword = any(
         parameter.kind == inspect.Parameter.VAR_KEYWORD
@@ -159,13 +171,16 @@ def _infer_step_model_capabilities(kernel: ArtanaKernel) -> ModelClientCapabilit
     return ModelClientCapabilities(
         supports_replay_policy=has_var_keyword or "replay_policy" in signature.parameters,
         supports_context_version=has_var_keyword or "context_version" in signature.parameters,
+        supports_retry_failed_step=(
+            has_var_keyword or "retry_failed_step" in signature.parameters
+        ),
     )
 
 
 def _unsupported_kwargs_from_type_error(error: TypeError) -> set[str]:
     message = str(error)
     unsupported: set[str] = set()
-    for key in ("replay_policy", "context_version"):
+    for key in ("replay_policy", "context_version", "retry_failed_step"):
         if (
             f"unexpected keyword argument '{key}'" in message
             or f'unexpected keyword argument "{key}"' in message

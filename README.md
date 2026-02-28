@@ -104,6 +104,7 @@ Initial implementation aligned with the Artana Kernel PRD:
 - Replay-safe two-phase tool execution (protects against double-charging/executing on crash recovery)
 - Tool signature hashing (`name + version + schema hash`) for replay compatibility checks
 - Context version tracking in `model_requested` events (`system_prompt_hash`, context builder, compaction)
+- Terminal model telemetry via `model_terminal` (`completed|failed|timeout|cancelled|abandoned`) with normalized diagnostics (`error_category`, `error_class`, `http_status`, `provider_request_id`, `elapsed_ms`)
 - Agent `run_summary` events for lightweight autonomous observability
 - Kernel `capability_decision` run summaries for per-tool allow/filter reasoning
 - Kernel policy APIs for safety workflows:
@@ -112,6 +113,7 @@ Initial implementation aligned with the Artana Kernel PRD:
 - Extended kernel syscalls for orchestration/scheduling:
   - `get_run_status(...)`, `list_active_runs(...)`, `resume_point(...)`
   - `get_run_progress(...)`, `stream_run_progress(...)`
+  - `cleanup_stale_model_runs(...)`
   - `checkpoint(...)`
   - `set_artifact(...)`, `get_artifact(...)`, `list_artifacts(...)`
   - `block_run(...)`, `unblock_run(...)`

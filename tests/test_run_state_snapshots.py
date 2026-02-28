@@ -14,7 +14,7 @@ from artana.events import (
     HarnessSleepPayload,
     HarnessStagePayload,
     KernelEvent,
-    ModelCompletedPayload,
+    ModelTerminalPayload,
     PauseRequestedPayload,
     ReplayedWithDriftPayload,
     ResumeRequestedPayload,
@@ -135,9 +135,13 @@ async def test_sqlite_run_state_snapshots_track_transitions(tmp_path: Path) -> N
         await store.append_event(
             run_id=run_id,
             tenant_id=tenant.tenant_id,
-            event_type=EventType.MODEL_COMPLETED,
-            payload=ModelCompletedPayload(
+            event_type=EventType.MODEL_TERMINAL,
+            payload=ModelTerminalPayload(
+                outcome="completed",
                 model="gpt-4o-mini",
+                model_cycle_id="cycle_snapshot_1",
+                source_model_requested_event_id="event_req_1",
+                elapsed_ms=1,
                 output_json='{"ok":true}',
                 prompt_tokens=10,
                 completion_tokens=5,
@@ -153,7 +157,7 @@ async def test_sqlite_run_state_snapshots_track_transitions(tmp_path: Path) -> N
                 model="gpt-4o-mini",
                 drift_fields=["prompt"],
                 source_model_requested_event_id="event_req_1",
-                source_model_completed_seq=2,
+                source_model_terminal_seq=2,
                 replay_policy="allow_prompt_drift",
             ),
         )
@@ -256,9 +260,13 @@ async def test_kernel_run_state_reads_match_snapshot_and_fallback_paths(
         await store.append_event(
             run_id="run_snapshot_a",
             tenant_id=tenant.tenant_id,
-            event_type=EventType.MODEL_COMPLETED,
-            payload=ModelCompletedPayload(
+            event_type=EventType.MODEL_TERMINAL,
+            payload=ModelTerminalPayload(
+                outcome="completed",
                 model="gpt-4o-mini",
+                model_cycle_id="cycle_snapshot_2",
+                source_model_requested_event_id="event_req_2",
+                elapsed_ms=1,
                 output_json='{"ok":true}',
                 prompt_tokens=1,
                 completion_tokens=1,
@@ -274,7 +282,7 @@ async def test_kernel_run_state_reads_match_snapshot_and_fallback_paths(
                 model="gpt-4o-mini",
                 drift_fields=["prompt"],
                 source_model_requested_event_id="event_req_1",
-                source_model_completed_seq=2,
+                source_model_terminal_seq=2,
                 replay_policy="allow_prompt_drift",
             ),
         )

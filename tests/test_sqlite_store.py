@@ -11,8 +11,8 @@ from artana.events import (
     ChatMessage,
     EventType,
     HarnessSleepPayload,
-    ModelCompletedPayload,
     ModelRequestedPayload,
+    ModelTerminalPayload,
     PauseRequestedPayload,
     ResumeRequestedPayload,
     RunStartedPayload,
@@ -112,7 +112,7 @@ async def test_append_is_sequential_across_store_instances(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_get_model_cost_sum_for_run_aggregates_only_model_completed(
+async def test_get_model_cost_sum_for_run_aggregates_only_model_terminal(
     tmp_path: Path,
 ) -> None:
     store = SQLiteStore(str(tmp_path / "state.db"))
@@ -120,9 +120,13 @@ async def test_get_model_cost_sum_for_run_aggregates_only_model_completed(
         await store.append_event(
             run_id="run_cost",
             tenant_id="tenant_cost",
-            event_type=EventType.MODEL_COMPLETED,
-            payload=ModelCompletedPayload(
+            event_type=EventType.MODEL_TERMINAL,
+            payload=ModelTerminalPayload(
+                outcome="completed",
                 model="gpt-4o-mini",
+                model_cycle_id="cycle_cost_1",
+                source_model_requested_event_id="event_req_cost_1",
+                elapsed_ms=1,
                 output_json='{"approved":true}',
                 prompt_tokens=10,
                 completion_tokens=5,
@@ -142,9 +146,13 @@ async def test_get_model_cost_sum_for_run_aggregates_only_model_completed(
         await store.append_event(
             run_id="run_cost",
             tenant_id="tenant_cost",
-            event_type=EventType.MODEL_COMPLETED,
-            payload=ModelCompletedPayload(
+            event_type=EventType.MODEL_TERMINAL,
+            payload=ModelTerminalPayload(
+                outcome="completed",
                 model="gpt-4o-mini",
+                model_cycle_id="cycle_cost_2",
+                source_model_requested_event_id="event_req_cost_2",
+                elapsed_ms=1,
                 output_json='{"approved":false}',
                 prompt_tokens=3,
                 completion_tokens=2,
@@ -401,9 +409,13 @@ async def test_run_state_snapshots_are_queryable(tmp_path: Path) -> None:
         await store.append_event(
             run_id="run_snapshot_main",
             tenant_id="tenant_snapshot",
-            event_type=EventType.MODEL_COMPLETED,
-            payload=ModelCompletedPayload(
+            event_type=EventType.MODEL_TERMINAL,
+            payload=ModelTerminalPayload(
+                outcome="completed",
                 model="gpt-4o-mini",
+                model_cycle_id="cycle_snapshot_1",
+                source_model_requested_event_id="event_req_snapshot_1",
+                elapsed_ms=1,
                 output_json='{"ok":true}',
                 prompt_tokens=3,
                 completion_tokens=2,
@@ -428,7 +440,7 @@ async def test_run_state_snapshots_are_queryable(tmp_path: Path) -> None:
         assert snapshot.status == "active"
         assert snapshot.blocked_on is None
         assert snapshot.model_cost_total == pytest.approx(0.2)
-        assert snapshot.last_event_type == EventType.MODEL_COMPLETED.value
+        assert snapshot.last_event_type == EventType.MODEL_TERMINAL.value
 
         active = await store.list_run_state_snapshots(
             tenant_id="tenant_snapshot",

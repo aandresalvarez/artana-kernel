@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from artana.events import EventType
+from artana.events import EventType, ModelTerminalPayload
 from artana.middleware.base import BudgetExceededError, ModelInvocation
 from artana.models import TenantContext
 from artana.ports.model import ModelUsage
@@ -35,7 +35,8 @@ class QuotaMiddleware:
             spent_after = spent_before + usage.cost_usd
             self._spent_usd_by_run[run_id] = spent_after
         else:
-            spent_after = await self._load_spent_from_store(run_id=run_id)
+            spent_before = await self._load_spent_from_store(run_id=run_id)
+            spent_after = spent_before + usage.cost_usd
         if spent_after > tenant.budget_usd_limit:
             raise BudgetExceededError(
                 "Run "
@@ -78,12 +79,12 @@ class QuotaMiddleware:
         events = await self._store.get_events_for_run(run_id)
         spent = 0.0
         for event in events:
-            if event.event_type != EventType.MODEL_COMPLETED:
-                continue
-            payload = event.payload
-            if payload.kind != "model_completed":
-                raise RuntimeError(
-                    f"Invalid event payload kind {payload.kind!r} for model_completed event."
-                )
-            spent += payload.cost_usd
+            if event.event_type == EventType.MODEL_TERMINAL:
+                payload = event.payload
+                if not isinstance(payload, ModelTerminalPayload):
+                    raise RuntimeError(
+                        f"Invalid event payload kind {payload.kind!r} for model_terminal event."
+                    )
+                if payload.cost_usd is not None:
+                    spent += payload.cost_usd
         return spent

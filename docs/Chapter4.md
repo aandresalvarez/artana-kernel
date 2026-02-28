@@ -439,7 +439,7 @@ rows = connection.execute(
         SUM(CAST(json_extract(payload_json, '$.cost_usd') AS FLOAT)) AS total_spend,
         COUNT(*) AS model_calls
     FROM kernel_events
-    WHERE event_type = 'model_completed'
+    WHERE event_type = 'model_terminal'
     GROUP BY tenant_id
     ORDER BY total_spend DESC
     """

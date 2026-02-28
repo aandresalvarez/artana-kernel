@@ -127,10 +127,10 @@ async def test_quota_persists_from_event_log_across_kernel_restarts(tmp_path: Pa
         assert [event.event_type for event in events] == [
             "run_started",
             "model_requested",
-            "model_completed",
+            "model_terminal",
             "run_summary",
             "model_requested",
-            "model_completed",
+            "model_terminal",
         ]
     finally:
         await first_kernel.close()

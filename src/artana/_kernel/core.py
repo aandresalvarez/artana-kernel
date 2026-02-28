@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
@@ -53,6 +53,8 @@ from artana.events import (
     HarnessSleepPayload,
     HarnessStagePayload,
     KernelEvent,
+    ModelRequestedPayload,
+    ModelTerminalPayload,
     PauseRequestedPayload,
     ReplayedWithDriftPayload,
     ResumeRequestedPayload,
@@ -237,6 +239,7 @@ class ArtanaKernel:
                     "drift_count": snapshot.drift_count,
                     "drift_events": snapshot.drift_count,
                     "failure_reason": snapshot_failure_reason,
+                    "error_category": snapshot.error_category,
                     "failure_step": snapshot.explain_failure_step,
                     "cost_total": snapshot.model_cost_total,
                 }
@@ -249,6 +252,7 @@ class ArtanaKernel:
         last_stage: str | None = None
         last_tool: str | None = None
         failure_reason: str | None = None
+        error_category: str | None = None
         failure_step: str | None = None
         status = "completed"
 
@@ -267,12 +271,29 @@ class ArtanaKernel:
                 event.payload, HarnessFailedPayload
             ):
                 failure_reason = event.payload.error_type
+                error_category = "internal"
                 failure_step = event.payload.last_step_key
                 status = "failed"
             elif event.event_type == EventType.HARNESS_SLEEP and isinstance(
                 event.payload, HarnessSleepPayload
             ):
                 status = event.payload.status
+                if status == "failed":
+                    error_category = "internal"
+                else:
+                    error_category = None
+            elif event.event_type == EventType.MODEL_TERMINAL and isinstance(
+                event.payload, ModelTerminalPayload
+            ):
+                if event.payload.outcome != "completed":
+                    failure_reason = (
+                        event.payload.failure_reason
+                        or event.payload.error_category
+                        or event.payload.outcome
+                    )
+                    error_category = event.payload.error_category
+                    failure_step = event.payload.step_key
+                    status = "failed"
             elif event.event_type == EventType.RUN_SUMMARY and isinstance(
                 event.payload, RunSummaryPayload
             ):
@@ -294,15 +315,15 @@ class ArtanaKernel:
         else:
             cost_total = 0.0
             for event in events:
-                if event.event_type != EventType.MODEL_COMPLETED:
-                    continue
-                payload = event.payload
-                if payload.kind != "model_completed":
-                    raise RuntimeError(
-                        "Invalid event payload kind "
-                        f"{payload.kind!r} for model_completed event."
-                    )
-                cost_total += payload.cost_usd
+                if event.event_type == EventType.MODEL_TERMINAL:
+                    payload = event.payload
+                    if not isinstance(payload, ModelTerminalPayload):
+                        raise RuntimeError(
+                            "Invalid event payload kind "
+                            f"{payload.kind!r} for model_terminal event."
+                        )
+                    if payload.cost_usd is not None:
+                        cost_total += payload.cost_usd
         return {
             "status": status,
             "last_stage": last_stage,
@@ -310,6 +331,7 @@ class ArtanaKernel:
             "drift_count": drift_count,
             "drift_events": drift_count,
             "failure_reason": failure_reason,
+            "error_category": error_category,
             "failure_step": failure_step,
             "cost_total": cost_total,
         }
@@ -450,6 +472,76 @@ class ArtanaKernel:
                 continue
             statuses.append(run_status)
         return tuple(statuses)
+
+    async def cleanup_stale_model_runs(
+        self,
+        *,
+        tenant_id: str,
+        model_timeout_seconds: float,
+        now: datetime | None = None,
+        max_runs: int | None = None,
+    ) -> tuple[str, ...]:
+        if model_timeout_seconds <= 0:
+            raise ValueError("model_timeout_seconds must be > 0.")
+        if max_runs is not None and max_runs <= 0:
+            raise ValueError("max_runs must be > 0 when provided.")
+
+        now_value = now if now is not None else datetime.now(timezone.utc)
+        if now_value.tzinfo is None:
+            now_value = now_value.replace(tzinfo=timezone.utc)
+        ttl_seconds = _stale_model_ttl_seconds(model_timeout_seconds=model_timeout_seconds)
+        cutoff = now_value - timedelta(seconds=ttl_seconds)
+        active_runs = await self.list_active_runs(tenant_id=tenant_id, status="active")
+        closed_run_ids: list[str] = []
+
+        for run_status in active_runs:
+            if run_status.updated_at > cutoff:
+                continue
+            events = await self._store.get_events_for_run(run_status.run_id)
+            if not events:
+                continue
+            last_event = events[-1]
+            if last_event.event_type != EventType.MODEL_REQUESTED:
+                continue
+            payload = last_event.payload
+            if not isinstance(payload, ModelRequestedPayload):
+                continue
+            if isinstance(self._store, SupportsRunLeasing):
+                lease = await self._store.get_run_lease(run_id=run_status.run_id)
+                if lease is not None and lease.lease_expires_at > now_value:
+                    continue
+
+            elapsed_ms = max(0, int((now_value - last_event.timestamp).total_seconds() * 1000))
+            model_cycle_id = payload.model_cycle_id or last_event.event_id
+            await self._append_event(
+                run_id=run_status.run_id,
+                tenant_id=tenant_id,
+                event_type=EventType.MODEL_TERMINAL,
+                payload=ModelTerminalPayload(
+                    outcome="abandoned",
+                    model=payload.model,
+                    model_cycle_id=model_cycle_id,
+                    source_model_requested_event_id=last_event.event_id,
+                    step_key=payload.step_key,
+                    failure_reason="model_timeout_stale_cleanup",
+                    error_category="abandoned",
+                    error_class="StaleModelRunCleanup",
+                    elapsed_ms=elapsed_ms,
+                    diagnostics_json=canonical_json_dumps(
+                        {
+                            "cleanup": "stale_model_run",
+                            "ttl_seconds": ttl_seconds,
+                            "last_event_seq": last_event.seq,
+                            "last_event_timestamp": last_event.timestamp.isoformat(),
+                        }
+                    ),
+                ),
+            )
+            closed_run_ids.append(run_status.run_id)
+            if max_runs is not None and len(closed_run_ids) >= max_runs:
+                break
+
+        return tuple(closed_run_ids)
 
     async def resume_point(self, *, run_id: str) -> ResumePoint:
         if isinstance(self._store, SupportsRunStateSnapshots):
@@ -966,6 +1058,7 @@ class ArtanaKernel:
         step_key: str | None = None,
         replay_policy: ReplayPolicy = "strict",
         context_version: ContextVersion | None = None,
+        retry_failed_step: bool = False,
         parent_step_key: str | None = None,
     ) -> StepModelResult[OutputT]:
         return await self.step_model(
@@ -979,6 +1072,7 @@ class ArtanaKernel:
             model_options=model_options,
             replay_policy=replay_policy,
             context_version=context_version,
+            retry_failed_step=retry_failed_step,
             parent_step_key=parent_step_key,
         )
 
@@ -995,6 +1089,7 @@ class ArtanaKernel:
         model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy = "strict",
         context_version: ContextVersion | None = None,
+        retry_failed_step: bool = False,
         parent_step_key: str | None = None,
     ) -> StepModelResult[OutputT]:
         events = await self._store.get_events_for_run(run_id)
@@ -1091,9 +1186,9 @@ class ArtanaKernel:
                         model=prepared_invocation.model,
                         drift_fields=list(drift_candidate.drift_fields),
                         source_model_requested_event_id=drift_candidate.request_event.event_id,
-                        source_model_completed_seq=(
-                            drift_candidate.completed_event.seq
-                            if drift_candidate.completed_event is not None
+                        source_model_terminal_seq=(
+                            drift_candidate.terminal_event.seq
+                            if drift_candidate.terminal_event is not None
                             else None
                         ),
                         replay_policy="fork_on_drift",
@@ -1121,6 +1216,7 @@ class ArtanaKernel:
             parent_step_key=parent_step_key,
             replay_policy=normalized_replay_policy,
             context_version=context_version,
+            retry_failed_step=retry_failed_step,
         )
         if model_result.replayed is False:
             await self._append_event(
@@ -1745,6 +1841,17 @@ def _derive_run_status(
             continue
         return "failed", None, payload.error_type
 
+    for event in reversed(events):
+        if event.event_type != EventType.MODEL_TERMINAL:
+            continue
+        payload = event.payload
+        if not isinstance(payload, ModelTerminalPayload):
+            continue
+        if payload.outcome == "completed":
+            continue
+        failure_reason = payload.failure_reason or payload.error_category or payload.outcome
+        return "failed", None, failure_reason
+
     return "active", None, None
 
 
@@ -1779,6 +1886,12 @@ def _run_progress_status_from_lifecycle(status: RunLifecycleStatus) -> RunProgre
     if status == "failed":
         return "failed"
     return "running"
+
+
+def _stale_model_ttl_seconds(*, model_timeout_seconds: float) -> int:
+    base_ttl = max((2.0 * model_timeout_seconds), (model_timeout_seconds + 120.0))
+    bounded = max(300.0, min(3600.0, base_ttl))
+    return int(bounded)
 
 
 def _task_progress_units(

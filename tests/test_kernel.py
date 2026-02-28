@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from artana import KernelModelClient
-from artana.events import EventType, ModelCompletedPayload, ModelRequestedPayload
+from artana.events import EventType, ModelRequestedPayload, ModelTerminalPayload
 from artana.kernel import ArtanaKernel
 from artana.middleware import CapabilityGuardMiddleware
 from artana.models import TenantContext
@@ -122,7 +122,7 @@ async def test_chat_replays_completed_model_response(tmp_path: Path) -> None:
         assert [event.event_type for event in events] == [
             "run_started",
             "model_requested",
-            "model_completed",
+            "model_terminal",
             "run_summary",
         ]
     finally:
@@ -244,7 +244,7 @@ async def test_chat_replays_tools_without_reexecuting_completed_tool(tmp_path: P
         assert [event.event_type for event in events] == [
             "run_started",
             "model_requested",
-            "model_completed",
+            "model_terminal",
             "run_summary",
         ]
     finally:
@@ -282,16 +282,17 @@ async def test_step_model_persists_responses_metadata(tmp_path: Path) -> None:
 
         events = await store.get_events_for_run("run_responses_metadata")
         requested_payload = events[1].payload
-        completed_payload = events[2].payload
+        terminal_payload = events[2].payload
         assert isinstance(requested_payload, ModelRequestedPayload)
-        assert isinstance(completed_payload, ModelCompletedPayload)
+        assert isinstance(terminal_payload, ModelTerminalPayload)
         assert requested_payload.api_mode == "responses"
         assert requested_payload.reasoning_effort == "high"
         assert requested_payload.verbosity == "medium"
         assert requested_payload.previous_response_id == "resp_prev_1"
         assert requested_payload.responses_input_items is not None
-        assert completed_payload.api_mode_used == "responses"
-        assert completed_payload.response_id == "resp_kernel_1"
-        assert len(completed_payload.responses_output_items) == 1
+        assert terminal_payload.outcome == "completed"
+        assert terminal_payload.api_mode_used == "responses"
+        assert terminal_payload.response_id == "resp_kernel_1"
+        assert len(terminal_payload.responses_output_items) == 1
     finally:
         await kernel.close()

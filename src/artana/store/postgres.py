@@ -34,7 +34,7 @@ from artana.store.snapshot_state import (
 )
 
 _PAYLOAD_ADAPTER: TypeAdapter[EventPayload] = TypeAdapter(EventPayload)
-POSTGRES_STORE_SCHEMA_VERSION = "1"
+POSTGRES_STORE_SCHEMA_VERSION = "2"
 _ReadResultT = TypeVar("_ReadResultT")
 
 
@@ -180,15 +180,22 @@ class PostgresStore(EventStore):
         row = await self._fetchrow(
             """
             SELECT COALESCE(
-                SUM((payload_json::jsonb ->> 'cost_usd')::double precision),
+                SUM(
+                    CASE
+                        WHEN event_type = $2 THEN COALESCE(
+                            (payload_json::jsonb ->> 'cost_usd')::double precision,
+                            0.0
+                        )
+                        ELSE 0.0
+                    END
+                ),
                 0.0
             ) AS total_cost
             FROM kernel_events
             WHERE run_id = $1
-              AND event_type = $2
             """,
             run_id,
-            EventType.MODEL_COMPLETED.value,
+            EventType.MODEL_TERMINAL.value,
         )
 
         if row is None:
@@ -356,6 +363,8 @@ class PostgresStore(EventStore):
                 status,
                 blocked_on,
                 failure_reason,
+                error_category,
+                diagnostics_json,
                 last_step_key,
                 drift_count,
                 last_stage,
@@ -402,6 +411,8 @@ class PostgresStore(EventStore):
                 status,
                 blocked_on,
                 failure_reason,
+                error_category,
+                diagnostics_json,
                 last_step_key,
                 drift_count,
                 last_stage,
@@ -739,6 +750,8 @@ class PostgresStore(EventStore):
                     status TEXT NOT NULL,
                     blocked_on TEXT,
                     failure_reason TEXT,
+                    error_category TEXT,
+                    diagnostics_json TEXT,
                     last_step_key TEXT,
                     drift_count INTEGER NOT NULL,
                     last_stage TEXT,
@@ -750,6 +763,12 @@ class PostgresStore(EventStore):
                     explain_failure_step TEXT
                 )
                 """
+            )
+            await connection.execute(
+                "ALTER TABLE run_state_snapshots ADD COLUMN IF NOT EXISTS error_category TEXT"
+            )
+            await connection.execute(
+                "ALTER TABLE run_state_snapshots ADD COLUMN IF NOT EXISTS diagnostics_json TEXT"
             )
             await connection.execute(
                 """
@@ -931,6 +950,8 @@ class PostgresStore(EventStore):
                 status,
                 blocked_on,
                 failure_reason,
+                error_category,
+                diagnostics_json,
                 last_step_key,
                 drift_count,
                 last_stage,
@@ -965,6 +986,8 @@ class PostgresStore(EventStore):
                 status,
                 blocked_on,
                 failure_reason,
+                error_category,
+                diagnostics_json,
                 last_step_key,
                 drift_count,
                 last_stage,
@@ -975,7 +998,7 @@ class PostgresStore(EventStore):
                 explain_failure_reason,
                 explain_failure_step
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
             )
             ON CONFLICT (run_id) DO UPDATE SET
                 tenant_id = EXCLUDED.tenant_id,
@@ -985,6 +1008,8 @@ class PostgresStore(EventStore):
                 status = EXCLUDED.status,
                 blocked_on = EXCLUDED.blocked_on,
                 failure_reason = EXCLUDED.failure_reason,
+                error_category = EXCLUDED.error_category,
+                diagnostics_json = EXCLUDED.diagnostics_json,
                 last_step_key = EXCLUDED.last_step_key,
                 drift_count = EXCLUDED.drift_count,
                 last_stage = EXCLUDED.last_stage,
@@ -1003,6 +1028,8 @@ class PostgresStore(EventStore):
             next_snapshot.status,
             next_snapshot.blocked_on,
             next_snapshot.failure_reason,
+            next_snapshot.error_category,
+            next_snapshot.diagnostics_json,
             next_snapshot.last_step_key,
             next_snapshot.drift_count,
             next_snapshot.last_stage,
@@ -1132,6 +1159,8 @@ def _snapshot_from_record(row: asyncpg.Record) -> RunStateSnapshotRecord:
     status_obj: object = row["status"]
     blocked_on_obj: object = row["blocked_on"]
     failure_reason_obj: object = row["failure_reason"]
+    error_category_obj: object = row["error_category"]
+    diagnostics_json_obj: object = row["diagnostics_json"]
     last_step_key_obj: object = row["last_step_key"]
     drift_count_obj: object = row["drift_count"]
     last_stage_obj: object = row["last_stage"]
@@ -1158,6 +1187,10 @@ def _snapshot_from_record(row: asyncpg.Record) -> RunStateSnapshotRecord:
         raise TypeError(f"Invalid blocked_on row type: {type(blocked_on_obj)!r}")
     if failure_reason_obj is not None and not isinstance(failure_reason_obj, str):
         raise TypeError(f"Invalid failure_reason row type: {type(failure_reason_obj)!r}")
+    if error_category_obj is not None and not isinstance(error_category_obj, str):
+        raise TypeError(f"Invalid error_category row type: {type(error_category_obj)!r}")
+    if diagnostics_json_obj is not None and not isinstance(diagnostics_json_obj, str):
+        raise TypeError(f"Invalid diagnostics_json row type: {type(diagnostics_json_obj)!r}")
     if last_step_key_obj is not None and not isinstance(last_step_key_obj, str):
         raise TypeError(f"Invalid last_step_key row type: {type(last_step_key_obj)!r}")
     if not isinstance(drift_count_obj, int):
@@ -1193,6 +1226,8 @@ def _snapshot_from_record(row: asyncpg.Record) -> RunStateSnapshotRecord:
         status=_coerce_snapshot_status(status_obj),
         blocked_on=blocked_on_obj,
         failure_reason=failure_reason_obj,
+        error_category=error_category_obj,
+        diagnostics_json=diagnostics_json_obj,
         last_step_key=last_step_key_obj,
         drift_count=drift_count_obj,
         last_stage=last_stage_obj,

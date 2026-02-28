@@ -66,7 +66,7 @@ All kernel events support `parent_step_key`, including hash chaining for auditab
 
 Propagation exists through:
 
-- model request/completion/replay-drift events
+- model request/terminal/replay-drift events
 - tool request/completion/reconciliation events
 - harness events and summary emissions
 

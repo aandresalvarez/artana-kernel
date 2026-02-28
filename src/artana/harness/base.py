@@ -520,6 +520,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy | None = None,
         context_version: ContextVersion | None = None,
+        retry_failed_step: bool = False,
         parent_step_key: str | None = None,
     ) -> StepModelResult[OutputT]:
         resolved_input = _resolve_model_input(
@@ -542,6 +543,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
             model_options=model_options,
             replay_policy=replay_policy,
             context_version=context_version,
+            retry_failed_step=retry_failed_step,
             parent_step_key=parent_step_key,
         )
 
@@ -559,6 +561,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy | None = None,
         context_version: ContextVersion | None = None,
+        retry_failed_step: bool = False,
         parent_step_key: str | None = None,
     ) -> StepModelResult[OutputT]:
         return await self.run_model(
@@ -574,6 +577,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
             model_options=model_options,
             replay_policy=replay_policy,
             context_version=context_version,
+            retry_failed_step=retry_failed_step,
             parent_step_key=parent_step_key,
         )
 
@@ -591,6 +595,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy | None = None,
         context_version: ContextVersion | None = None,
+        retry_failed_step: bool = False,
         parent_step_key: str | None = None,
     ) -> StepModelResult[OutputT]:
         return await self.run_model(
@@ -606,6 +611,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
             model_options=model_options,
             replay_policy=replay_policy,
             context_version=context_version,
+            retry_failed_step=retry_failed_step,
             parent_step_key=parent_step_key,
         )
 
@@ -725,6 +731,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy | None = None,
         context_version: ContextVersion | None = None,
+        retry_failed_step: bool = False,
         parent_step_key: str | None = None,
     ) -> StepModelResult[OutputT]:
         required_step_key = self.require_step_key(step_key)
@@ -746,6 +753,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
                     self._replay_policy if replay_policy is None else replay_policy
                 ),
                 context_version=context_version,
+                retry_failed_step=retry_failed_step,
                 parent_step_key=resolved_parent_step_key,
             )
         finally:

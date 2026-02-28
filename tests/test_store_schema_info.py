@@ -16,7 +16,7 @@ async def test_sqlite_store_schema_info(tmp_path: Path) -> None:
         await store.close()
 
     assert info.backend == "sqlite"
-    assert info.schema_version == "1"
+    assert info.schema_version == "2"
 
 
 @pytest.mark.asyncio
@@ -28,4 +28,4 @@ async def test_postgres_store_schema_info() -> None:
         await store.close()
 
     assert info.backend == "postgres"
-    assert info.schema_version == "1"
+    assert info.schema_version == "2"

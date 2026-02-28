@@ -64,6 +64,7 @@ class CurrentKernelStub:
         model_options: ModelCallOptions | None = None,
         replay_policy: ReplayPolicy = "strict",
         context_version: ContextVersion | None = None,
+        retry_failed_step: bool = False,
         parent_step_key: str | None = None,
     ) -> StepModelResult[OutputT]:
         self.replay_policy_seen = replay_policy
@@ -107,6 +108,7 @@ async def test_step_forwards_replay_policy_on_current_kernel() -> None:
     assert capabilities == ModelClientCapabilities(
         supports_replay_policy=True,
         supports_context_version=True,
+        supports_retry_failed_step=True,
     )
 
     context_version = ContextVersion(system_prompt_hash="abc123")
@@ -133,6 +135,7 @@ async def test_step_fallback_retries_without_unsupported_kwargs() -> None:
     assert capabilities == ModelClientCapabilities(
         supports_replay_policy=False,
         supports_context_version=False,
+        supports_retry_failed_step=False,
     )
 
     with pytest.warns(UserWarning, match="unsupported_kwargs"):

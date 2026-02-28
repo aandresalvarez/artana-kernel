@@ -8,7 +8,7 @@
     "harness_failed",
     "harness_stage",
     "model_requested",
-    "model_completed",
+    "model_terminal",
     "replayed_with_drift",
     "tool_requested",
     "tool_completed",
@@ -31,9 +31,23 @@
       "allowed_tool_signatures",
       "allowed_tools_hash",
       "step_key",
+      "model_cycle_id",
       "context_version"
     ],
     "tool_signature_token_format": "name|tool_version|schema_version|schema_hash"
+  },
+  "model_terminal_invariants": {
+    "outcomes": [
+      "completed",
+      "failed",
+      "timeout",
+      "cancelled",
+      "abandoned"
+    ],
+    "required_correlation_fields": [
+      "model_cycle_id",
+      "source_model_requested_event_id"
+    ]
   },
   "replay_policies": [
     "strict",

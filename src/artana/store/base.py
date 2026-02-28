@@ -78,6 +78,8 @@ class RunStateSnapshotRecord:
     status: RunStateLifecycleStatus
     blocked_on: str | None
     failure_reason: str | None
+    error_category: str | None
+    diagnostics_json: str | None
     last_step_key: str | None
     drift_count: int
     last_stage: str | None

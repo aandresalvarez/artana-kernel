@@ -426,10 +426,10 @@ async def test_parent_step_key_is_written_on_model_and_tool_events(tmp_path: Pat
             for event in events
             if event.event_type == EventType.MODEL_REQUESTED
         )
-        model_completed = next(
+        model_terminal = next(
             event
             for event in events
-            if event.event_type == EventType.MODEL_COMPLETED
+            if event.event_type == EventType.MODEL_TERMINAL
         )
         tool_requested = next(
             event
@@ -444,7 +444,7 @@ async def test_parent_step_key_is_written_on_model_and_tool_events(tmp_path: Pat
         assert isinstance(model_requested.payload, ModelRequestedPayload)
         assert isinstance(tool_requested.payload, ToolRequestedPayload)
         assert model_requested.parent_step_key == "trace::model"
-        assert model_completed.parent_step_key == "trace::model"
+        assert model_terminal.parent_step_key == "trace::model"
         assert model_requested.payload.step_key == "model_step"
         assert tool_requested.parent_step_key == "trace::tool"
         assert tool_completed.parent_step_key == "trace::tool"

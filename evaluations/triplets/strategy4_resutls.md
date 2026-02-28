@@ -54,7 +54,7 @@ For run id `triplets_strategy4::synthetic_article_1::a023eff07ca0` in the durabl
 
 - `run_started`: 1
 - `model_requested`: 1
-- `model_completed`: 1
+- `model_terminal`: 1
 - `workflow_step_requested`: 2
 - `workflow_step_completed`: 2
 - `pause_requested`: 1

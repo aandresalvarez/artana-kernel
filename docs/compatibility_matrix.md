@@ -13,8 +13,8 @@ This matrix defines runtime API and store schema compatibility for `0.x` release
 
 | Client surface | Compatibility guarantee |
 | --- | --- |
-| `KernelModelClient.step(...)` / `SingleStepModelClient.step(...)` | Accepts `replay_policy` and `context_version`; when bound kernel does not support these kwargs, retries once without unsupported kwargs and emits a warning. |
-| `KernelModelClient.capabilities()` | Exposes support flags for `replay_policy` and `context_version` on the bound kernel instance. |
+| `KernelModelClient.step(...)` / `SingleStepModelClient.step(...)` | Accepts `replay_policy`, `context_version`, and `retry_failed_step`; when bound kernel does not support these kwargs, retries once without unsupported kwargs and emits a warning. |
+| `KernelModelClient.capabilities()` | Exposes support flags for `replay_policy`, `context_version`, and `retry_failed_step` on the bound kernel instance. |
 
 ## Progress API compatibility
 
@@ -26,8 +26,8 @@ This matrix defines runtime API and store schema compatibility for `0.x` release
 
 | Store backend | Schema version | Compatibility expectation |
 | --- | --- | --- |
-| SQLite (`SQLiteStore`) | `1` | Compatible across `0.1.x` unless explicitly noted in `CHANGELOG.md`. |
-| Postgres (`PostgresStore`) | `1` | Compatible across `0.1.x` unless explicitly noted in `CHANGELOG.md`. |
+| SQLite (`SQLiteStore`) | `2` | Compatible across `0.1.x` unless explicitly noted in `CHANGELOG.md`. |
+| Postgres (`PostgresStore`) | `2` | Compatible across `0.1.x` unless explicitly noted in `CHANGELOG.md`. |
 
 Both backends expose their declared schema via `get_schema_info()`.
 

@@ -34,6 +34,7 @@ def build_behavior_index() -> dict[str, object]:
                 "allowed_tool_signatures",
                 "allowed_tools_hash",
                 "step_key",
+                "model_cycle_id",
                 "context_version",
             ],
             "tool_signature_token_format": (
@@ -43,6 +44,19 @@ def build_behavior_index() -> dict[str, object]:
                 "system_prompt_hash",
                 "context_builder_version",
                 "compaction_version",
+            ],
+        },
+        "model_terminal_invariants": {
+            "outcomes": [
+                "completed",
+                "failed",
+                "timeout",
+                "cancelled",
+                "abandoned",
+            ],
+            "required_correlation_fields": [
+                "model_cycle_id",
+                "source_model_requested_event_id",
             ],
         },
         "tool_io_hooks": [

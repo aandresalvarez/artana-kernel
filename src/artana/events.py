@@ -18,7 +18,7 @@ class EventType(StrEnum):
     HARNESS_FAILED = "harness_failed"
     HARNESS_STAGE = "harness_stage"
     MODEL_REQUESTED = "model_requested"
-    MODEL_COMPLETED = "model_completed"
+    MODEL_TERMINAL = "model_terminal"
     REPLAYED_WITH_DRIFT = "replayed_with_drift"
     TOOL_REQUESTED = "tool_requested"
     TOOL_COMPLETED = "tool_completed"
@@ -78,6 +78,7 @@ class ModelRequestedPayload(BaseModel):
     allowed_tool_signatures: list[ToolSignatureRecord] = Field(default_factory=list)
     allowed_tools_hash: str | None = None
     step_key: str | None = None
+    model_cycle_id: str | None = None
     context_version: ContextVersionRecord | None = None
 
 
@@ -87,15 +88,26 @@ class ToolCallRecord(BaseModel):
     tool_call_id: str | None = None
 
 
-class ModelCompletedPayload(BaseModel):
-    kind: Literal["model_completed"] = "model_completed"
+class ModelTerminalPayload(BaseModel):
+    kind: Literal["model_terminal"] = "model_terminal"
+    outcome: Literal["completed", "failed", "timeout", "cancelled", "abandoned"]
     model: str
-    output_json: str
-    prompt_tokens: int = Field(ge=0)
-    completion_tokens: int = Field(ge=0)
-    cost_usd: float = Field(ge=0.0)
+    model_cycle_id: str
+    source_model_requested_event_id: str
+    step_key: str | None = None
+    failure_reason: str | None = None
+    error_category: str | None = None
+    error_class: str | None = None
+    http_status: int | None = None
+    provider_request_id: str | None = None
+    elapsed_ms: int = Field(ge=0)
+    diagnostics_json: str | None = None
+    output_json: str | None = None
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    completion_tokens: int | None = Field(default=None, ge=0)
+    cost_usd: float | None = Field(default=None, ge=0.0)
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
-    api_mode_used: Literal["responses", "chat"] = "chat"
+    api_mode_used: Literal["responses", "chat"] | None = None
     response_id: str | None = None
     responses_output_items: list[dict[str, object]] = Field(default_factory=list)
 
@@ -106,7 +118,7 @@ class ReplayedWithDriftPayload(BaseModel):
     model: str
     drift_fields: list[str] = Field(default_factory=list)
     source_model_requested_event_id: str
-    source_model_completed_seq: int | None = None
+    source_model_terminal_seq: int | None = None
     replay_policy: Literal["allow_prompt_drift", "fork_on_drift"]
     fork_run_id: str | None = None
 
@@ -218,7 +230,7 @@ EventPayload = (
     | HarnessFailedPayload
     | HarnessStagePayload
     | ModelRequestedPayload
-    | ModelCompletedPayload
+    | ModelTerminalPayload
     | ReplayedWithDriftPayload
     | ToolRequestedPayload
     | ToolCompletedPayload

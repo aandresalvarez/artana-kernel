@@ -9,7 +9,7 @@ from artana.events import (
     HarnessSleepPayload,
     HarnessStagePayload,
     KernelEvent,
-    ModelCompletedPayload,
+    ModelTerminalPayload,
     PauseRequestedPayload,
     ReplayedWithDriftPayload,
     RunSummaryPayload,
@@ -28,6 +28,8 @@ def initialize_run_state_snapshot(*, event: KernelEvent) -> RunStateSnapshotReco
         status="active",
         blocked_on=None,
         failure_reason=None,
+        error_category=None,
+        diagnostics_json=None,
         last_step_key=None,
         drift_count=0,
         last_stage=None,
@@ -60,6 +62,8 @@ def apply_event_to_run_state_snapshot(
     status = snapshot.status
     blocked_on = snapshot.blocked_on
     failure_reason = snapshot.failure_reason
+    error_category = snapshot.error_category
+    diagnostics_json = snapshot.diagnostics_json
     drift_count = snapshot.drift_count
     last_stage = snapshot.last_stage
     last_tool = snapshot.last_tool
@@ -73,6 +77,19 @@ def apply_event_to_run_state_snapshot(
         status = "active"
         blocked_on = None
         failure_reason = None
+        error_category = None
+        diagnostics_json = None
+
+    elif event.event_type == EventType.MODEL_REQUESTED:
+        if status == "failed":
+            status = "active"
+            blocked_on = None
+            failure_reason = None
+            error_category = None
+            diagnostics_json = None
+            explain_status = "completed"
+            explain_failure_reason = None
+            explain_failure_step = None
 
     elif event.event_type == EventType.PAUSE_REQUESTED and isinstance(
         event.payload, PauseRequestedPayload
@@ -97,6 +114,8 @@ def apply_event_to_run_state_snapshot(
     ):
         status = "failed"
         failure_reason = event.payload.error_type
+        error_category = "internal"
+        diagnostics_json = None
         explain_status = "failed"
         explain_failure_reason = event.payload.error_type
         explain_failure_step = event.payload.last_step_key
@@ -107,6 +126,8 @@ def apply_event_to_run_state_snapshot(
         if event.payload.status == "failed":
             status = "failed"
             failure_reason = event.payload.execution_error_type or event.payload.sleep_error_type
+            error_category = "internal"
+            diagnostics_json = None
             explain_status = "failed"
         else:
             if open_pause_count == 0:
@@ -115,12 +136,37 @@ def apply_event_to_run_state_snapshot(
             else:
                 status = "paused"
             failure_reason = None
+            error_category = None
+            diagnostics_json = None
             explain_status = "completed"
 
-    elif event.event_type == EventType.MODEL_COMPLETED and isinstance(
-        event.payload, ModelCompletedPayload
+    elif event.event_type == EventType.MODEL_TERMINAL and isinstance(
+        event.payload, ModelTerminalPayload
     ):
-        model_cost_total += event.payload.cost_usd
+        if event.payload.cost_usd is not None:
+            model_cost_total += event.payload.cost_usd
+        if event.payload.outcome == "completed":
+            failure_reason = None
+            error_category = None
+            diagnostics_json = None
+            if status == "failed":
+                status = "active"
+            explain_status = "completed"
+            explain_failure_reason = None
+            explain_failure_step = None
+        else:
+            status = "failed"
+            blocked_on = None
+            failure_reason = (
+                event.payload.failure_reason
+                or event.payload.error_category
+                or event.payload.outcome
+            )
+            error_category = event.payload.error_category
+            diagnostics_json = event.payload.diagnostics_json
+            explain_status = "failed"
+            explain_failure_reason = failure_reason
+            explain_failure_step = event.payload.step_key
 
     elif event.event_type == EventType.REPLAYED_WITH_DRIFT and isinstance(
         event.payload, ReplayedWithDriftPayload
@@ -154,6 +200,8 @@ def apply_event_to_run_state_snapshot(
         status=status,
         blocked_on=blocked_on,
         failure_reason=failure_reason,
+        error_category=error_category,
+        diagnostics_json=diagnostics_json,
         last_step_key=next_step_key,
         drift_count=drift_count,
         last_stage=last_stage,
@@ -210,4 +258,3 @@ def _coerce_timestamp(value: datetime) -> datetime:
     if value.tzinfo is not None:
         return value
     return value.replace(tzinfo=timezone.utc)
-

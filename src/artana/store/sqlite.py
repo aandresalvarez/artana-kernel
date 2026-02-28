@@ -15,6 +15,7 @@ from artana.events import (
     EventPayload,
     EventType,
     KernelEvent,
+    ModelTerminalPayload,
     RunSummaryPayload,
     ToolCompletedPayload,
     ToolRequestedPayload,
@@ -34,7 +35,7 @@ from artana.store.snapshot_state import (
 )
 
 _PAYLOAD_ADAPTER: TypeAdapter[EventPayload] = TypeAdapter(EventPayload)
-SQLITE_STORE_SCHEMA_VERSION = "1"
+SQLITE_STORE_SCHEMA_VERSION = "2"
 
 
 class SQLiteStore(EventStore):
@@ -261,14 +262,25 @@ class SQLiteStore(EventStore):
             cursor = await connection.execute(
                 """
                 SELECT COALESCE(
-                    SUM(CAST(json_extract(payload_json, '$.cost_usd') AS REAL)),
+                    SUM(
+                        CASE
+                            WHEN event_type = ? THEN
+                                COALESCE(
+                                    CAST(json_extract(payload_json, '$.cost_usd') AS REAL),
+                                    0.0
+                                )
+                            ELSE 0.0
+                        END
+                    ),
                     0.0
                 ) AS total_cost
                 FROM kernel_events
                 WHERE run_id = ?
-                  AND event_type = ?
                 """,
-                (run_id, EventType.MODEL_COMPLETED.value),
+                (
+                    EventType.MODEL_TERMINAL.value,
+                    run_id,
+                ),
             )
         except aiosqlite.OperationalError as exc:
             if _is_missing_json_extract_error(exc):
@@ -457,6 +469,8 @@ class SQLiteStore(EventStore):
                 status,
                 blocked_on,
                 failure_reason,
+                error_category,
+                diagnostics_json,
                 last_step_key,
                 drift_count,
                 last_stage,
@@ -506,6 +520,8 @@ class SQLiteStore(EventStore):
                 status,
                 blocked_on,
                 failure_reason,
+                error_category,
+                diagnostics_json,
                 last_step_key,
                 drift_count,
                 last_stage,
@@ -873,6 +889,8 @@ class SQLiteStore(EventStore):
                         status TEXT NOT NULL,
                         blocked_on TEXT,
                         failure_reason TEXT,
+                        error_category TEXT,
+                        diagnostics_json TEXT,
                         last_step_key TEXT,
                         drift_count INTEGER NOT NULL,
                         last_stage TEXT,
@@ -885,6 +903,27 @@ class SQLiteStore(EventStore):
                     )
                     """
                 )
+                snapshot_cursor = await connection.execute(
+                    "PRAGMA table_info(run_state_snapshots);"
+                )
+                snapshot_columns = await snapshot_cursor.fetchall()
+                await snapshot_cursor.close()
+                snapshot_column_names = [column["name"] for column in snapshot_columns]
+                for column_name, column_type in (
+                    ("error_category", "TEXT"),
+                    ("diagnostics_json", "TEXT"),
+                ):
+                    if column_name in snapshot_column_names:
+                        continue
+                    try:
+                        await connection.execute(
+                            "ALTER TABLE run_state_snapshots "
+                            f"ADD COLUMN {column_name} {column_type}"
+                        )
+                    except aiosqlite.OperationalError as exc:
+                        duplicate_message = f"duplicate column name: {column_name}"
+                        if duplicate_message not in str(exc).lower():
+                            raise
                 await connection.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_run_state_snapshots_tenant_updated
@@ -1033,6 +1072,8 @@ class SQLiteStore(EventStore):
                 status,
                 blocked_on,
                 failure_reason,
+                error_category,
+                diagnostics_json,
                 last_step_key,
                 drift_count,
                 last_stage,
@@ -1067,6 +1108,8 @@ class SQLiteStore(EventStore):
                 status,
                 blocked_on,
                 failure_reason,
+                error_category,
+                diagnostics_json,
                 last_step_key,
                 drift_count,
                 last_stage,
@@ -1076,7 +1119,7 @@ class SQLiteStore(EventStore):
                 explain_status,
                 explain_failure_reason,
                 explain_failure_step
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(run_id) DO UPDATE SET
                 tenant_id = excluded.tenant_id,
                 last_event_seq = excluded.last_event_seq,
@@ -1085,6 +1128,8 @@ class SQLiteStore(EventStore):
                 status = excluded.status,
                 blocked_on = excluded.blocked_on,
                 failure_reason = excluded.failure_reason,
+                error_category = excluded.error_category,
+                diagnostics_json = excluded.diagnostics_json,
                 last_step_key = excluded.last_step_key,
                 drift_count = excluded.drift_count,
                 last_stage = excluded.last_stage,
@@ -1104,6 +1149,8 @@ class SQLiteStore(EventStore):
                 next_snapshot.status,
                 next_snapshot.blocked_on,
                 next_snapshot.failure_reason,
+                next_snapshot.error_category,
+                next_snapshot.diagnostics_json,
                 next_snapshot.last_step_key,
                 next_snapshot.drift_count,
                 next_snapshot.last_stage,
@@ -1120,14 +1167,12 @@ class SQLiteStore(EventStore):
         events = await self.get_events_for_run(run_id)
         spent = 0.0
         for event in events:
-            if event.event_type != EventType.MODEL_COMPLETED:
-                continue
             payload = event.payload
-            if payload.kind != "model_completed":
-                raise RuntimeError(
-                    f"Invalid event payload kind {payload.kind!r} for model_completed event."
-                )
-            spent += payload.cost_usd
+            if event.event_type == EventType.MODEL_TERMINAL and isinstance(
+                payload, ModelTerminalPayload
+            ):
+                if payload.cost_usd is not None:
+                    spent += payload.cost_usd
         return spent
 
     async def _latest_run_summary_via_events(
@@ -1164,6 +1209,8 @@ def _snapshot_from_row(row: aiosqlite.Row) -> RunStateSnapshotRecord:
     status_obj: object = row["status"]
     blocked_on_obj: object = row["blocked_on"]
     failure_reason_obj: object = row["failure_reason"]
+    error_category_obj: object = row["error_category"]
+    diagnostics_json_obj: object = row["diagnostics_json"]
     last_step_key_obj: object = row["last_step_key"]
     drift_count_obj: object = row["drift_count"]
     last_stage_obj: object = row["last_stage"]
@@ -1190,6 +1237,10 @@ def _snapshot_from_row(row: aiosqlite.Row) -> RunStateSnapshotRecord:
         raise TypeError(f"Invalid blocked_on row type: {type(blocked_on_obj)!r}")
     if failure_reason_obj is not None and not isinstance(failure_reason_obj, str):
         raise TypeError(f"Invalid failure_reason row type: {type(failure_reason_obj)!r}")
+    if error_category_obj is not None and not isinstance(error_category_obj, str):
+        raise TypeError(f"Invalid error_category row type: {type(error_category_obj)!r}")
+    if diagnostics_json_obj is not None and not isinstance(diagnostics_json_obj, str):
+        raise TypeError(f"Invalid diagnostics_json row type: {type(diagnostics_json_obj)!r}")
     if last_step_key_obj is not None and not isinstance(last_step_key_obj, str):
         raise TypeError(f"Invalid last_step_key row type: {type(last_step_key_obj)!r}")
     if not isinstance(drift_count_obj, int):
@@ -1227,6 +1278,8 @@ def _snapshot_from_row(row: aiosqlite.Row) -> RunStateSnapshotRecord:
         status=status,
         blocked_on=blocked_on_obj,
         failure_reason=failure_reason_obj,
+        error_category=error_category_obj,
+        diagnostics_json=diagnostics_json_obj,
         last_step_key=last_step_key_obj,
         drift_count=drift_count_obj,
         last_stage=last_stage_obj,

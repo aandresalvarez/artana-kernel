@@ -802,12 +802,12 @@ def _assert_replay_invariants(
     counts = _count_event_types(events_after_first)
     if counts[EventType.RUN_STARTED] != 1:
         raise AssertionError(f"Expected exactly one run_started event for run_id={run_id}.")
-    if counts[EventType.MODEL_REQUESTED] < 1 or counts[EventType.MODEL_COMPLETED] < 1:
+    if counts[EventType.MODEL_REQUESTED] < 1 or counts[EventType.MODEL_TERMINAL] < 1:
         raise AssertionError(f"Expected at least one model cycle for run_id={run_id}.")
-    if counts[EventType.MODEL_REQUESTED] != counts[EventType.MODEL_COMPLETED]:
+    if counts[EventType.MODEL_REQUESTED] != counts[EventType.MODEL_TERMINAL]:
         raise AssertionError(
-            f"Model requested/completed mismatch for run_id={run_id}: "
-            f"{counts[EventType.MODEL_REQUESTED]} vs {counts[EventType.MODEL_COMPLETED]}."
+            f"Model requested/terminal mismatch for run_id={run_id}: "
+            f"{counts[EventType.MODEL_REQUESTED]} vs {counts[EventType.MODEL_TERMINAL]}."
         )
     if counts[EventType.WORKFLOW_STEP_REQUESTED] != counts[EventType.WORKFLOW_STEP_COMPLETED]:
         raise AssertionError(

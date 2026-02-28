@@ -10,8 +10,8 @@ from artana.events import (
     ChatMessage,
     EventType,
     KernelEvent,
-    ModelCompletedPayload,
     ModelRequestedPayload,
+    ModelTerminalPayload,
     ToolSignatureRecord,
     compute_allowed_tools_hash,
 )
@@ -19,6 +19,9 @@ from artana.models import TenantContext
 from artana.ports.model import (
     ModelAPIModeUsed,
     ModelCallOptions,
+    ModelPermanentError,
+    ModelTimeoutError,
+    ModelTransientError,
     ModelUsage,
     ToolCall,
 )
@@ -41,7 +44,7 @@ class ModelStepResult(Generic[OutputT]):
 @dataclass(frozen=True, slots=True)
 class ModelCycleLookup:
     request_event: KernelEvent | None
-    completed_event: KernelEvent | None
+    terminal_event: KernelEvent | None
     replayed_with_drift: bool = False
     drift_fields: tuple[str, ...] = ()
 
@@ -49,11 +52,11 @@ class ModelCycleLookup:
 @dataclass(frozen=True, slots=True)
 class PromptDriftCandidate:
     request_event: KernelEvent
-    completed_event: KernelEvent | None
+    terminal_event: KernelEvent | None
     drift_fields: tuple[str, ...]
 
 
-def deserialize_model_completed(
+def deserialize_model_terminal(
     *,
     event: KernelEvent,
     output_schema: type[OutputT],
@@ -62,9 +65,22 @@ def deserialize_model_completed(
     drift_fields: tuple[str, ...] = (),
 ) -> ModelStepResult[OutputT]:
     payload = event.payload
-    if not isinstance(payload, ModelCompletedPayload):
+    if not isinstance(payload, ModelTerminalPayload):
         raise ReplayConsistencyError(
-            f"Expected model_completed payload at seq={event.seq}, got {type(payload)!r}."
+            f"Expected model terminal payload at seq={event.seq}, got {type(payload)!r}."
+        )
+    if payload.outcome != "completed":
+        raise _model_terminal_exception(payload=payload)
+    if (
+        payload.output_json is None
+        or payload.prompt_tokens is None
+        or payload.completion_tokens is None
+        or payload.cost_usd is None
+        or payload.api_mode_used is None
+    ):
+        raise ReplayConsistencyError(
+            "model_terminal outcome='completed' is missing completion metadata "
+            f"at seq={event.seq}."
         )
     output = output_schema.model_validate_json(payload.output_json)
     return ModelStepResult(
@@ -135,10 +151,10 @@ def find_prompt_drift_candidate(
             messages_match=messages_match,
             options_drift_fields=options_drift_fields,
         )
-        completed = find_model_completed_after(events=events, start_index=index + 1)
+        terminal = find_model_terminal_after(events=events, start_index=index + 1)
         return PromptDriftCandidate(
             request_event=event,
-            completed_event=completed,
+            terminal_event=terminal,
             drift_fields=drift_fields,
         )
     return None
@@ -182,8 +198,8 @@ def find_matching_model_cycle(
             responses_input_items=responses_input_items,
         )
         if prompt_matches and messages_match and len(options_drift_fields) == 0:
-            completed = find_model_completed_after(events=events, start_index=index + 1)
-            return ModelCycleLookup(request_event=event, completed_event=completed)
+            terminal = find_model_terminal_after(events=events, start_index=index + 1)
+            return ModelCycleLookup(request_event=event, terminal_event=terminal)
         if step_key is None:
             continue
 
@@ -199,31 +215,56 @@ def find_matching_model_cycle(
                 "prior completion, or replay_policy='fork_on_drift' to branch."
             )
         if replay_policy == "allow_prompt_drift":
-            completed = find_model_completed_after(events=events, start_index=index + 1)
-            if completed is None:
+            terminal = find_model_terminal_after(events=events, start_index=index + 1)
+            if terminal is None:
                 # Found drift on the latest request cycle, but no completion to replay.
-                return ModelCycleLookup(request_event=None, completed_event=None)
+                return ModelCycleLookup(request_event=None, terminal_event=None)
             return ModelCycleLookup(
                 request_event=event,
-                completed_event=completed,
+                terminal_event=terminal,
                 replayed_with_drift=True,
                 drift_fields=drift_fields,
             )
         raise ReplayConsistencyError(
             "fork_on_drift must fork the run before replay matching executes."
         )
-    return ModelCycleLookup(request_event=None, completed_event=None)
+    return ModelCycleLookup(request_event=None, terminal_event=None)
 
 
-def find_model_completed_after(
+def find_model_terminal_after(
     *, events: Sequence[KernelEvent], start_index: int
 ) -> KernelEvent | None:
     for event in events[start_index:]:
         if event.event_type == EventType.MODEL_REQUESTED:
             break
-        if event.event_type == EventType.MODEL_COMPLETED:
+        if event.event_type == EventType.MODEL_TERMINAL:
             return event
     return None
+
+
+def _model_terminal_exception(payload: ModelTerminalPayload) -> RuntimeError:
+    details = (
+        payload.failure_reason
+        or payload.error_class
+        or payload.error_category
+        or payload.outcome
+    )
+    message = (
+        "Replayed model terminal outcome="
+        f"{payload.outcome!r} category={payload.error_category!r} "
+        f"class={payload.error_class!r} reason={details!r}."
+    )
+    outcome = payload.outcome
+    category = payload.error_category
+    if outcome == "timeout" or category == "timeout":
+        return ModelTimeoutError(message)
+    if outcome == "cancelled" or category == "cancelled":
+        return RuntimeError(message)
+    if category in {"transient", "network", "provider_5xx"}:
+        return ModelTransientError(message)
+    if category in {"permanent", "provider_4xx"}:
+        return ModelPermanentError(message)
+    return RuntimeError(message)
 
 
 def validate_tenant_for_run(*, events: Sequence[KernelEvent], tenant: TenantContext) -> None:
@@ -316,7 +357,6 @@ def _model_options_drift_fields(
     if payload.previous_response_id != model_options.previous_response_id:
         fields.append("previous_response_id")
 
-    # Compatibility path for legacy rows that don't have responses_input_items.
     if payload.responses_input_items is None:
         return tuple(fields)
 
