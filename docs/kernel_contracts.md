@@ -199,6 +199,8 @@ Built-in deterministic invariants:
 
 - Approval records are run summaries under `summary_type=policy::approval::<approval_key>`.
 - Human mode raises `ApprovalRequiredError` until approval is recorded.
+- After a human approval record is appended for a paused run, callers must append
+  `resume(...)` before retrying model/tool execution.
 - Critic mode uses deterministic kernel model steps with key prefix `critic::<tool>::`.
 - Critic denials raise `PolicyViolationError(code="critic_denied")`.
 

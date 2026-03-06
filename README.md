@@ -110,6 +110,7 @@ Initial implementation aligned with the Artana Kernel PRD:
 - Kernel policy APIs for safety workflows:
   - `record_intent_plan(...)`
   - `approve_tool_call(...)`
+  - `resume(...)` after human approval before retrying paused work
 - Extended kernel syscalls for orchestration/scheduling:
   - `get_run_status(...)`, `list_active_runs(...)`, `resume_point(...)`
   - `get_run_progress(...)`, `stream_run_progress(...)`
@@ -792,6 +793,10 @@ await kernel.approve_tool_call(
     approval_key="<deterministic_approval_key>",
     mode="human",
     reason="Finance manager approved",
+)
+await kernel.resume(
+    run_id=run_id,
+    tenant=tenant,
 )
 ```
 
