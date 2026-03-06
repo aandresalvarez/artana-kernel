@@ -666,9 +666,11 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         *,
         run_id: str,
         summary_type: str,
+        tenant: TenantContext | None = None,
     ) -> object | None:
         summary = await self._kernel.get_latest_run_summary(
             run_id=run_id,
+            tenant=self._resolve_tenant(tenant=tenant),
             summary_type=summary_type,
         )
         if summary is None:
@@ -706,10 +708,12 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         *,
         key: str,
         run_id: str | None = None,
+        tenant: TenantContext | None = None,
     ) -> object | None:
         payload = await self.summary_payload(
             run_id=self._resolve_run_id(run_id=run_id),
             summary_type=f"artifact::{key}",
+            tenant=tenant,
         )
         if payload is None:
             return None
@@ -943,7 +947,10 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         )
 
     async def validate_clean_state(self, *, run_id: str) -> None:
-        events = await self._kernel.get_events(run_id=run_id)
+        events = await self._kernel.get_events(
+            run_id=run_id,
+            tenant=self._resolve_tenant(tenant=None),
+        )
         resolutions = resolve_tool_resolutions(events)
 
         unresolved = [
@@ -985,7 +992,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         tenant: TenantContext,
     ) -> bool:
         try:
-            await self._kernel.load_run(run_id=run_id)
+            await self._kernel.load_run(run_id=run_id, tenant=tenant)
         except ValueError:
             await self._kernel.start_run(tenant=tenant, run_id=run_id)
             return True

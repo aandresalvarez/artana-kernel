@@ -7,7 +7,14 @@ import pytest
 from pydantic import BaseModel
 
 from artana import KernelModelClient
-from artana.events import ModelRequestedPayload, compute_allowed_tools_hash
+from artana.events import (
+    ChatMessage,
+    EventType,
+    ModelRequestedPayload,
+    ModelTerminalPayload,
+    RunStartedPayload,
+    compute_allowed_tools_hash,
+)
 from artana.kernel import ArtanaKernel, ReplayConsistencyError
 from artana.models import TenantContext
 from artana.ports.model import ModelCallOptions, ModelRequest, ModelResult, ModelUsage
@@ -214,3 +221,73 @@ async def test_model_replay_rejects_model_option_changes(tmp_path: Path) -> None
         assert second_model.calls == 0
     finally:
         await second_kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_model_replay_rejects_legacy_missing_responses_input_items(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model = CountingModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model)
+    tenant = _tenant()
+    run_id = "run_legacy_responses_items"
+    try:
+        await store.append_event(
+            run_id=run_id,
+            tenant_id=tenant.tenant_id,
+            event_type=EventType.RUN_STARTED,
+            payload=RunStartedPayload(),
+        )
+        await store.append_event(
+            run_id=run_id,
+            tenant_id=tenant.tenant_id,
+            event_type=EventType.MODEL_REQUESTED,
+            payload=ModelRequestedPayload(
+                model="openai/gpt-5.3-codex",
+                prompt="check options",
+                messages=[ChatMessage(role="user", content="check options")],
+                api_mode="responses",
+                reasoning_effort=None,
+                verbosity="low",
+                previous_response_id=None,
+                responses_input_items=None,
+                allowed_tools=[],
+                allowed_tool_signatures=[],
+                allowed_tools_hash=compute_allowed_tools_hash([]),
+                step_key="options_step",
+                model_cycle_id="legacy_cycle",
+                context_version=None,
+            ),
+        )
+        await store.append_event(
+            run_id=run_id,
+            tenant_id=tenant.tenant_id,
+            event_type=EventType.MODEL_TERMINAL,
+            payload=ModelTerminalPayload(
+                outcome="completed",
+                model="openai/gpt-5.3-codex",
+                model_cycle_id="legacy_cycle",
+                source_model_requested_event_id="legacy_request",
+                step_key="options_step",
+                elapsed_ms=1,
+                output_json='{"approved":true,"reason":"ok"}',
+                prompt_tokens=2,
+                completion_tokens=1,
+                cost_usd=0.01,
+                api_mode_used="responses",
+                responses_output_items=[],
+            ),
+        )
+
+        with pytest.raises(ReplayConsistencyError, match="changed model inputs/options"):
+            await KernelModelClient(kernel=kernel).step(
+                run_id=run_id,
+                prompt="check options",
+                model="openai/gpt-5.3-codex",
+                tenant=tenant,
+                output_schema=Decision,
+                step_key="options_step",
+                model_options=ModelCallOptions(api_mode="responses", verbosity="low"),
+            )
+        assert model.calls == 0
+    finally:
+        await kernel.close()

@@ -426,9 +426,9 @@ supervisor = DraftReviewVerifySupervisor(
 Operational CLI for run inspection:
 
 ```bash
-artana run list --db .state.db
-artana run tail run_123 --db .state.db
-artana run verify-ledger run_123 --db .state.db
+artana run list --db .state.db --tenant tenant_123
+artana run tail run_123 --db .state.db --tenant tenant_123
+artana run verify-ledger run_123 --db .state.db --tenant tenant_123
 ```
 
 Default model routing is `ModelCallOptions(api_mode="auto")` across kernel, harness, and agent flows.
@@ -525,7 +525,8 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/runs/{run_id}/progress")
 async def run_progress(run_id: str, request: Request):
     kernel: ArtanaKernel = request.app.state.artana_kernel
-    return await kernel.get_run_progress(run_id=run_id)
+    tenant = request.state.tenant
+    return await kernel.get_run_progress(run_id=run_id, tenant=tenant)
 ```
 
 `PostgresStore` also retries transient read-path connection lifecycle failures
@@ -733,9 +734,9 @@ await kernel.step_tool(
 
 Additional orchestration syscalls:
 ```python
-status = await kernel.get_run_status(run_id=run_id)
-progress = await kernel.get_run_progress(run_id=run_id)
-resume_point = await kernel.resume_point(run_id=run_id)
+status = await kernel.get_run_status(run_id=run_id, tenant=tenant)
+progress = await kernel.get_run_progress(run_id=run_id, tenant=tenant)
+resume_point = await kernel.resume_point(run_id=run_id, tenant=tenant)
 active = await kernel.list_active_runs(tenant_id=tenant.tenant_id)
 
 await kernel.checkpoint(
@@ -751,7 +752,7 @@ await kernel.set_artifact(
     key="report",
     value={"version": 2},
 )
-report = await kernel.get_artifact(run_id=run_id, key="report")
+report = await kernel.get_artifact(run_id=run_id, tenant=tenant, key="report")
 
 await kernel.block_run(
     run_id=run_id,

@@ -358,6 +358,12 @@ def _model_options_drift_fields(
         fields.append("previous_response_id")
 
     if payload.responses_input_items is None:
+        if responses_input_items is not None:
+            fields.append("responses_input_items")
+        return tuple(fields)
+
+    if responses_input_items is None:
+        fields.append("responses_input_items")
         return tuple(fields)
 
     if not _responses_input_equal(payload.responses_input_items, responses_input_items):

@@ -73,7 +73,13 @@ async def test_start_load_and_resume_boundary_persist_lifecycle_events(
 
     try:
         run = await kernel.start_run(tenant=_tenant())
-        loaded = await kernel.load_run(run_id=run.run_id)
+        loaded = await kernel.load_run(run_id=run.run_id, tenant=_tenant())
+        await kernel.pause(
+            run_id=run.run_id,
+            tenant=_tenant(),
+            reason="manual review",
+            context=PauseContext(ticket="mgr-1"),
+        )
         resumed = await kernel.resume(
             run_id=run.run_id,
             tenant=_tenant(),
@@ -87,6 +93,7 @@ async def test_start_load_and_resume_boundary_persist_lifecycle_events(
         events = await store.get_events_for_run(run.run_id)
         assert [event.event_type for event in events] == [
             "run_started",
+            "pause_requested",
             "resume_requested",
         ]
         payload = events[-1].payload

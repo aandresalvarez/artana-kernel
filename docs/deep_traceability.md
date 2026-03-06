@@ -139,7 +139,12 @@ The callback runs after each successful append.
 Kernel also exposes store-agnostic event streaming:
 
 ```pycon
-async for event in kernel.stream_events(run_id="run_1", since_seq=0, follow=True):
+async for event in kernel.stream_events(
+    run_id="run_1",
+    tenant=tenant,
+    since_seq=0,
+    follow=True,
+):
     print(event.seq, event.event_type.value)
 ```
 
@@ -158,7 +163,7 @@ This allows deterministic analysis of why a run continued vs. finalized.
 Kernel exposes:
 
 ```pycon
-summary = await kernel.explain_run(run_id)
+summary = await kernel.explain_run(run_id, tenant=tenant)
 ```
 
 Returned keys:
@@ -197,10 +202,10 @@ Behavior:
 Operational trace inspection is available through CLI commands:
 
 ```pycon
-artana run status <run_id> --db .state.db --json
-artana run summaries <run_id> --db .state.db --limit 20 --json
-artana run artifacts <run_id> --db .state.db --json
-artana run tail <run_id> --db .state.db --since-seq 0
+artana run status <run_id> --db .state.db --tenant <tenant_id> --json
+artana run summaries <run_id> --db .state.db --tenant <tenant_id> --limit 20 --json
+artana run artifacts <run_id> --db .state.db --tenant <tenant_id> --json
+artana run tail <run_id> --db .state.db --tenant <tenant_id> --since-seq 0
 ```
 
 Use `--dsn postgresql://...` for shared deployments.
@@ -226,11 +231,11 @@ Until those triggers appear, Artana keeps observability deterministic and store-
 
 ### Kernel
 
-- `ArtanaKernel.explain_run(run_id)`
-- `ArtanaKernel.get_latest_summary(...)` (compat helper)
+- `ArtanaKernel.explain_run(run_id, tenant=...)`
+- `ArtanaKernel.get_latest_summary(run_id=..., tenant=..., summary_type=...)`
 - `ArtanaKernel.append_run_summary(..., parent_step_key=...)`
 - `ArtanaKernel.append_harness_event(..., parent_step_key=...)`
-- `ArtanaKernel.stream_events(run_id, since_seq=0, follow=False, ...)`
+- `ArtanaKernel.stream_events(run_id, tenant=..., since_seq=0, follow=False, ...)`
 - `ArtanaKernel.describe_capabilities(tenant=...)`
 - `ArtanaKernel.list_tools_for_tenant(tenant=...)`
 

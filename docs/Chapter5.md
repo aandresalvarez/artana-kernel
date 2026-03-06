@@ -130,6 +130,7 @@ async def worker():
         worker_id = "worker-1"
         leased = await kernel.acquire_run_lease(
             run_id=run_id,
+            tenant=tenant,
             worker_id=worker_id,
             ttl_seconds=30,
         )
@@ -140,7 +141,11 @@ async def worker():
         try:
             await harness.run(run_id)
         finally:
-            await kernel.release_run_lease(run_id=run_id, worker_id=worker_id)
+            await kernel.release_run_lease(
+                run_id=run_id,
+                tenant=tenant,
+                worker_id=worker_id,
+            )
             task_queue.task_done()
 ```
 
@@ -367,21 +372,21 @@ Use the built-in CLI to inspect distributed runs without writing ad-hoc SQL.
 
 ```bash
 # List recent run IDs
-artana run list --db .state.db
+artana run list --db .state.db --tenant tenant_123
 
 # Tail events for one run
-artana run tail run_123 --db .state.db
+artana run tail run_123 --db .state.db --tenant tenant_123
 
 # Verify hash-chain ledger integrity
-artana run verify-ledger run_123 --db .state.db
+artana run verify-ledger run_123 --db .state.db --tenant tenant_123
 
 # Run lifecycle summary (human and machine friendly)
-artana run status run_123 --db .state.db
-artana run status run_123 --db .state.db --json
+artana run status run_123 --db .state.db --tenant tenant_123
+artana run status run_123 --db .state.db --tenant tenant_123 --json
 
 # Inspect summaries and artifacts
-artana run summaries run_123 --db .state.db --limit 20
-artana run artifacts run_123 --db .state.db --json
+artana run summaries run_123 --db .state.db --tenant tenant_123 --limit 20
+artana run artifacts run_123 --db .state.db --tenant tenant_123 --json
 
 # Scaffold a local starter (enforced by default)
 artana init ./starter --profile enforced

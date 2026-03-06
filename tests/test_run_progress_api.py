@@ -52,7 +52,7 @@ async def test_get_run_progress_uses_task_progress_summary(tmp_path: Path) -> No
             ),
         )
 
-        progress = await kernel.get_run_progress(run_id=run_id)
+        progress = await kernel.get_run_progress(run_id=run_id, tenant=tenant)
 
         assert progress.status == "running"
         assert progress.percent == 33
@@ -85,7 +85,7 @@ async def test_get_run_progress_falls_back_to_last_stage_without_task_progress(
             payload=HarnessStagePayload(stage="draft"),
         )
 
-        progress = await kernel.get_run_progress(run_id=run_id)
+        progress = await kernel.get_run_progress(run_id=run_id, tenant=tenant)
 
         assert progress.status == "running"
         assert progress.percent == 0
@@ -127,8 +127,14 @@ async def test_get_run_progress_terminal_states(tmp_path: Path) -> None:
             ),
         )
 
-        completed_progress = await kernel.get_run_progress(run_id=completed_run_id)
-        failed_progress = await kernel.get_run_progress(run_id=failed_run_id)
+        completed_progress = await kernel.get_run_progress(
+            run_id=completed_run_id,
+            tenant=tenant,
+        )
+        failed_progress = await kernel.get_run_progress(
+            run_id=failed_run_id,
+            tenant=tenant,
+        )
 
         assert completed_progress.status == "completed"
         assert completed_progress.percent == 100
@@ -179,6 +185,7 @@ async def test_stream_run_progress_deduplicates_identical_updates(tmp_path: Path
             progress
             async for progress in kernel.stream_run_progress(
                 run_id=run_id,
+                tenant=tenant,
                 since_seq=1,
             )
         ]

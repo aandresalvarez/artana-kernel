@@ -26,6 +26,7 @@ from artana._kernel.types import (
     OutputT,
     PauseTicket,
     PolicyViolationError,
+    ReplayConsistencyError,
     ReplayPolicy,
     ResumePoint,
     RunHandle,
@@ -161,6 +162,35 @@ class ArtanaKernel:
             parent_step_key=parent_step_key,
         )
 
+    async def _get_checked_run_events(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+    ) -> list[KernelEvent]:
+        events = await self._store.get_events_for_run(run_id)
+        if not events:
+            raise ValueError(f"No events found for run_id={run_id!r}.")
+        validate_tenant_for_run(events=events, tenant=tenant)
+        return events
+
+    async def _assert_run_access(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+    ) -> None:
+        if isinstance(self._store, SupportsRunStateSnapshots):
+            snapshot = await self._store.get_run_state_snapshot(run_id=run_id)
+            if snapshot is not None:
+                if snapshot.tenant_id != tenant.tenant_id:
+                    raise ReplayConsistencyError(
+                        "Run tenant mismatch. "
+                        f"run tenant={snapshot.tenant_id!r}, request tenant={tenant.tenant_id!r}."
+                    )
+                return
+        await self._get_checked_run_events(run_id=run_id, tenant=tenant)
+
     async def start_run(
         self,
         *,
@@ -193,41 +223,54 @@ class ArtanaKernel:
         )
         return RunHandle(run_id=event.run_id, tenant_id=event.tenant_id)
 
-    async def load_run(self, *, run_id: str) -> RunRef:
-        events = await self._store.get_events_for_run(run_id)
-        if not events:
-            raise ValueError(f"No events found for run_id={run_id!r}.")
+    async def load_run(self, *, run_id: str, tenant: TenantContext) -> RunRef:
+        events = await self._get_checked_run_events(run_id=run_id, tenant=tenant)
         return RunHandle(run_id=run_id, tenant_id=events[0].tenant_id)
 
-    async def get_events(self, *, run_id: str) -> tuple[KernelEvent, ...]:
-        return tuple(await self._store.get_events_for_run(run_id))
+    async def get_events(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+    ) -> tuple[KernelEvent, ...]:
+        return tuple(await self._get_checked_run_events(run_id=run_id, tenant=tenant))
 
     async def get_latest_run_summary(
         self,
         *,
         run_id: str,
+        tenant: TenantContext,
         summary_type: str,
     ) -> RunSummaryPayload | None:
+        await self._assert_run_access(run_id=run_id, tenant=tenant)
         return await self._store.get_latest_run_summary(run_id, summary_type)
 
     async def get_latest_summary(
         self,
         *,
         run_id: str,
+        tenant: TenantContext,
         summary_type: str,
     ) -> RunSummaryPayload | None:
         return await self.get_latest_run_summary(
             run_id=run_id,
+            tenant=tenant,
             summary_type=summary_type,
         )
 
     async def explain_run(
         self,
         run_id: str,
+        tenant: TenantContext,
     ) -> dict[str, object]:
         if isinstance(self._store, SupportsRunStateSnapshots):
             snapshot = await self._store.get_run_state_snapshot(run_id=run_id)
             if snapshot is not None:
+                if snapshot.tenant_id != tenant.tenant_id:
+                    raise ReplayConsistencyError(
+                        "Run tenant mismatch. "
+                        f"run tenant={snapshot.tenant_id!r}, request tenant={tenant.tenant_id!r}."
+                    )
                 status = snapshot.explain_status
                 snapshot_failure_reason = snapshot.explain_failure_reason
                 if status == "completed" and snapshot_failure_reason is not None:
@@ -244,9 +287,7 @@ class ArtanaKernel:
                     "cost_total": snapshot.model_cost_total,
                 }
 
-        events = await self._store.get_events_for_run(run_id)
-        if not events:
-            raise ValueError(f"No events found for run_id={run_id!r}.")
+        events = await self._get_checked_run_events(run_id=run_id, tenant=tenant)
 
         drift_count = 0
         last_stage: str | None = None
@@ -336,15 +377,18 @@ class ArtanaKernel:
             "cost_total": cost_total,
         }
 
-    async def get_run_status(self, *, run_id: str) -> RunStatus:
+    async def get_run_status(self, *, run_id: str, tenant: TenantContext) -> RunStatus:
         if isinstance(self._store, SupportsRunStateSnapshots):
             snapshot = await self._store.get_run_state_snapshot(run_id=run_id)
             if snapshot is not None:
+                if snapshot.tenant_id != tenant.tenant_id:
+                    raise ReplayConsistencyError(
+                        "Run tenant mismatch. "
+                        f"run tenant={snapshot.tenant_id!r}, request tenant={tenant.tenant_id!r}."
+                    )
                 return _run_status_from_snapshot(snapshot)
 
-        events = await self._store.get_events_for_run(run_id)
-        if not events:
-            raise ValueError(f"No events found for run_id={run_id!r}.")
+        events = await self._get_checked_run_events(run_id=run_id, tenant=tenant)
         status, blocked_on, failure_reason = _derive_run_status(events)
         last_event = events[-1]
         return RunStatus(
@@ -358,10 +402,8 @@ class ArtanaKernel:
             failure_reason=failure_reason,
         )
 
-    async def get_run_progress(self, *, run_id: str) -> RunProgress:
-        events = await self._store.get_events_for_run(run_id)
-        if not events:
-            raise ValueError(f"No events found for run_id={run_id!r}.")
+    async def get_run_progress(self, *, run_id: str, tenant: TenantContext) -> RunProgress:
+        events = await self._get_checked_run_events(run_id=run_id, tenant=tenant)
         lifecycle_status, _, _ = _derive_run_status(events)
         status = _run_progress_status_from_lifecycle(lifecycle_status)
         started_at = events[0].timestamp
@@ -369,6 +411,7 @@ class ArtanaKernel:
 
         task_progress_summary = await self.get_latest_run_summary(
             run_id=run_id,
+            tenant=tenant,
             summary_type="task_progress",
         )
         task_units = _task_progress_units(task_progress_summary)
@@ -415,7 +458,7 @@ class ArtanaKernel:
                         )
 
         if current_stage is None:
-            explain = await self.explain_run(run_id)
+            explain = await self.explain_run(run_id, tenant=tenant)
             explain_last_stage = explain.get("last_stage")
             if isinstance(explain_last_stage, str) and explain_last_stage != "":
                 current_stage = explain_last_stage
@@ -460,9 +503,14 @@ class ArtanaKernel:
         run_ids = await self._store.list_run_ids(tenant_id=tenant_id, since=since)
         statuses: list[RunStatus] = []
         for run_id in run_ids:
-            run_status = await self.get_run_status(run_id=run_id)
-            if run_status.tenant_id != tenant_id:
-                continue
+            run_status = await self.get_run_status(
+                run_id=run_id,
+                tenant=TenantContext(
+                    tenant_id=tenant_id,
+                    capabilities=frozenset(),
+                    budget_usd_limit=1.0,
+                ),
+            )
             if since is not None and run_status.updated_at < since:
                 continue
             if status is None:
@@ -543,10 +591,15 @@ class ArtanaKernel:
 
         return tuple(closed_run_ids)
 
-    async def resume_point(self, *, run_id: str) -> ResumePoint:
+    async def resume_point(self, *, run_id: str, tenant: TenantContext) -> ResumePoint:
         if isinstance(self._store, SupportsRunStateSnapshots):
             snapshot = await self._store.get_run_state_snapshot(run_id=run_id)
             if snapshot is not None:
+                if snapshot.tenant_id != tenant.tenant_id:
+                    raise ReplayConsistencyError(
+                        "Run tenant mismatch. "
+                        f"run tenant={snapshot.tenant_id!r}, request tenant={tenant.tenant_id!r}."
+                    )
                 return ResumePoint(
                     run_id=run_id,
                     last_event_seq=snapshot.last_event_seq,
@@ -554,9 +607,7 @@ class ArtanaKernel:
                     blocked_on=snapshot.blocked_on,
                 )
 
-        events = await self._store.get_events_for_run(run_id)
-        if not events:
-            raise ValueError(f"No events found for run_id={run_id!r}.")
+        events = await self._get_checked_run_events(run_id=run_id, tenant=tenant)
         _, blocked_on, _ = _derive_run_status(events)
         return ResumePoint(
             run_id=run_id,
@@ -615,10 +666,12 @@ class ArtanaKernel:
         self,
         *,
         run_id: str,
+        tenant: TenantContext,
         key: str,
     ) -> object | None:
         summary = await self.get_latest_run_summary(
             run_id=run_id,
+            tenant=tenant,
             summary_type=f"artifact::{key}",
         )
         if summary is None:
@@ -631,8 +684,13 @@ class ArtanaKernel:
             return payload.get("value")
         return payload
 
-    async def list_artifacts(self, *, run_id: str) -> dict[str, object]:
-        events = await self._store.get_events_for_run(run_id)
+    async def list_artifacts(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+    ) -> dict[str, object]:
+        events = await self._get_checked_run_events(run_id=run_id, tenant=tenant)
         latest_by_key: dict[str, RunSummaryPayload] = {}
         for event in events:
             if event.event_type != EventType.RUN_SUMMARY:
@@ -830,11 +888,13 @@ class ArtanaKernel:
         self,
         *,
         run_id: str,
+        tenant: TenantContext,
         since_seq: int = 0,
         follow: bool = False,
         poll_interval_seconds: float = 0.5,
         idle_timeout_seconds: float | None = None,
     ) -> AsyncIterator[KernelEvent]:
+        await self._assert_run_access(run_id=run_id, tenant=tenant)
         if isinstance(self._store, SupportsEventStreaming):
             async for event in self._store.stream_events(
                 run_id,
@@ -845,7 +905,7 @@ class ArtanaKernel:
             ):
                 yield event
             return
-        events = await self._store.get_events_for_run(run_id)
+        events = await self._get_checked_run_events(run_id=run_id, tenant=tenant)
         for event in events:
             if event.seq <= since_seq:
                 continue
@@ -855,6 +915,7 @@ class ArtanaKernel:
         self,
         *,
         run_id: str,
+        tenant: TenantContext,
         since_seq: int = 0,
         follow: bool = False,
         poll_interval_seconds: float = 0.5,
@@ -862,16 +923,17 @@ class ArtanaKernel:
     ) -> AsyncIterator[RunProgress]:
         last_progress: RunProgress | None = None
         if since_seq == 0:
-            last_progress = await self.get_run_progress(run_id=run_id)
+            last_progress = await self.get_run_progress(run_id=run_id, tenant=tenant)
             yield last_progress
         async for _event in self.stream_events(
             run_id=run_id,
+            tenant=tenant,
             since_seq=since_seq,
             follow=follow,
             poll_interval_seconds=poll_interval_seconds,
             idle_timeout_seconds=idle_timeout_seconds,
         ):
-            current_progress = await self.get_run_progress(run_id=run_id)
+            current_progress = await self.get_run_progress(run_id=run_id, tenant=tenant)
             if last_progress is None or current_progress != last_progress:
                 last_progress = current_progress
                 yield current_progress
@@ -880,6 +942,7 @@ class ArtanaKernel:
         self,
         *,
         run_id: str,
+        tenant: TenantContext,
         worker_id: str,
         ttl_seconds: int,
     ) -> bool:
@@ -887,6 +950,7 @@ class ArtanaKernel:
             raise RuntimeError(
                 "acquire_run_lease requires a store implementing SupportsRunLeasing."
             )
+        await self._assert_run_access(run_id=run_id, tenant=tenant)
         return await self._store.acquire_run_lease(
             run_id=run_id,
             worker_id=worker_id,
@@ -897,6 +961,7 @@ class ArtanaKernel:
         self,
         *,
         run_id: str,
+        tenant: TenantContext,
         worker_id: str,
         ttl_seconds: int,
     ) -> bool:
@@ -904,6 +969,7 @@ class ArtanaKernel:
             raise RuntimeError(
                 "renew_run_lease requires a store implementing SupportsRunLeasing."
             )
+        await self._assert_run_access(run_id=run_id, tenant=tenant)
         return await self._store.renew_run_lease(
             run_id=run_id,
             worker_id=worker_id,
@@ -914,19 +980,22 @@ class ArtanaKernel:
         self,
         *,
         run_id: str,
+        tenant: TenantContext,
         worker_id: str,
     ) -> bool:
         if not isinstance(self._store, SupportsRunLeasing):
             raise RuntimeError(
                 "release_run_lease requires a store implementing SupportsRunLeasing."
             )
+        await self._assert_run_access(run_id=run_id, tenant=tenant)
         return await self._store.release_run_lease(run_id=run_id, worker_id=worker_id)
 
-    async def get_run_lease(self, *, run_id: str) -> RunLease | None:
+    async def get_run_lease(self, *, run_id: str, tenant: TenantContext) -> RunLease | None:
         if not isinstance(self._store, SupportsRunLeasing):
             raise RuntimeError(
                 "get_run_lease requires a store implementing SupportsRunLeasing."
             )
+        await self._assert_run_access(run_id=run_id, tenant=tenant)
         lease = await self._store.get_run_lease(run_id=run_id)
         if lease is None:
             return None
@@ -1098,6 +1167,7 @@ class ArtanaKernel:
                 f"No events found for run_id={run_id!r}; call start_run first."
             )
         validate_tenant_for_run(events=events, tenant=tenant)
+        _assert_run_resumed_after_human_approval(events=events, run_id=run_id)
 
         prompt, messages = _normalize_model_input(input)
         resolved_model_options = model_options or ModelCallOptions()
@@ -1261,6 +1331,7 @@ class ArtanaKernel:
                 f"No events found for run_id={run_id!r}; call start_run first."
             )
         validate_tenant_for_run(events=events, tenant=tenant)
+        _assert_run_resumed_after_human_approval(events=events, run_id=run_id)
         arguments_json = canonical_json_dumps(arguments.model_dump(mode="json"))
         critic_attempted = False
         while True:
@@ -1370,10 +1441,19 @@ class ArtanaKernel:
         human_input: BaseModel | None = None,
         parent_step_key: str | None = None,
     ) -> RunRef:
-        events = await self._store.get_events_for_run(run_id)
-        if not events:
-            raise ValueError(f"No events found for run_id={run_id!r}.")
-        validate_tenant_for_run(events=events, tenant=tenant)
+        events = await self._get_checked_run_events(run_id=run_id, tenant=tenant)
+        pending_pause = _pending_pause_event(events)
+        if pending_pause is None:
+            raise ValueError(f"Run {run_id!r} is not currently blocked or paused.")
+        approval_key = _pause_approval_key(pending_pause=pending_pause)
+        if approval_key is not None and not _approval_summary_is_human_approved(
+            events=events,
+            approval_key=approval_key,
+        ):
+            raise ValueError(
+                f"Run {run_id!r} is blocked on human approval and cannot be resumed "
+                "before approve_tool_call(...) is recorded."
+            )
         human_input_json = human_input.model_dump_json() if human_input is not None else None
         event = await self._append_event(
             run_id=run_id,
@@ -1560,24 +1640,12 @@ class ArtanaKernel:
         approval_key: str,
         parent_step_key: str | None,
     ) -> None:
-        events = await self._store.get_events_for_run(run_id)
-        validate_tenant_for_run(events=events, tenant=tenant)
-        for event in reversed(events):
-            if event.event_type != EventType.PAUSE_REQUESTED:
-                continue
-            payload = event.payload
-            if not isinstance(payload, PauseRequestedPayload):
-                continue
-            if payload.context_json is None:
-                continue
-            try:
-                context_payload: object = json.loads(payload.context_json)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(context_payload, dict):
-                continue
-            if context_payload.get("approval_key") != approval_key:
-                continue
+        events = await self._get_checked_run_events(run_id=run_id, tenant=tenant)
+        pending_pause = _pending_pause_event(events)
+        if pending_pause is not None and _pause_matches_approval_key(
+            pending_pause=pending_pause,
+            approval_key=approval_key,
+        ):
             return
         await self.pause(
             run_id=run_id,
@@ -1793,6 +1861,86 @@ def _pause_matches_unblock_key(*, pending_pause: KernelEvent, unblock_key: str) 
         return False
     context_unblock_key = context_payload.get("unblock_key")
     return isinstance(context_unblock_key, str) and context_unblock_key == unblock_key
+
+
+def _pause_matches_approval_key(*, pending_pause: KernelEvent, approval_key: str) -> bool:
+    payload = pending_pause.payload
+    if not isinstance(payload, PauseRequestedPayload):
+        return False
+    if payload.context_json is None:
+        return False
+    try:
+        context_payload: object = json.loads(payload.context_json)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(context_payload, dict):
+        return False
+    context_approval_key = context_payload.get("approval_key")
+    return isinstance(context_approval_key, str) and context_approval_key == approval_key
+
+
+def _pause_approval_key(*, pending_pause: KernelEvent) -> str | None:
+    payload = pending_pause.payload
+    if not isinstance(payload, PauseRequestedPayload):
+        return None
+    if payload.context_json is None:
+        return None
+    try:
+        context_payload: object = json.loads(payload.context_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(context_payload, dict):
+        return None
+    approval_key = context_payload.get("approval_key")
+    if not isinstance(approval_key, str) or approval_key == "":
+        return None
+    return approval_key
+
+
+def _approval_summary_is_human_approved(
+    *,
+    events: Sequence[KernelEvent],
+    approval_key: str,
+) -> bool:
+    summary_type = f"policy::approval::{approval_key}"
+    for event in reversed(events):
+        if event.event_type != EventType.RUN_SUMMARY:
+            continue
+        payload = event.payload
+        if not isinstance(payload, RunSummaryPayload):
+            continue
+        if payload.summary_type != summary_type:
+            continue
+        try:
+            summary_payload: object = json.loads(payload.summary_json)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(summary_payload, dict):
+            return False
+        return (
+            summary_payload.get("approved") is True
+            and summary_payload.get("mode") == "human"
+        )
+    return False
+
+
+def _assert_run_resumed_after_human_approval(
+    *,
+    events: Sequence[KernelEvent],
+    run_id: str,
+) -> None:
+    pending_pause = _pending_pause_event(events)
+    if pending_pause is None:
+        return
+    approval_key = _pause_approval_key(pending_pause=pending_pause)
+    if approval_key is None:
+        return
+    if not _approval_summary_is_human_approved(events=events, approval_key=approval_key):
+        return
+    raise ValueError(
+        f"Run {run_id!r} has recorded human approval but remains paused. "
+        "Call resume(...) before executing additional work."
+    )
 
 
 def _pause_blocked_on(payload: PauseRequestedPayload) -> str | None:

@@ -462,7 +462,7 @@ class AutonomousAgent:
 
     async def _ensure_run_exists(self, *, run_id: str, tenant: TenantContext) -> None:
         try:
-            await self._kernel.load_run(run_id=run_id)
+            await self._kernel.load_run(run_id=run_id, tenant=tenant)
         except ValueError:
             await self._kernel.start_run(tenant=tenant, run_id=run_id)
 
@@ -496,7 +496,7 @@ class AutonomousAgent:
             window=window,
             strategy=strategy,
         )
-        cached_artifact = await self._load_compaction_artifact(run_id=run_id)
+        cached_artifact = await self._load_compaction_artifact(run_id=run_id, tenant=tenant)
         if (
             cached_artifact is not None
             and cached_artifact.window_hash == window_hash
@@ -560,9 +560,15 @@ class AutonomousAgent:
         compacted_history.extend(recent_messages)
         return tuple(compacted_history)
 
-    async def _load_compaction_artifact(self, *, run_id: str) -> _CompactionArtifact | None:
+    async def _load_compaction_artifact(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+    ) -> _CompactionArtifact | None:
         summary = await self._kernel.get_latest_run_summary(
             run_id=run_id,
+            tenant=tenant,
             summary_type=self.COMPACTION_ARTIFACT_SUMMARY_TYPE,
         )
         if summary is None:
