@@ -119,6 +119,23 @@ async def test_human_approval_gate_pauses_once_and_allows_after_approval(
             mode="human",
             reason="manager approved",
         )
+        with pytest.raises(ValueError, match="Call resume"):
+            await kernel.step_tool(
+                run_id="run_human_gate",
+                tenant=_tenant(),
+                tool_name="submit_transfer",
+                arguments=TransferArgs(account_id="acc_1", amount="10"),
+            )
+        paused_status = await kernel.get_run_status(
+            run_id="run_human_gate",
+            tenant=_tenant(),
+        )
+        assert paused_status.status == "paused"
+        assert tool_calls == 0
+        await kernel.resume(
+            run_id="run_human_gate",
+            tenant=_tenant(),
+        )
         result = await kernel.step_tool(
             run_id="run_human_gate",
             tenant=_tenant(),
@@ -127,6 +144,65 @@ async def test_human_approval_gate_pauses_once_and_allows_after_approval(
         )
         assert result.replayed is False
         assert tool_calls == 1
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_human_approval_gate_rejects_unapproved_resume(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(
+        store=store,
+        model_port=CriticModelPort(approve=True),
+        middleware=[
+            SafetyPolicyMiddleware(
+                config=SafetyPolicyConfig(
+                    tools={
+                        "submit_transfer": ToolSafetyPolicy(
+                            approval=ApprovalGatePolicy(mode="human")
+                        )
+                    }
+                )
+            )
+        ],
+    )
+
+    @kernel.tool()
+    async def submit_transfer(account_id: str, amount: str) -> str:
+        return f'{{"ok":true,"account_id":"{account_id}","amount":"{amount}"}}'
+
+    try:
+        await kernel.start_run(tenant=_tenant(), run_id="run_human_repause")
+        with pytest.raises(ApprovalRequiredError):
+            await kernel.step_tool(
+                run_id="run_human_repause",
+                tenant=_tenant(),
+                tool_name="submit_transfer",
+                arguments=TransferArgs(account_id="acc_1", amount="10"),
+            )
+
+        with pytest.raises(ValueError, match="blocked on human approval"):
+            await kernel.resume(
+                run_id="run_human_repause",
+                tenant=_tenant(),
+            )
+
+        with pytest.raises(ApprovalRequiredError):
+            await kernel.step_tool(
+                run_id="run_human_repause",
+                tenant=_tenant(),
+                tool_name="submit_transfer",
+                arguments=TransferArgs(account_id="acc_1", amount="10"),
+            )
+
+        events = await store.get_events_for_run("run_human_repause")
+        pauses = [
+            event
+            for event in events
+            if event.event_type == EventType.PAUSE_REQUESTED
+            and isinstance(event.payload, PauseRequestedPayload)
+        ]
+        assert len(pauses) == 1
     finally:
         await kernel.close()
 
@@ -228,4 +304,3 @@ async def test_critic_approval_gate_denial_blocks_tool_execution(tmp_path: Path)
         assert model_port.calls == 1
     finally:
         await kernel.close()
-

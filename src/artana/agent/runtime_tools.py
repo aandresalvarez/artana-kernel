@@ -87,7 +87,14 @@ class RuntimeToolManager:
                     },
                     ensure_ascii=False,
                 )
-            events = await self._kernel.get_events(run_id=artana_context.run_id)
+            events = await self._kernel.get_events(
+                run_id=artana_context.run_id,
+                tenant=TenantContext(
+                    tenant_id=artana_context.tenant_id,
+                    capabilities=artana_context.tenant_capabilities,
+                    budget_usd_limit=artana_context.tenant_budget_usd_limit or 1.0,
+                ),
+            )
             normalized_event_type = event_type.strip().lower()
             if normalized_event_type in {"", "*", "all"}:
                 filtered_events = list(events)

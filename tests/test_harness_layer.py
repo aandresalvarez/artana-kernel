@@ -251,6 +251,7 @@ async def test_kernel_get_latest_run_summary_returns_latest_payload(tmp_path: Pa
 
         latest_a = await kernel.get_latest_run_summary(
             run_id=run_id,
+            tenant=tenant,
             summary_type="task_progress",
         )
         assert latest_a is not None

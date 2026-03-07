@@ -193,6 +193,10 @@ except ApprovalRequiredError as exc:
         mode="human",
         reason="Finance manager approved",
     )
+    await kernel.resume(
+        run_id="billing_run",
+        tenant=tenant,
+    )
     await kernel.step_tool(
         run_id="billing_run",
         tenant=tenant,
@@ -201,6 +205,9 @@ except ApprovalRequiredError as exc:
         step_key="invoice_send",
     )
 ```
+
+The human approval contract is `ApprovalRequiredError -> approve_tool_call(...) -> resume(...) -> retry`.
+Recording approval alone does not clear the pending pause boundary.
 
 Critic approval flow is kernel-managed and replay-safe. It runs a deterministic model step and either:
 
@@ -305,14 +312,15 @@ This makes completion deterministic:
 Kernel orchestration syscalls for schedulers/workers:
 
 ```pycon
-status = await kernel.get_run_status(run_id="billing_run")
-resume_point = await kernel.resume_point(run_id="billing_run")
+status = await kernel.get_run_status(run_id="billing_run", tenant=tenant)
+resume_point = await kernel.resume_point(run_id="billing_run", tenant=tenant)
 active_runs = await kernel.list_active_runs(tenant_id=tenant.tenant_id)
 capabilities = await kernel.describe_capabilities(tenant=tenant)
 visible_tools = kernel.list_tools_for_tenant(tenant=tenant)
 
 await kernel.acquire_run_lease(
     run_id="billing_run",
+    tenant=tenant,
     worker_id="worker_a",
     ttl_seconds=30,
 )

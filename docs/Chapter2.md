@@ -295,7 +295,7 @@ Snippet (in-context, not standalone):
 ```pycon
 from artana.store import SQLiteStore
 
-events = await kernel.get_events(run_id="pipeline_run_001")
+events = await kernel.get_events(run_id="pipeline_run_001", tenant=tenant)
 
 for event in events:
     print(event.seq, event.event_type)

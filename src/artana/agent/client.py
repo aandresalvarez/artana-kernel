@@ -35,6 +35,11 @@ class _StepModelCompatCallable(Protocol):
         ...
 
 
+class _LoadRunCompatCallable(Protocol):
+    def __call__(self, **kwargs: object) -> Awaitable[object]:
+        ...
+
+
 class KernelModelClient:
     def __init__(self, kernel: ArtanaKernel) -> None:
         self._kernel = kernel
@@ -69,7 +74,14 @@ class KernelModelClient:
             )
         )
         try:
-            await self._kernel.load_run(run_id=run_id)
+            try:
+                await self._kernel.load_run(run_id=run_id, tenant=tenant)
+            except TypeError as exc:
+                if _unexpected_load_run_tenant_arg(exc):
+                    legacy_load_run = cast(_LoadRunCompatCallable, self._kernel.load_run)
+                    await legacy_load_run(run_id=run_id)
+                else:
+                    raise
         except ValueError:
             await self._kernel.start_run(tenant=tenant, run_id=run_id)
         try:
@@ -187,6 +199,17 @@ def _unsupported_kwargs_from_type_error(error: TypeError) -> set[str]:
         ):
             unsupported.add(key)
     return unsupported
+
+
+def _unexpected_load_run_tenant_arg(error: TypeError) -> bool:
+    message = str(error)
+    return (
+        "load_run" in message
+        and (
+            "unexpected keyword argument 'tenant'" in message
+            or 'unexpected keyword argument "tenant"' in message
+        )
+    )
 
 
 __all__ = ["KernelModelClient", "ModelClientCapabilities", "SingleStepModelClient"]

@@ -45,7 +45,7 @@ class CurrentKernelStub:
         self.replay_policy_seen: ReplayPolicy | None = None
         self.context_version_seen: ContextVersion | None = None
 
-    async def load_run(self, *, run_id: str) -> None:
+    async def load_run(self, *, run_id: str, tenant: TenantContext) -> None:
         raise ValueError("missing run")
 
     async def start_run(self, *, tenant: TenantContext, run_id: str) -> None:
@@ -76,7 +76,7 @@ class LegacyKernelStub:
     def __init__(self) -> None:
         self.step_calls = 0
 
-    async def load_run(self, *, run_id: str) -> None:
+    async def load_run(self, *, run_id: str, tenant: TenantContext) -> None:
         raise ValueError("missing run")
 
     async def start_run(self, *, tenant: TenantContext, run_id: str) -> None:

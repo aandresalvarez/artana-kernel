@@ -155,7 +155,10 @@ class IncrementalTaskHarness(BaseHarness[tuple[TaskUnit, ...]]):
             if step_key is not None
             else self._next_step_key(prefix=self.SUMMARY_TYPE)
         )
-        previous = await self.get_task_progress(run_id=resolved_run_id)
+        previous = await self.get_task_progress(
+            run_id=resolved_run_id,
+            tenant=resolved_tenant,
+        )
         previous_units = previous if previous is not None else ()
         current_units = tuple(unit.model_copy() for unit in units)
         done_transitions = self._validate_task_progress_update(
@@ -177,10 +180,12 @@ class IncrementalTaskHarness(BaseHarness[tuple[TaskUnit, ...]]):
         self,
         *,
         run_id: str | None = None,
+        tenant: TenantContext | None = None,
     ) -> tuple[TaskUnit, ...] | None:
         payload = await self.summary_payload(
             run_id=self._resolve_run_id(run_id=run_id),
             summary_type=self.SUMMARY_TYPE,
+            tenant=tenant,
         )
         if payload is None:
             return None
@@ -208,7 +213,7 @@ class IncrementalTaskHarness(BaseHarness[tuple[TaskUnit, ...]]):
     ) -> int:
         resolved_run_id = self._resolve_run_id(run_id=run_id)
         resolved_tenant = self._resolve_tenant(tenant=tenant)
-        units = await self.get_task_progress(run_id=resolved_run_id)
+        units = await self.get_task_progress(run_id=resolved_run_id, tenant=resolved_tenant)
         if units is None:
             raise TaskProgressValidationError(
                 "Cannot transition task state before task_progress has been initialized."
@@ -242,8 +247,11 @@ class IncrementalTaskHarness(BaseHarness[tuple[TaskUnit, ...]]):
         context: HarnessContext,
     ) -> dict[str, object]:
         base_payload = await super()._build_wake_reorientation(context=context)
-        task_progress = await self.get_task_progress(run_id=context.run_id)
-        latest_run_summary = await self._latest_run_summary(run_id=context.run_id)
+        task_progress = await self.get_task_progress(run_id=context.run_id, tenant=context.tenant)
+        latest_run_summary = await self._latest_run_summary(
+            run_id=context.run_id,
+            tenant=context.tenant,
+        )
         base_payload.update(
             {
                 "task_progress": (
@@ -256,8 +264,13 @@ class IncrementalTaskHarness(BaseHarness[tuple[TaskUnit, ...]]):
         )
         return base_payload
 
-    async def _latest_run_summary(self, *, run_id: str) -> dict[str, object] | None:
-        events = await self._kernel.get_events(run_id=run_id)
+    async def _latest_run_summary(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+    ) -> dict[str, object] | None:
+        events = await self._kernel.get_events(run_id=run_id, tenant=tenant)
         for event in reversed(events):
             if event.event_type != EventType.RUN_SUMMARY:
                 continue
@@ -276,7 +289,10 @@ class IncrementalTaskHarness(BaseHarness[tuple[TaskUnit, ...]]):
         return None
 
     async def _validate_no_partial_task_state(self, *, run_id: str) -> None:
-        task_progress = await self.get_task_progress(run_id=run_id)
+        task_progress = await self.get_task_progress(
+            run_id=run_id,
+            tenant=self._resolve_tenant(tenant=None),
+        )
         if task_progress is None:
             return
         partial_units = [unit.id for unit in task_progress if unit.state == "in_progress"]

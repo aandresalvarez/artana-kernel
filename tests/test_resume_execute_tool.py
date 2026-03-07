@@ -29,6 +29,10 @@ class HumanInput(BaseModel):
     note: str
 
 
+class PauseContext(BaseModel):
+    ticket: str
+
+
 class PlainModelPort:
     async def complete(
         self, request: ModelRequest[OutputModelT]
@@ -153,6 +157,12 @@ async def test_resume_appends_boundary_event(tmp_path: Path) -> None:
 
     try:
         await kernel.start_run(tenant=_tenant(), run_id="run_resume")
+        await kernel.pause(
+            run_id="run_resume",
+            tenant=_tenant(),
+            reason="manual approval",
+            context=PauseContext(ticket="mgr-1"),
+        )
         resumed = await kernel.resume(
             run_id="run_resume",
             tenant=_tenant(),
@@ -165,5 +175,25 @@ async def test_resume_appends_boundary_event(tmp_path: Path) -> None:
         payload = events[-1].payload
         assert isinstance(payload, ResumeRequestedPayload)
         assert payload.human_input_json == '{"note":"approved"}'
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_rejects_runs_without_pending_pause(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(store=store, model_port=PlainModelPort())
+
+    try:
+        await kernel.start_run(tenant=_tenant(), run_id="run_resume_missing_pause")
+        with pytest.raises(ValueError, match="not currently blocked or paused"):
+            await kernel.resume(
+                run_id="run_resume_missing_pause",
+                tenant=_tenant(),
+                human_input=HumanInput(note="approved"),
+            )
+
+        events = await store.get_events_for_run("run_resume_missing_pause")
+        assert [event.event_type for event in events] == ["run_started"]
     finally:
         await kernel.close()

@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TypeVar
 
 import pytest
 from pydantic import BaseModel
 
+import artana.cli as cli_module
 from artana import ArtanaKernel
 from artana.cli import main as cli_main
+from artana.events import KernelEvent
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage
 from artana.store import SQLiteStore
@@ -34,11 +37,20 @@ def _tenant() -> TenantContext:
     )
 
 
+def _other_tenant() -> TenantContext:
+    return TenantContext(
+        tenant_id="org_cli_other",
+        capabilities=frozenset(),
+        budget_usd_limit=1.0,
+    )
+
+
 async def _seed_runs(db_path: Path) -> None:
     kernel = ArtanaKernel(store=SQLiteStore(str(db_path)), model_port=DummyModelPort())
     try:
         await kernel.start_run(tenant=_tenant(), run_id="run_cli_one")
         await kernel.start_run(tenant=_tenant(), run_id="run_cli_two")
+        await kernel.start_run(tenant=_other_tenant(), run_id="run_cli_other")
         await kernel.checkpoint(
             run_id="run_cli_one",
             tenant=_tenant(),
@@ -64,18 +76,38 @@ def test_cli_run_list_and_tail_and_verify(
     db_path = tmp_path / "state.db"
     asyncio.run(_seed_runs(db_path))
 
-    code_list = cli_main(["run", "list", "--db", str(db_path)])
+    code_list = cli_main(
+        ["run", "list", "--db", str(db_path), "--tenant", _tenant().tenant_id]
+    )
     output_list = capsys.readouterr().out
     assert code_list == 0
     assert "run_cli_one" in output_list
     assert "run_cli_two" in output_list
+    assert "run_cli_other" not in output_list
 
-    code_tail = cli_main(["run", "tail", "run_cli_one", "--db", str(db_path)])
+    missing_tenant_code = cli_main(["run", "list", "--db", str(db_path)])
+    missing_tenant = capsys.readouterr()
+    assert missing_tenant_code == 2
+    assert "required: --tenant" in missing_tenant.err
+
+    code_tail = cli_main(
+        ["run", "tail", "run_cli_one", "--db", str(db_path), "--tenant", _tenant().tenant_id]
+    )
     output_tail = capsys.readouterr().out
     assert code_tail == 0
     assert "run_started" in output_tail
 
-    code_verify = cli_main(["run", "verify-ledger", "run_cli_one", "--db", str(db_path)])
+    code_verify = cli_main(
+        [
+            "run",
+            "verify-ledger",
+            "run_cli_one",
+            "--db",
+            str(db_path),
+            "--tenant",
+            _tenant().tenant_id,
+        ]
+    )
     output_verify = capsys.readouterr().out.strip()
     assert code_verify == 0
     assert output_verify == "valid"
@@ -89,7 +121,16 @@ def test_cli_json_status_summaries_and_artifacts(
     asyncio.run(_seed_runs(db_path))
 
     code_status = cli_main(
-        ["run", "status", "run_cli_one", "--db", str(db_path), "--json"]
+        [
+            "run",
+            "status",
+            "run_cli_one",
+            "--db",
+            str(db_path),
+            "--tenant",
+            _tenant().tenant_id,
+            "--json",
+        ]
     )
     payload_status = json.loads(capsys.readouterr().out)
     assert code_status == 0
@@ -97,7 +138,16 @@ def test_cli_json_status_summaries_and_artifacts(
     assert payload_status["status"] in {"active", "paused", "failed", "completed"}
 
     code_summaries = cli_main(
-        ["run", "summaries", "run_cli_one", "--db", str(db_path), "--json"]
+        [
+            "run",
+            "summaries",
+            "run_cli_one",
+            "--db",
+            str(db_path),
+            "--tenant",
+            _tenant().tenant_id,
+            "--json",
+        ]
     )
     payload_summaries = json.loads(capsys.readouterr().out)
     assert code_summaries == 0
@@ -108,7 +158,16 @@ def test_cli_json_status_summaries_and_artifacts(
     )
 
     code_artifacts = cli_main(
-        ["run", "artifacts", "run_cli_one", "--db", str(db_path), "--json"]
+        [
+            "run",
+            "artifacts",
+            "run_cli_one",
+            "--db",
+            str(db_path),
+            "--tenant",
+            _tenant().tenant_id,
+            "--json",
+        ]
     )
     payload_artifacts = json.loads(capsys.readouterr().out)
     assert code_artifacts == 0
@@ -116,11 +175,74 @@ def test_cli_json_status_summaries_and_artifacts(
     assert payload_artifacts["artifacts"]["report"]["status"] == "ok"
 
     code_verify = cli_main(
-        ["run", "verify-ledger", "run_cli_one", "--db", str(db_path), "--json"]
+        [
+            "run",
+            "verify-ledger",
+            "run_cli_one",
+            "--db",
+            str(db_path),
+            "--tenant",
+            _tenant().tenant_id,
+            "--json",
+        ]
     )
     payload_verify = json.loads(capsys.readouterr().out)
     assert code_verify == 0
     assert payload_verify["valid"] is True
+
+
+def test_cli_tail_follow_uses_streaming_access_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "state.db"
+    asyncio.run(_seed_runs(db_path))
+
+    store = SQLiteStore(str(db_path))
+    first_event = asyncio.run(store.get_events_for_run("run_cli_one"))[0]
+    observed = {"history_reads": 0, "stream_calls": 0}
+
+    async def fail_get_events_for_run(run_id: str) -> list[object]:
+        observed["history_reads"] += 1
+        raise AssertionError("tail --follow should not preload run history.")
+
+    async def stream_events(
+        run_id: str,
+        *,
+        since_seq: int = 0,
+        follow: bool = False,
+        poll_interval_seconds: float = 0.5,
+        idle_timeout_seconds: float | None = None,
+    ) -> AsyncIterator[KernelEvent]:
+        observed["stream_calls"] += 1
+        assert run_id == "run_cli_one"
+        assert since_seq == 0
+        assert follow is True
+        yield first_event
+
+    monkeypatch.setattr(store, "get_events_for_run", fail_get_events_for_run)
+    monkeypatch.setattr(store, "stream_events", stream_events)
+    monkeypatch.setattr(cli_module, "_open_store", lambda *, db, dsn: store)
+
+    code = cli_main(
+        [
+            "run",
+            "tail",
+            "run_cli_one",
+            "--db",
+            str(db_path),
+            "--tenant",
+            _tenant().tenant_id,
+            "--follow",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert code == 0
+    assert observed["history_reads"] == 0
+    assert observed["stream_calls"] == 1
+    assert "run_started" in output
 
 
 def test_cli_init_scaffold_profiles(

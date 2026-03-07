@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from artana.events import EventType, KernelEvent, RunSummaryPayload
 from artana.kernel import ArtanaKernel
+from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult
 from artana.store import PostgresStore, SQLiteStore
 from artana.store.base import EventStore, SupportsEventStreaming, SupportsRunIndexing
@@ -29,6 +30,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     try:
         args = parser.parse_args(list(argv) if argv is not None else None)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 1
+    try:
         return asyncio.run(_run_command(args))
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -73,7 +77,7 @@ def _open_store(*, db: str | None, dsn: str | None) -> EventStore:
 
 
 async def _run_list(args: argparse.Namespace, *, store: EventStore) -> int:
-    tenant_id = getattr(args, "tenant", None)
+    tenant_id = _require_cli_tenant(args).tenant_id
     since_value = getattr(args, "since", None)
     json_output = bool(getattr(args, "json_output", False))
     since_dt: datetime | None = None
@@ -101,11 +105,14 @@ async def _run_tail(args: argparse.Namespace, *, store: EventStore) -> int:
     follow = bool(getattr(args, "follow", False))
     since_seq = int(getattr(args, "since_seq", 0))
     json_output = bool(getattr(args, "json_output", False))
+    tenant = _require_cli_tenant(args)
     if follow:
         if not isinstance(store, SupportsEventStreaming):
             raise RuntimeError("Configured store does not support streaming.")
-        async for event in store.stream_events(
-            run_id,
+        kernel = _kernel_for_reads(store=store)
+        async for event in kernel.stream_events(
+            run_id=run_id,
+            tenant=tenant,
             since_seq=since_seq,
             follow=True,
             poll_interval_seconds=0.5,
@@ -113,6 +120,7 @@ async def _run_tail(args: argparse.Namespace, *, store: EventStore) -> int:
             _print_event(event, json_output=json_output)
         return 0
     events = await store.get_events_for_run(run_id)
+    _assert_cli_run_access(run_id=run_id, tenant=tenant, events=events)
     filtered = [event for event in events if event.seq > since_seq]
     if json_output:
         print(
@@ -133,6 +141,9 @@ async def _run_tail(args: argparse.Namespace, *, store: EventStore) -> int:
 async def _run_verify_ledger(args: argparse.Namespace, *, store: EventStore) -> int:
     run_id = args.run_id
     json_output = bool(getattr(args, "json_output", False))
+    tenant = _require_cli_tenant(args)
+    events = await store.get_events_for_run(run_id)
+    _assert_cli_run_access(run_id=run_id, tenant=tenant, events=events)
     valid = await store.verify_run_chain(run_id)
     if json_output:
         print(
@@ -151,7 +162,7 @@ async def _run_status(args: argparse.Namespace, *, store: EventStore) -> int:
     run_id = args.run_id
     json_output = bool(getattr(args, "json_output", False))
     kernel = _kernel_for_reads(store=store)
-    status = await kernel.get_run_status(run_id=run_id)
+    status = await kernel.get_run_status(run_id=run_id, tenant=_require_cli_tenant(args))
     payload = {
         "run_id": status.run_id,
         "tenant_id": status.tenant_id,
@@ -178,8 +189,10 @@ async def _run_summaries(args: argparse.Namespace, *, store: EventStore) -> int:
     summary_type = getattr(args, "summary_type", None)
     limit = int(getattr(args, "limit", 20))
     json_output = bool(getattr(args, "json_output", False))
+    tenant = _require_cli_tenant(args)
 
     events = await store.get_events_for_run(run_id)
+    _assert_cli_run_access(run_id=run_id, tenant=tenant, events=events)
     summaries: list[dict[str, object]] = []
     for event in events:
         if event.event_type != EventType.RUN_SUMMARY:
@@ -228,7 +241,7 @@ async def _run_artifacts(args: argparse.Namespace, *, store: EventStore) -> int:
     run_id = args.run_id
     json_output = bool(getattr(args, "json_output", False))
     kernel = _kernel_for_reads(store=store)
-    artifacts = await kernel.list_artifacts(run_id=run_id)
+    artifacts = await kernel.list_artifacts(run_id=run_id, tenant=_require_cli_tenant(args))
     if json_output:
         print(
             json.dumps(
@@ -376,7 +389,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     list_parser = run_subparsers.add_parser("list")
     _add_store_arguments(list_parser)
-    list_parser.add_argument("--tenant", default=None)
+    list_parser.add_argument("--tenant", required=True)
     list_parser.add_argument(
         "--since",
         default=None,
@@ -387,6 +400,7 @@ def _build_parser() -> argparse.ArgumentParser:
     tail_parser = run_subparsers.add_parser("tail")
     tail_parser.add_argument("run_id")
     _add_store_arguments(tail_parser)
+    tail_parser.add_argument("--tenant", required=True)
     tail_parser.add_argument("--follow", action="store_true")
     tail_parser.add_argument("--since-seq", type=int, default=0)
     _add_json_argument(tail_parser)
@@ -394,16 +408,19 @@ def _build_parser() -> argparse.ArgumentParser:
     verify_parser = run_subparsers.add_parser("verify-ledger")
     verify_parser.add_argument("run_id")
     _add_store_arguments(verify_parser)
+    verify_parser.add_argument("--tenant", required=True)
     _add_json_argument(verify_parser)
 
     status_parser = run_subparsers.add_parser("status")
     status_parser.add_argument("run_id")
     _add_store_arguments(status_parser)
+    status_parser.add_argument("--tenant", required=True)
     _add_json_argument(status_parser)
 
     summaries_parser = run_subparsers.add_parser("summaries")
     summaries_parser.add_argument("run_id")
     _add_store_arguments(summaries_parser)
+    summaries_parser.add_argument("--tenant", required=True)
     summaries_parser.add_argument("--type", dest="summary_type", default=None)
     summaries_parser.add_argument("--limit", type=int, default=20)
     _add_json_argument(summaries_parser)
@@ -411,6 +428,7 @@ def _build_parser() -> argparse.ArgumentParser:
     artifacts_parser = run_subparsers.add_parser("artifacts")
     artifacts_parser.add_argument("run_id")
     _add_store_arguments(artifacts_parser)
+    artifacts_parser.add_argument("--tenant", required=True)
     _add_json_argument(artifacts_parser)
 
     init_parser = subparsers.add_parser("init")
@@ -433,6 +451,32 @@ def _add_json_argument(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Emit JSON output.",
     )
+
+
+def _require_cli_tenant(args: argparse.Namespace) -> TenantContext:
+    tenant_id = getattr(args, "tenant", None)
+    if not isinstance(tenant_id, str) or tenant_id.strip() == "":
+        raise ValueError("--tenant is required for tenant-scoped run reads.")
+    return TenantContext(
+        tenant_id=tenant_id,
+        capabilities=frozenset(),
+        budget_usd_limit=1.0,
+    )
+
+
+def _assert_cli_run_access(
+    *,
+    run_id: str,
+    tenant: TenantContext,
+    events: list[KernelEvent],
+) -> None:
+    if not events:
+        raise ValueError(f"No events found for run_id={run_id!r}.")
+    if events[0].tenant_id != tenant.tenant_id:
+        raise ValueError(
+            "Run tenant mismatch. "
+            f"run tenant={events[0].tenant_id!r}, request tenant={tenant.tenant_id!r}."
+        )
 
 
 __all__ = ["main"]

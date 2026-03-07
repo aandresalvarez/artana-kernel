@@ -535,6 +535,7 @@ async def test_autonomous_agent_compaction_reuses_artifact_for_identical_window(
 
         artifact_summary = await kernel.get_latest_run_summary(
             run_id=run_id,
+            tenant=_tenant(),
             summary_type=AutonomousAgent.COMPACTION_ARTIFACT_SUMMARY_TYPE,
         )
         assert artifact_summary is not None
@@ -1107,6 +1108,7 @@ async def test_runtime_record_intent_plan_tool_is_callable(tmp_path: Path) -> No
 
         summary = await kernel.get_latest_run_summary(
             run_id="run_record_intent",
+            tenant=_tenant(),
             summary_type="policy::intent_plan",
         )
         assert summary is not None

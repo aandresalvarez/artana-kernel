@@ -14,7 +14,7 @@ from artana.events import (
     KernelEvent,
     RunSummaryPayload,
 )
-from artana.kernel import ArtanaKernel
+from artana.kernel import ArtanaKernel, ReplayConsistencyError
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage
 from artana.store import SQLiteStore
@@ -103,7 +103,7 @@ async def test_kernel_run_status_resume_point_and_blocking_api(tmp_path: Path) -
 
     try:
         await kernel.start_run(tenant=tenant, run_id="run_status")
-        status = await kernel.get_run_status(run_id="run_status")
+        status = await kernel.get_run_status(run_id="run_status", tenant=tenant)
         assert status.status == "active"
         assert status.blocked_on is None
 
@@ -115,11 +115,11 @@ async def test_kernel_run_status_resume_point_and_blocking_api(tmp_path: Path) -
             metadata={"source": "qa"},
             step_key="block_1",
         )
-        paused = await kernel.get_run_status(run_id="run_status")
+        paused = await kernel.get_run_status(run_id="run_status", tenant=tenant)
         assert paused.status == "paused"
         assert paused.blocked_on == "unblock:mgr_approval"
 
-        resume_point = await kernel.resume_point(run_id="run_status")
+        resume_point = await kernel.resume_point(run_id="run_status", tenant=tenant)
         assert resume_point.run_id == "run_status"
         assert resume_point.blocked_on == "unblock:mgr_approval"
         assert resume_point.last_event_seq >= 2
@@ -130,7 +130,7 @@ async def test_kernel_run_status_resume_point_and_blocking_api(tmp_path: Path) -
             unblock_key="mgr_approval",
             metadata={"approved": True},
         )
-        unblocked = await kernel.get_run_status(run_id="run_status")
+        unblocked = await kernel.get_run_status(run_id="run_status", tenant=tenant)
         assert unblocked.status == "active"
         assert unblocked.blocked_on is None
     finally:
@@ -154,6 +154,7 @@ async def test_checkpoint_and_artifact_syscalls(tmp_path: Path) -> None:
         )
         checkpoint = await kernel.get_latest_run_summary(
             run_id="run_artifacts",
+            tenant=tenant,
             summary_type="checkpoint::phase_1",
         )
         assert checkpoint is not None
@@ -179,10 +180,14 @@ async def test_checkpoint_and_artifact_syscalls(tmp_path: Path) -> None:
             value={"offset": 10},
         )
 
-        artifact = await kernel.get_artifact(run_id="run_artifacts", key="report")
+        artifact = await kernel.get_artifact(
+            run_id="run_artifacts",
+            tenant=tenant,
+            key="report",
+        )
         assert artifact == {"version": 2}
 
-        artifacts = await kernel.list_artifacts(run_id="run_artifacts")
+        artifacts = await kernel.list_artifacts(run_id="run_artifacts", tenant=tenant)
         assert artifacts["report"] == {"version": 2}
         assert artifacts["cursor"] == {"offset": 10}
     finally:
@@ -265,6 +270,7 @@ async def test_stream_events_and_run_lease_syscalls(tmp_path: Path) -> None:
             event
             async for event in kernel.stream_events(
                 run_id="run_stream_lease",
+                tenant=tenant,
                 since_seq=0,
             )
         ]
@@ -274,6 +280,7 @@ async def test_stream_events_and_run_lease_syscalls(tmp_path: Path) -> None:
             event
             async for event in kernel.stream_events(
                 run_id="run_stream_lease",
+                tenant=tenant,
                 since_seq=1,
             )
         ]
@@ -282,6 +289,7 @@ async def test_stream_events_and_run_lease_syscalls(tmp_path: Path) -> None:
         assert (
             await kernel.acquire_run_lease(
                 run_id="run_stream_lease",
+                tenant=tenant,
                 worker_id="worker_a",
                 ttl_seconds=30,
             )
@@ -290,17 +298,19 @@ async def test_stream_events_and_run_lease_syscalls(tmp_path: Path) -> None:
         assert (
             await kernel.acquire_run_lease(
                 run_id="run_stream_lease",
+                tenant=tenant,
                 worker_id="worker_b",
                 ttl_seconds=30,
             )
             is False
         )
-        lease = await kernel.get_run_lease(run_id="run_stream_lease")
+        lease = await kernel.get_run_lease(run_id="run_stream_lease", tenant=tenant)
         assert lease is not None
         assert lease.worker_id == "worker_a"
         assert (
             await kernel.renew_run_lease(
                 run_id="run_stream_lease",
+                tenant=tenant,
                 worker_id="worker_a",
                 ttl_seconds=30,
             )
@@ -309,6 +319,7 @@ async def test_stream_events_and_run_lease_syscalls(tmp_path: Path) -> None:
         assert (
             await kernel.release_run_lease(
                 run_id="run_stream_lease",
+                tenant=tenant,
                 worker_id="worker_b",
             )
             is False
@@ -316,6 +327,7 @@ async def test_stream_events_and_run_lease_syscalls(tmp_path: Path) -> None:
         assert (
             await kernel.release_run_lease(
                 run_id="run_stream_lease",
+                tenant=tenant,
                 worker_id="worker_a",
             )
             is True
@@ -323,6 +335,7 @@ async def test_stream_events_and_run_lease_syscalls(tmp_path: Path) -> None:
         assert (
             await kernel.acquire_run_lease(
                 run_id="run_stream_lease",
+                tenant=tenant,
                 worker_id="worker_b",
                 ttl_seconds=30,
             )
@@ -392,17 +405,81 @@ async def test_run_state_snapshot_path_matches_fallback_path(tmp_path: Path) -> 
         )
 
         assert await snapshot_kernel.get_run_status(
-            run_id="run_snapshot_compare"
-        ) == await fallback_kernel.get_run_status(run_id="run_snapshot_compare")
+            run_id="run_snapshot_compare",
+            tenant=tenant,
+        ) == await fallback_kernel.get_run_status(run_id="run_snapshot_compare", tenant=tenant)
         assert await snapshot_kernel.resume_point(
-            run_id="run_snapshot_compare"
-        ) == await fallback_kernel.resume_point(run_id="run_snapshot_compare")
+            run_id="run_snapshot_compare",
+            tenant=tenant,
+        ) == await fallback_kernel.resume_point(run_id="run_snapshot_compare", tenant=tenant)
         assert await snapshot_kernel.explain_run(
-            "run_snapshot_compare"
-        ) == await fallback_kernel.explain_run("run_snapshot_compare")
+            "run_snapshot_compare",
+            tenant=tenant,
+        ) == await fallback_kernel.explain_run("run_snapshot_compare", tenant=tenant)
         assert await snapshot_kernel.list_active_runs(
             tenant_id=tenant.tenant_id
         ) == await fallback_kernel.list_active_runs(tenant_id=tenant.tenant_id)
     finally:
         await fallback_kernel.close()
         await snapshot_kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_tenant_scoped_read_syscalls_reject_cross_tenant_access(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(store=store, model_port=PlainModelPort())
+    owner = _tenant()
+    intruder = TenantContext(
+        tenant_id="org_kernel_os_intruder",
+        capabilities=frozenset(),
+        budget_usd_limit=5.0,
+    )
+    try:
+        await kernel.start_run(tenant=owner, run_id="run_tenant_guard")
+        await kernel.set_artifact(
+            run_id="run_tenant_guard",
+            tenant=owner,
+            key="report",
+            value={"ok": True},
+        )
+
+        with pytest.raises(ReplayConsistencyError, match="Run tenant mismatch"):
+            await kernel.load_run(run_id="run_tenant_guard", tenant=intruder)
+        with pytest.raises(ReplayConsistencyError, match="Run tenant mismatch"):
+            await kernel.get_events(run_id="run_tenant_guard", tenant=intruder)
+        with pytest.raises(ReplayConsistencyError, match="Run tenant mismatch"):
+            await kernel.get_run_status(run_id="run_tenant_guard", tenant=intruder)
+        with pytest.raises(ReplayConsistencyError, match="Run tenant mismatch"):
+            await kernel.resume_point(run_id="run_tenant_guard", tenant=intruder)
+        with pytest.raises(ReplayConsistencyError, match="Run tenant mismatch"):
+            await kernel.get_artifact(
+                run_id="run_tenant_guard",
+                tenant=intruder,
+                key="report",
+            )
+        with pytest.raises(ReplayConsistencyError, match="Run tenant mismatch"):
+            await kernel.list_artifacts(run_id="run_tenant_guard", tenant=intruder)
+        with pytest.raises(ReplayConsistencyError, match="Run tenant mismatch"):
+            await kernel.acquire_run_lease(
+                run_id="run_tenant_guard",
+                tenant=intruder,
+                worker_id="worker_intruder",
+                ttl_seconds=30,
+            )
+        with pytest.raises(ReplayConsistencyError, match="Run tenant mismatch"):
+            await kernel.get_run_lease(run_id="run_tenant_guard", tenant=intruder)
+        with pytest.raises(ReplayConsistencyError, match="Run tenant mismatch"):
+            await kernel.renew_run_lease(
+                run_id="run_tenant_guard",
+                tenant=intruder,
+                worker_id="worker_intruder",
+                ttl_seconds=30,
+            )
+        with pytest.raises(ReplayConsistencyError, match="Run tenant mismatch"):
+            await kernel.release_run_lease(
+                run_id="run_tenant_guard",
+                tenant=intruder,
+                worker_id="worker_intruder",
+            )
+    finally:
+        await kernel.close()

@@ -247,6 +247,13 @@ async def test_kernel_run_state_reads_match_snapshot_and_fallback_paths(
             context=_ApprovalContext(approval_key="approve_1"),
             step_key="pause_1",
         )
+        await snapshot_kernel.approve_tool_call(
+            run_id="run_snapshot_a",
+            tenant=tenant,
+            approval_key="approve_1",
+            mode="human",
+            reason="snapshot parity approval",
+        )
         await snapshot_kernel.resume(
             run_id="run_snapshot_a",
             tenant=tenant,
@@ -324,14 +331,17 @@ async def test_kernel_run_state_reads_match_snapshot_and_fallback_paths(
 
         for run_id in ("run_snapshot_a", "run_snapshot_b", "run_snapshot_c"):
             assert await snapshot_kernel.get_run_status(
-                run_id=run_id
-            ) == await fallback_kernel.get_run_status(run_id=run_id)
+                run_id=run_id,
+                tenant=tenant,
+            ) == await fallback_kernel.get_run_status(run_id=run_id, tenant=tenant)
             assert await snapshot_kernel.resume_point(
-                run_id=run_id
-            ) == await fallback_kernel.resume_point(run_id=run_id)
+                run_id=run_id,
+                tenant=tenant,
+            ) == await fallback_kernel.resume_point(run_id=run_id, tenant=tenant)
             assert await snapshot_kernel.explain_run(
-                run_id
-            ) == await fallback_kernel.explain_run(run_id)
+                run_id,
+                tenant=tenant,
+            ) == await fallback_kernel.explain_run(run_id, tenant=tenant)
 
         assert await snapshot_kernel.list_active_runs(
             tenant_id=tenant.tenant_id

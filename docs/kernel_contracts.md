@@ -31,11 +31,11 @@ High-level ergonomics note:
 
 Kernel orchestration syscalls now include:
 
-- `get_run_status(run_id)`
-- `get_run_progress(run_id)`
-- `stream_run_progress(run_id, since_seq=0, follow=False, ...)`
+- `get_run_status(run_id, tenant)`
+- `get_run_progress(run_id, tenant)`
+- `stream_run_progress(run_id, tenant, since_seq=0, follow=False, ...)`
 - `list_active_runs(tenant_id, ...)`
-- `resume_point(run_id)`
+- `resume_point(run_id, tenant)`
 - `block_run(...)`
 - `unblock_run(...)`
 
@@ -199,6 +199,8 @@ Built-in deterministic invariants:
 
 - Approval records are run summaries under `summary_type=policy::approval::<approval_key>`.
 - Human mode raises `ApprovalRequiredError` until approval is recorded.
+- After a human approval record is appended for a paused run, callers must append
+  `resume(...)` before retrying model/tool execution.
 - Critic mode uses deterministic kernel model steps with key prefix `critic::<tool>::`.
 - Critic denials raise `PolicyViolationError(code="critic_denied")`.
 
@@ -231,8 +233,8 @@ Current persistence representation:
 Kernel artifact syscalls:
 
 - `set_artifact(run_id, tenant, key, value, ...)`
-- `get_artifact(run_id, key)`
-- `list_artifacts(run_id)`
+- `get_artifact(run_id, tenant, key)`
+- `list_artifacts(run_id, tenant)`
 
 Current persistence representation:
 
@@ -289,14 +291,14 @@ Artifacts in harnesses are persisted as run summaries with `summary_type=artifac
 
 Store-agnostic event streaming contract:
 
-- `stream_events(run_id, since_seq=0, follow=False, ...) -> AsyncIterator[KernelEvent]`
+- `stream_events(run_id, tenant, since_seq=0, follow=False, ...) -> AsyncIterator[KernelEvent]`
 
 Run-lease contracts for multi-worker schedulers:
 
-- `acquire_run_lease(run_id, worker_id, ttl_seconds)`
-- `renew_run_lease(run_id, worker_id, ttl_seconds)`
-- `release_run_lease(run_id, worker_id)`
-- `get_run_lease(run_id)`
+- `acquire_run_lease(run_id, tenant, worker_id, ttl_seconds)`
+- `renew_run_lease(run_id, tenant, worker_id, ttl_seconds)`
+- `release_run_lease(run_id, tenant, worker_id)`
+- `get_run_lease(run_id, tenant)`
 
 ## Versioning and Compatibility Contracts
 
@@ -310,12 +312,12 @@ Run-lease contracts for multi-worker schedulers:
 
 CLI run inspection commands:
 
-- `artana run list --db ... | --dsn ...`
-- `artana run tail <run_id> --db ... | --dsn ...`
-- `artana run verify-ledger <run_id> --db ... | --dsn ...`
-- `artana run status <run_id> --db ... | --dsn ...`
-- `artana run summaries <run_id> [--type ...] [--limit ...] --db ... | --dsn ...`
-- `artana run artifacts <run_id> --db ... | --dsn ...`
+- `artana run list --tenant <tenant_id> --db ... | --dsn ...`
+- `artana run tail <run_id> --tenant <tenant_id> --db ... | --dsn ...`
+- `artana run verify-ledger <run_id> --tenant <tenant_id> --db ... | --dsn ...`
+- `artana run status <run_id> --tenant <tenant_id> --db ... | --dsn ...`
+- `artana run summaries <run_id> --tenant <tenant_id> [--type ...] [--limit ...] --db ... | --dsn ...`
+- `artana run artifacts <run_id> --tenant <tenant_id> --db ... | --dsn ...`
 - `artana init [path] [--profile enforced|dev] [--force]`
 
 Output contract:

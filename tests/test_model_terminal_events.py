@@ -121,7 +121,10 @@ async def test_model_failure_emits_terminal_and_marks_run_failed(tmp_path: Path)
         payload = terminal[0].payload
         assert isinstance(payload, ModelTerminalPayload)
         assert payload.outcome == "timeout"
-        status = await kernel.get_run_status(run_id="run_terminal_timeout")
+        status = await kernel.get_run_status(
+            run_id="run_terminal_timeout",
+            tenant=_tenant(),
+        )
         assert status.status == "failed"
         assert status.last_event_type == EventType.MODEL_TERMINAL.value
     finally:
@@ -261,6 +264,7 @@ async def test_cleanup_stale_model_runs_skips_active_leased_runs(tmp_path: Path)
         )
         acquired = await kernel.acquire_run_lease(
             run_id=run_id,
+            tenant=tenant,
             worker_id="worker_1",
             ttl_seconds=3600,
         )
