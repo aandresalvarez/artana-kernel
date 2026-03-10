@@ -250,7 +250,7 @@ agent = AutonomousAgent(kernel=kernel)
 report = await agent.run(
     run_id="research_01",
     tenant=tenant,
-    model="gpt-4o",
+    model="gpt-5.4",
     prompt="Find the CEO of Acme Corp.",
     output_schema=CompanyReport
 )
@@ -283,10 +283,10 @@ agent = AutonomousAgent(
     compaction=CompactionStrategy(
         trigger_at_messages=40,
         keep_recent_messages=10,
-        summarize_with_model="gpt-4o-mini",
+        summarize_with_model="gpt-5-mini",
     ),
     auto_reflect=True,
-    reflection_model="gpt-4o-mini",
+    reflection_model="gpt-5-mini",
 )
 ```
 
@@ -341,7 +341,7 @@ Two-model harness loops:
 draft = await harness.run_draft_model(
     prompt="Propose an implementation plan",
     output_schema=PlanResult,
-    model_options=ModelCallOptions(api_mode="auto", reasoning_effort="low"),
+    model_options=ModelCallOptions(api_mode="auto", reasoning_effort="none"),
 )
 
 verify = await harness.run_verify_model(
@@ -369,6 +369,14 @@ class PatchHarness(TestDrivenHarness):
         await self.verify_and_commit(task_id=task.id, test_command="pytest -q")
 ```
 
+Minimal manual agent + harness mapping:
+
+- local tool: `@kernel.tool()`
+- manual agent: Python control flow plus `KernelModelClient.step(...)` and `kernel.step_tool(...)`
+- simple harness: `BaseHarness.step(...)` calling `run_tool(...)` and `run_model(...)`
+
+If your baseline is a plain LiteLLM script with `lookup_gene()`, `run_agent()`, and `run_case()`, see `examples/10_live_manual_agent_harness.py` for the same shape implemented on Artana with `openai/gpt-5.4`.
+
 ### 4. Harness Engineering DX
 Use these defaults for production-safe coding loops:
 
@@ -383,15 +391,15 @@ verify_step_key = step.next("verify")
 agent = AutonomousAgent(
     kernel=kernel,
     loop=DraftVerifyLoopConfig(
-        draft_model="gpt-5.3-codex-spark",
-        verify_model="gpt-5.3-codex",
+        draft_model="gpt-5-mini",
+        verify_model="gpt-5.4",
     ),
 )
 
 result = await agent.run(
     run_id="refactor_auth_run",
     tenant=tenant,
-    model="openai/gpt-5.3-codex",  # used when loop=None
+    model="openai/gpt-5.4",  # used when loop=None
     prompt="Fix flaky auth tests.",
     output_schema=PatchDecision,
     acceptance=AcceptanceSpec(
@@ -624,16 +632,16 @@ agent = AutonomousAgent(
     context_builder=context_builder,
     compaction=CompactionStrategy(trigger_at_messages=40, keep_recent_messages=10),
     auto_reflect=True,
-    reflection_model="gpt-4o-mini",
+    reflection_model="gpt-5-mini",
     loop=DraftVerifyLoopConfig(
-        draft_model="gpt-5.3-codex-spark",
-        verify_model="gpt-5.3-codex",
+        draft_model="gpt-5-mini",
+        verify_model="gpt-5.4",
     ),
 )
 result = await agent.run(
     run_id="run_123",
     tenant=tenant,
-    model="gpt-4o",
+    model="gpt-5.4",
     system_prompt="You are a helpful agent.",
     prompt="Do the task.",
     output_schema=FinalDecision,
@@ -673,7 +681,7 @@ factory = SubAgentFactory(kernel=kernel)
 factory.create(
     name="run_researcher",
     output_schema=ResearchResult,
-    model="gpt-4o-mini",
+    model="gpt-5-mini",
     system_prompt="You are a specialized researcher.",
     requires_capability="spawn_researcher",
 )
@@ -699,7 +707,7 @@ If you are building your own custom orchestration loop:
 first = await kernel.step_model(
     run_id=run_id,
     tenant=tenant,
-    model="openai/gpt-5.3-codex",
+    model="openai/gpt-5.4",
     input=ModelInput.from_prompt("..."),
     output_schema=MySchema,
     model_options=ModelCallOptions(
@@ -714,7 +722,7 @@ first = await kernel.step_model(
 second = await kernel.step_model(
     run_id=run_id,
     tenant=tenant,
-    model="openai/gpt-5.3-codex",
+    model="openai/gpt-5.4",
     input=ModelInput.from_prompt("continue"),
     output_schema=MySchema,
     model_options=ModelCallOptions(
@@ -830,6 +838,7 @@ Run examples from the repository root:
 - **`07_adaptive_agent_learning.py`**: Demonstrates inter-run experience learning where Run 1 discovers a durable rule and Run 2 succeeds immediately using injected past learnings.
 - **`08_responses_mode.py`**: Demonstrates explicit Responses controls (`api_mode="responses"`, `reasoning_effort`, `verbosity`) and chaining with `previous_response_id`.
 - **`09_harness_engineering_dx.py`**: Demonstrates `StepKey`, draft/verify harness calls, acceptance gates, side-effect-safe tool registration, and coding tool bundle usage.
+- **`10_live_manual_agent_harness.py`**: Demonstrates a local tool, a manual agent built from kernel primitives, and a simple harness using `openai/gpt-5.4`.
 - **`golden_example.py`**: Canonical production-leaning example testing unknown tool outcomes and reconciliation.
 
 ## Growth Path

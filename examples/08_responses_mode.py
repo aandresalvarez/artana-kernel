@@ -24,7 +24,7 @@ class Decision(BaseModel):
 
 async def main() -> None:
     require_openai_api_key(script_name="08_responses_mode.py")
-    model_name = resolve_model(env_var="ARTANA_RESPONSES_MODEL", default="openai/gpt-5.3-codex")
+    model_name = resolve_model(env_var="ARTANA_RESPONSES_MODEL", default="openai/gpt-5.4")
     print_example_header(
         title="08 - Responses Mode (OpenAI Responses API)",
         models={"responses": model_name},
@@ -61,8 +61,8 @@ async def main() -> None:
             output_schema=Decision,
             model_options=ModelCallOptions(
                 api_mode="responses",
-                reasoning_effort="high",
-                verbosity="medium",
+                reasoning_effort="none",
+                verbosity="low",
             ),
         )
 

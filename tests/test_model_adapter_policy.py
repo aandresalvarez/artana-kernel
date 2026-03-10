@@ -11,6 +11,7 @@ from artana.ports.model import (
     LiteLLMAdapter,
     ModelCallOptions,
     ModelPermanentError,
+    ModelRefusalError,
     ModelRequest,
     ModelTimeoutError,
 )
@@ -372,6 +373,39 @@ async def test_litellm_adapter_extracts_tool_call_ids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_litellm_adapter_raises_model_refusal_from_chat_response() -> None:
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        return {
+            "choices": [{"message": {"refusal": "I can't help with that."}}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            "_response_cost": 0.001,
+        }
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_chat_refusal",
+        model="gpt-4o-mini",
+        prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
+        output_schema=Decision,
+        allowed_tools=(),
+    )
+
+    with pytest.raises(ModelRefusalError, match="I can't help with that."):
+        await adapter.complete(request)
+
+
+@pytest.mark.asyncio
 async def test_litellm_adapter_raises_on_malformed_tool_call_arguments() -> None:
     async def completion_fn(
         *,
@@ -470,14 +504,14 @@ async def test_litellm_adapter_auto_uses_responses_for_supported_prefix() -> Non
     )
     request = ModelRequest(
         run_id="run_model_responses_auto",
-        model="openai/gpt-5.3-codex",
+        model="openai/gpt-5.4",
         prompt="hello",
         messages=(ChatMessage(role="user", content="hello"),),
         output_schema=Decision,
         allowed_tools=(),
         model_options=ModelCallOptions(
             api_mode="auto",
-            reasoning_effort="high",
+            reasoning_effort="none",
             verbosity="low",
             previous_response_id="resp_prev",
         ),
@@ -489,7 +523,7 @@ async def test_litellm_adapter_auto_uses_responses_for_supported_prefix() -> Non
     assert result.response_id == "resp_123"
     assert len(captured) == 1
     assert captured[0]["previous_response_id"] == "resp_prev"
-    assert captured[0]["reasoning"] == {"effort": "high"}
+    assert captured[0]["reasoning"] == {"effort": "none"}
     assert captured[0]["text"] == {"verbosity": "low"}
 
 
@@ -535,7 +569,7 @@ async def test_litellm_adapter_auto_falls_back_to_chat_on_responses_unsupported(
     )
     request = ModelRequest(
         run_id="run_model_responses_fallback",
-        model="openai/gpt-5.3-codex",
+        model="openai/gpt-5.4",
         prompt="hello",
         messages=(ChatMessage(role="user", content="hello"),),
         output_schema=Decision,
@@ -581,7 +615,7 @@ async def test_litellm_adapter_responses_mode_is_strict_on_unsupported() -> None
     )
     request = ModelRequest(
         run_id="run_model_responses_strict",
-        model="openai/gpt-5.3-codex",
+        model="openai/gpt-5.4",
         prompt="hello",
         messages=(ChatMessage(role="user", content="hello"),),
         output_schema=Decision,
@@ -637,7 +671,7 @@ async def test_litellm_adapter_extracts_tool_calls_from_responses_output_items()
     )
     request = ModelRequest(
         run_id="run_model_responses_tool_call",
-        model="openai/gpt-5.3-codex",
+        model="openai/gpt-5.4",
         prompt="hello",
         messages=(ChatMessage(role="user", content="hello"),),
         output_schema=Decision,
@@ -652,3 +686,67 @@ async def test_litellm_adapter_extracts_tool_calls_from_responses_output_items()
     assert result.tool_calls[0].tool_name == "lookup_weather"
     assert result.tool_calls[0].tool_call_id == "call_resp_1"
     assert len(result.response_output_items) == 1
+
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_raises_model_refusal_from_responses_output() -> None:
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        raise AssertionError("chat completion should not run for this test")
+
+    async def responses_fn(
+        *,
+        input: str | list[dict[str, object]],
+        model: str,
+        previous_response_id: str | None = None,
+        reasoning: dict[str, object] | None = None,
+        text: dict[str, object] | None = None,
+        text_format: type[BaseModel] | dict[str, object] | None = None,
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        return {
+            "id": "resp_refusal_1",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "refusal",
+                            "refusal": "I can't comply with that request.",
+                        }
+                    ],
+                }
+            ],
+            "usage": {"input_tokens": 4, "output_tokens": 2},
+            "_response_cost": 0.001,
+        }
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        responses_fn=responses_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_responses_refusal",
+        model="openai/gpt-5.4",
+        prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
+        output_schema=Decision,
+        allowed_tools=(),
+        model_options=ModelCallOptions(api_mode="responses"),
+    )
+
+    with pytest.raises(ModelRefusalError) as exc_info:
+        await adapter.complete(request)
+
+    refusal = exc_info.value
+    assert refusal.refusal == "I can't comply with that request."
+    assert refusal.api_mode_used == "responses"
+    assert refusal.response_id == "resp_refusal_1"
+    assert len(refusal.response_output_items) == 1

@@ -170,7 +170,7 @@ async def main() -> None:
             progressive_skills=False,
         ),
         auto_reflect=True,
-        reflection_model="gpt-4o-mini",
+        reflection_model="gpt-5-mini",
     )
 
     try:
@@ -178,7 +178,35 @@ async def main() -> None:
             run_id="financial_week_1",
             tenant=tenant,
             model="adaptive-finance-demo",
-            prompt="Submit this week's extraction using the accepted date format.",
+            system_prompt=(
+                "You are a financial extraction agent.\n"
+                "<missing_context_gating>\n"
+                "- Do not guess the accepted date format.\n"
+                "- Use tool feedback to determine the required format.\n"
+                "</missing_context_gating>\n"
+                "<tool_persistence_rules>\n"
+                "- Keep using submit_financial_extract until the task succeeds "
+                "or a clear blocker is identified.\n"
+                "- If the tool rejects the format, retry with a corrected format.\n"
+                "</tool_persistence_rules>\n"
+                "<verification_loop>\n"
+                "- Do not report success until the tool returns ok=true.\n"
+                "- The final attempted_date must match the accepted date from the tool result.\n"
+                "</verification_loop>\n"
+                "<action_safety>\n"
+                "- Before each submission, decide the exact date string to send.\n"
+                "- After each submission, inspect tool feedback before deciding the next step.\n"
+                "</action_safety>\n"
+                "<structured_output_contract>\n"
+                "- Return only FinancialExtractionResult fields.\n"
+                "</structured_output_contract>"
+            ),
+            prompt=(
+                "Submit this week's extraction.\n"
+                "- Treat the task as incomplete until submit_financial_extract returns ok=true.\n"
+                "- If the date format is rejected, retry with a corrected format.\n"
+                "- Do not claim success until the tool confirms the accepted date."
+            ),
             output_schema=FinancialExtractionResult,
             max_iterations=6,
         )
@@ -192,7 +220,26 @@ async def main() -> None:
             run_id="financial_week_2",
             tenant=tenant,
             model="adaptive-finance-demo",
-            prompt="Submit this week's extraction using the accepted date format.",
+            system_prompt=(
+                "You are a financial extraction agent.\n"
+                "<missing_context_gating>\n"
+                "- Do not guess the accepted date format.\n"
+                "- Use tool feedback or injected learnings to determine the required format.\n"
+                "</missing_context_gating>\n"
+                "<verification_loop>\n"
+                "- Do not report success until the tool returns ok=true or a "
+                "stored rule removes the need for a retry.\n"
+                "</verification_loop>\n"
+                "<structured_output_contract>\n"
+                "- Return only FinancialExtractionResult fields.\n"
+                "</structured_output_contract>"
+            ),
+            prompt=(
+                "Submit this week's extraction.\n"
+                "- Reuse reliable learned date-format rules when available.\n"
+                "- Treat the task as incomplete until the accepted format is "
+                "known and the submission succeeds."
+            ),
             output_schema=FinancialExtractionResult,
             max_iterations=6,
         )

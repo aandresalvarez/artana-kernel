@@ -38,9 +38,9 @@ class IncrementalTaskHarness(BaseHarness[tuple[TaskUnit, ...]]):
         kernel: ArtanaKernel,
         tenant: TenantContext | None = None,
         *,
-        default_model: str = "gpt-4o-mini",
-        draft_model: str = "gpt-5.3-codex-spark",
-        verify_model: str = "gpt-5.3-codex",
+        default_model: str = "gpt-5.4",
+        draft_model: str = "gpt-5-mini",
+        verify_model: str = "gpt-5.4",
         replay_policy: ReplayPolicy = "allow_prompt_drift",
         sanity_check_hook: SanityCheckHook | None = None,
     ) -> None:

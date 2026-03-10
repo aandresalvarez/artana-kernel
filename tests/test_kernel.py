@@ -13,6 +13,7 @@ from artana.middleware import CapabilityGuardMiddleware
 from artana.models import TenantContext
 from artana.ports.model import (
     ModelCallOptions,
+    ModelRefusalError,
     ModelRequest,
     ModelResult,
     ModelUsage,
@@ -82,6 +83,33 @@ class FakeResponsesModelPort:
                     "name": "lookup_weather",
                     "arguments": '{"city":"SF"}',
                     "call_id": "call_kernel_1",
+                },
+            ),
+        )
+
+
+class FakeRefusalModelPort:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(
+        self, request: ModelRequest[OutputModelT]
+    ) -> ModelResult[OutputModelT]:
+        self.calls += 1
+        raise ModelRefusalError(
+            "I can't help with that.",
+            usage=ModelUsage(prompt_tokens=5, completion_tokens=2, cost_usd=0.01),
+            api_mode_used="responses",
+            response_id="resp_refusal_kernel_1",
+            response_output_items=(
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "refusal",
+                            "refusal": "I can't help with that.",
+                        }
+                    ],
                 },
             ),
         )
@@ -266,12 +294,12 @@ async def test_step_model_persists_responses_metadata(tmp_path: Path) -> None:
         result = await KernelModelClient(kernel=kernel).step(
             run_id="run_responses_metadata",
             prompt="Respond in schema",
-            model="openai/gpt-5.3-codex",
+            model="openai/gpt-5.4",
             tenant=tenant,
             output_schema=Decision,
             model_options=ModelCallOptions(
                 api_mode="responses",
-                reasoning_effort="high",
+                reasoning_effort="none",
                 verbosity="medium",
                 previous_response_id="resp_prev_1",
             ),
@@ -286,7 +314,7 @@ async def test_step_model_persists_responses_metadata(tmp_path: Path) -> None:
         assert isinstance(requested_payload, ModelRequestedPayload)
         assert isinstance(terminal_payload, ModelTerminalPayload)
         assert requested_payload.api_mode == "responses"
-        assert requested_payload.reasoning_effort == "high"
+        assert requested_payload.reasoning_effort == "none"
         assert requested_payload.verbosity == "medium"
         assert requested_payload.previous_response_id == "resp_prev_1"
         assert requested_payload.responses_input_items is not None
@@ -294,5 +322,50 @@ async def test_step_model_persists_responses_metadata(tmp_path: Path) -> None:
         assert terminal_payload.api_mode_used == "responses"
         assert terminal_payload.response_id == "resp_kernel_1"
         assert len(terminal_payload.responses_output_items) == 1
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_model_refusal_is_persisted_and_replayed(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state_refusal.db"))
+    model_port = FakeRefusalModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    tenant = TenantContext(
+        tenant_id="org_refusal",
+        capabilities=frozenset(),
+        budget_usd_limit=1.0,
+    )
+
+    try:
+        with pytest.raises(ModelRefusalError, match="I can't help with that."):
+            await KernelModelClient(kernel=kernel).step(
+                run_id="run_refusal",
+                prompt="Should we do the unsafe thing?",
+                model="openai/gpt-5.4",
+                tenant=tenant,
+                output_schema=Decision,
+            )
+
+        with pytest.raises(ModelRefusalError, match="I can't help with that."):
+            await KernelModelClient(kernel=kernel).step(
+                run_id="run_refusal",
+                prompt="Should we do the unsafe thing?",
+                model="openai/gpt-5.4",
+                tenant=tenant,
+                output_schema=Decision,
+            )
+
+        assert model_port.calls == 1
+        events = await store.get_events_for_run("run_refusal")
+        terminal_event = next(
+            event for event in events if event.event_type == EventType.MODEL_TERMINAL
+        )
+        payload = terminal_event.payload
+        assert isinstance(payload, ModelTerminalPayload)
+        assert payload.error_category == "refusal"
+        assert payload.refusal == "I can't help with that."
+        assert payload.response_id == "resp_refusal_kernel_1"
+        assert len(payload.responses_output_items) == 1
     finally:
         await kernel.close()

@@ -59,7 +59,7 @@ of the European Union.
 
 async def main() -> None:
     require_openai_api_key(script_name="03_fact_extraction_triplets.py")
-    model_name = resolve_model(env_var="ARTANA_MODEL", default="gpt-4o-mini")
+    model_name = resolve_model(env_var="ARTANA_MODEL", default="gpt-5-mini")
     print_example_header(
         title="03 - Fact Extraction (Triplets)",
         models={"extractor": model_name},

@@ -24,7 +24,7 @@ class Decision(BaseModel):
 
 async def main() -> None:
     require_openai_api_key(script_name="02_real_litellm_chat.py")
-    model_name = resolve_model(env_var="ARTANA_MODEL", default="gpt-4o-mini")
+    model_name = resolve_model(env_var="ARTANA_MODEL", default="gpt-5.4")
     print_example_header(
         title="02 - Real LiteLLM Chat (OpenAI)",
         models={"primary": model_name},

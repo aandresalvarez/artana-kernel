@@ -81,14 +81,35 @@ class DXHarness(BaseHarness[dict[str, object]]):
         step = StepKey(namespace=f"{context.run_id}_dx")
 
         draft = await self.run_draft_model(
-            prompt="Draft a concise patch plan for flaky tests.",
+            prompt=(
+                "Plan a minimal patch for flaky tests.\n"
+                "<tool_boundary>\n"
+                "- This is a planning step only.\n"
+                "- Do not assume shell execution or file mutation has already happened.\n"
+                "</tool_boundary>\n"
+                "<structured_output_contract>\n"
+                "- Return only content suitable for the DraftPlan.patch field.\n"
+                "- Keep it concise and implementation-oriented.\n"
+                "</structured_output_contract>"
+            ),
             output_schema=DraftPlan,
             step_key=step.next("draft"),
-            model_options=ModelCallOptions(api_mode="auto", reasoning_effort="low"),
+            model_options=ModelCallOptions(api_mode="auto", reasoning_effort="none"),
         )
 
         verify = await self.run_verify_model(
-            prompt=f"Verify this draft patch plan: {draft.output.patch}",
+            prompt=(
+                "Review this draft patch plan and decide whether it is ready to execute:\n"
+                f"{draft.output.patch}\n\n"
+                "<verification_loop>\n"
+                "- Check correctness, determinism, and missing constraints.\n"
+                "- Check whether the plan includes enough verification to justify execution.\n"
+                "</verification_loop>\n"
+                "<structured_output_contract>\n"
+                "- Approve only if the plan is testable and low-ambiguity.\n"
+                "- Return only VerifyPlan fields.\n"
+                "</structured_output_contract>"
+            ),
             output_schema=VerifyPlan,
             step_key=step.next("verify"),
             model_options=ModelCallOptions(api_mode="auto", reasoning_effort="high"),
@@ -175,23 +196,42 @@ async def main() -> None:
         harness = DXHarness(
             kernel,
             tenant=_tenant(),
-            draft_model="gpt-5.3-codex-spark",
-            verify_model="gpt-5.3-codex",
+            draft_model="gpt-5-mini",
+            verify_model="gpt-5.4",
         )
         harness_result = await harness.run(run_id="dx_harness_run")
 
         agent = AutonomousAgent(
             kernel,
             loop=DraftVerifyLoopConfig(
-                draft_model="gpt-5.3-codex-spark",
-                verify_model="gpt-5.3-codex",
+                draft_model="gpt-5-mini",
+                verify_model="gpt-5.4",
             ),
         )
         agent_result = await agent.run(
             run_id="dx_agent_run",
             tenant=_tenant(),
-            model="openai/gpt-5.3-codex",
-            prompt="Finalize when all required checks pass.",
+            model="openai/gpt-5.4",
+            system_prompt=(
+                "You are a coding agent.\n"
+                "<tool_persistence_rules>\n"
+                "- Keep using available tools until the task is complete and verification passes.\n"
+                "- Do not stop early while a required gate is still failing.\n"
+                "</tool_persistence_rules>\n"
+                "<verification_loop>\n"
+                "- Before finalizing, confirm that every required check has passed.\n"
+                "- If a gate fails, continue the loop instead of declaring success.\n"
+                "</verification_loop>\n"
+                "<structured_output_contract>\n"
+                "- Return only AgentDecision fields.\n"
+                "</structured_output_contract>"
+            ),
+            prompt=(
+                "Complete the task only when all required checks pass.\n"
+                "- Use the available workflow until run_tests passes.\n"
+                "- Do not report done while any required gate is failing.\n"
+                "- If you cannot complete the task, return a concise blocker summary."
+            ),
             output_schema=AgentDecision,
             max_iterations=4,
             acceptance=AcceptanceSpec(gates=(ToolGate(tool="run_tests", must_pass=True),)),

@@ -100,7 +100,7 @@ class DraftVerifyHarness(BaseHarness[tuple[str, str]]):
             output_schema=Decision,
             model_options=ModelCallOptions(
                 api_mode="responses",
-                reasoning_effort="low",
+                reasoning_effort="none",
                 verbosity="low",
             ),
             step_key="draft_step",
@@ -226,8 +226,8 @@ async def test_base_harness_draft_and_verify_wrappers_use_dedicated_models(
     harness = DraftVerifyHarness(
         kernel=kernel,
         tenant=tenant,
-        draft_model="gpt-5.3-codex-spark",
-        verify_model="gpt-5.3-codex",
+        draft_model="gpt-5-mini",
+        verify_model="gpt-5.4",
     )
     try:
         reasons = await harness.run(run_id="run_draft_verify")
@@ -241,11 +241,11 @@ async def test_base_harness_draft_and_verify_wrappers_use_dedicated_models(
             and isinstance(event.payload, ModelRequestedPayload)
         ]
         assert [payload.model for payload in model_requested] == [
-            "gpt-5.3-codex-spark",
-            "gpt-5.3-codex",
+            "gpt-5-mini",
+            "gpt-5.4",
         ]
         assert model_requested[0].api_mode == "responses"
-        assert model_requested[0].reasoning_effort == "low"
+        assert model_requested[0].reasoning_effort == "none"
         assert model_requested[0].verbosity == "low"
         assert model_requested[1].api_mode == "chat"
     finally:

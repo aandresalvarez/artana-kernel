@@ -67,8 +67,8 @@ async def test_autonomous_agent_draft_verify_and_acceptance_gates(tmp_path: Path
     agent = AutonomousAgent(
         kernel=kernel,
         loop=DraftVerifyLoopConfig(
-            draft_model="gpt-5.3-codex-spark",
-            verify_model="gpt-5.3-codex",
+            draft_model="gpt-5-mini",
+            verify_model="gpt-5.4",
         ),
     )
     try:
@@ -84,9 +84,9 @@ async def test_autonomous_agent_draft_verify_and_acceptance_gates(tmp_path: Path
         assert result.done is True
         assert gate_calls == 2
         assert model_port.models_seen == [
-            "gpt-5.3-codex-spark",
-            "gpt-5.3-codex-spark",
-            "gpt-5.3-codex",
+            "gpt-5-mini",
+            "gpt-5-mini",
+            "gpt-5.4",
         ]
     finally:
         await kernel.close()

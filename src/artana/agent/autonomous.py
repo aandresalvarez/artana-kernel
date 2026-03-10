@@ -67,7 +67,7 @@ class AutonomousAgent:
         compaction: CompactionStrategy | None = None,
         memory_store: MemoryStore | None = None,
         auto_reflect: bool = False,
-        reflection_model: str = "gpt-4o-mini",
+        reflection_model: str = "gpt-5-mini",
         replay_policy: ReplayPolicy = "strict",
     ) -> None:
         if context_builder is None:

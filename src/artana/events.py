@@ -70,7 +70,7 @@ class ModelRequestedPayload(BaseModel):
     prompt: str
     messages: list[ChatMessage]
     api_mode: Literal["auto", "responses", "chat"] = "auto"
-    reasoning_effort: Literal["low", "medium", "high", "xhigh"] | None = None
+    reasoning_effort: Literal["none", "low", "medium", "high", "xhigh"] | None = None
     verbosity: Literal["low", "medium", "high"] | None = None
     previous_response_id: str | None = None
     responses_input_items: list[dict[str, object]] | None = None
@@ -103,6 +103,7 @@ class ModelTerminalPayload(BaseModel):
     elapsed_ms: int = Field(ge=0)
     diagnostics_json: str | None = None
     output_json: str | None = None
+    refusal: str | None = None
     prompt_tokens: int | None = Field(default=None, ge=0)
     completion_tokens: int | None = Field(default=None, ge=0)
     cost_usd: float | None = Field(default=None, ge=0.0)

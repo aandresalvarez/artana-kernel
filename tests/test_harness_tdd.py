@@ -45,7 +45,7 @@ class VerificationHarness(TestDrivenHarness):
         super().__init__(
             kernel=kernel,
             tenant=_tenant(),
-            verify_model="gpt-5.3-codex",
+            verify_model="gpt-5.4",
         )
         self._command = command
 
@@ -80,7 +80,7 @@ async def test_test_driven_harness_marks_done_only_when_verification_passes(
             and isinstance(event.payload, ModelRequestedPayload)
         ]
         assert requested
-        assert requested[0].model == "gpt-5.3-codex"
+        assert requested[0].model == "gpt-5.4"
     finally:
         await kernel.close()
 

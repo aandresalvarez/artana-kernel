@@ -82,8 +82,16 @@ def _create_kernel(
             tenant=tenant,
             model=extractor_model,
             system_prompt=(
-                "You extract explicitly stated relationships. "
-                "Allowed relations: INHIBITS, ACTIVATES, PART_OF."
+                "You extract explicitly stated relationships.\n"
+                "<grounding_rules>\n"
+                "- Base claims only on the provided text.\n"
+                "- Do not infer missing facts or causal steps.\n"
+                "</grounding_rules>\n"
+                "<structured_output_contract>\n"
+                "- Return only FactResult fields.\n"
+                "- Allowed relations: INHIBITS, ACTIVATES, PART_OF.\n"
+                "- Omit unsupported relations instead of guessing.\n"
+                "</structured_output_contract>"
             ),
             prompt=f"Text to analyze: {text}",
             output_schema=FactResult,
@@ -160,8 +168,16 @@ def _create_kernel(
             tenant=tenant,
             model=adjudicator_model,
             system_prompt=(
-                "You are a strict Biological Adjudicator. "
-                "Reject relations that ignore nuance."
+                "You are a strict Biological Adjudicator.\n"
+                "<grounding_rules>\n"
+                "- Base each judgment only on the original text and the "
+                "provided derived relations.\n"
+                "- If support is ambiguous, mark the relation invalid and explain why.\n"
+                "</grounding_rules>\n"
+                "<structured_output_contract>\n"
+                "- Return only AdjudicationResult fields.\n"
+                "- Reject relations that ignore nuance or exceed the evidence.\n"
+                "</structured_output_contract>"
             ),
             prompt=prompt,
             output_schema=AdjudicationResult,
@@ -180,9 +196,9 @@ def _create_kernel(
 
 async def main() -> None:
     require_openai_api_key(script_name="06_triplets_swarm.py")
-    lead_model = resolve_model(env_var="ARTANA_MODEL_LEAD", default="gpt-4o")
-    extractor_model = resolve_model(env_var="ARTANA_MODEL_EXTRACTOR", default="gpt-4o-mini")
-    adjudicator_model = resolve_model(env_var="ARTANA_MODEL_ADJUDICATOR", default="gpt-4o")
+    lead_model = resolve_model(env_var="ARTANA_MODEL_LEAD", default="gpt-5.4")
+    extractor_model = resolve_model(env_var="ARTANA_MODEL_EXTRACTOR", default="gpt-5-mini")
+    adjudicator_model = resolve_model(env_var="ARTANA_MODEL_ADJUDICATOR", default="gpt-5.4")
     print_example_header(
         title="06 - Triplets Swarm (Sub-Agent Runtime)",
         models={
@@ -218,7 +234,23 @@ async def main() -> None:
     )
 
     system_prompt = (
-        "You are the Lead Biomedical Analyst. You must coordinate a team to analyze a paper.\n"
+        "You are the Lead Biomedical Analyst.\n"
+        "<dependency_checks>\n"
+        "- First extract explicit facts.\n"
+        "- Then run graph math on those facts.\n"
+        "- Then adjudicate the derived relations against the original text.\n"
+        "- Do not skip steps or reorder them.\n"
+        "</dependency_checks>\n"
+        "<completeness_contract>\n"
+        "- Treat the task as incomplete until both explicit facts and "
+        "verified derived relations are covered.\n"
+        "- If a downstream step has no valid output, still return the "
+        "completed upstream evidence.\n"
+        "</completeness_contract>\n"
+        "<structured_output_contract>\n"
+        "- Return only FinalReport fields.\n"
+        "</structured_output_contract>\n"
+        "Workflow:\n"
         "Step 1: Use run_extractor_agent to get explicit facts.\n"
         "Step 2: Pass those facts to run_graph_math to find derived relations.\n"
         "Step 3: Pass the original text and the derived relations to run_adjudicator_agent.\n"

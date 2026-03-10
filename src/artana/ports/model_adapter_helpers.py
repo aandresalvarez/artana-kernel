@@ -168,6 +168,29 @@ def extract_output_json(response: Mapping[str, object]) -> str | None:
     return None
 
 
+def extract_refusal(response: Mapping[str, object]) -> str | None:
+    choice = first_choice(response)
+    message_obj = choice.get("message")
+    if not isinstance(message_obj, Mapping):
+        raise ValueError("LiteLLM response missing message object in first choice.")
+
+    refusal_obj = message_obj.get("refusal")
+    if isinstance(refusal_obj, str):
+        return refusal_obj
+
+    content_obj = message_obj.get("content")
+    if not isinstance(content_obj, Sequence):
+        return None
+    for item in content_obj:
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("type") == "refusal":
+            item_refusal = item.get("refusal")
+            if isinstance(item_refusal, str):
+                return item_refusal
+    return None
+
+
 def extract_output_json_from_responses(response: Mapping[str, object]) -> str | None:
     output_text_obj = response.get("output_text")
     if isinstance(output_text_obj, str):
@@ -205,6 +228,34 @@ def extract_output_json_from_responses(response: Mapping[str, object]) -> str | 
             part_value = part.get("value")
             if isinstance(part_value, str):
                 return part_value
+    return None
+
+
+def extract_refusal_from_responses(response: Mapping[str, object]) -> str | None:
+    output_obj = response.get("output")
+    if not isinstance(output_obj, Sequence):
+        return None
+
+    for item in output_obj:
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("type") == "refusal":
+            refusal_obj = item.get("refusal")
+            if isinstance(refusal_obj, str):
+                return refusal_obj
+        if item.get("type") != "message":
+            continue
+        content_obj = item.get("content")
+        if not isinstance(content_obj, Sequence):
+            continue
+        for part in content_obj:
+            if not isinstance(part, Mapping):
+                continue
+            if part.get("type") != "refusal":
+                continue
+            part_refusal = part.get("refusal")
+            if isinstance(part_refusal, str):
+                return part_refusal
     return None
 
 

@@ -8,7 +8,7 @@ Use explicit `StepKey(...)` in that scaffold when you want deterministic workflo
 ## Runtime Profiles
 
 - Local-first (no external API key): `01_durable_chat_replay.py`, `04_autonomous_agent_research.py`, `05_hard_triplets_workflow.py`, `07_adaptive_agent_learning.py`, `09_harness_engineering_dx.py`
-- Live model required (`OPENAI_API_KEY`): `02_real_litellm_chat.py`, `03_fact_extraction_triplets.py`, `06_triplets_swarm.py`, `08_responses_mode.py`, `golden_example.py`
+- Live model required (`OPENAI_API_KEY`): `02_real_litellm_chat.py`, `03_fact_extraction_triplets.py`, `06_triplets_swarm.py`, `08_responses_mode.py`, `10_live_manual_agent_harness.py`, `golden_example.py`
 
 All live examples fail fast with a troubleshooting message if `OPENAI_API_KEY` is not loaded.
 
@@ -27,7 +27,7 @@ Use this mapping to follow the Chapter 1 → 6 learning path with runnable scrip
 | Chapter | Primary examples |
 | --- | --- |
 | Chapter 1 (first success + primitives) | `01_durable_chat_replay.py` (local), `03_fact_extraction_triplets.py` (live), `05_hard_triplets_workflow.py` (local) |
-| Chapter 2 (harness discipline + supervision) | `09_harness_engineering_dx.py` |
+| Chapter 2 (harness discipline + supervision) | `09_harness_engineering_dx.py`, `10_live_manual_agent_harness.py` |
 | Chapter 3 (failure/replay/recovery) | `golden_example.py`, `05_hard_triplets_workflow.py` |
 | Chapter 4 (advanced orchestration) | `06_triplets_swarm.py`, `09_harness_engineering_dx.py` |
 | Chapter 5 (operations/distributed posture) | `02_real_litellm_chat.py`, `08_responses_mode.py` |
@@ -171,4 +171,19 @@ Run:
 
 ```bash
 uv run python examples/09_harness_engineering_dx.py
+```
+
+## 10 - Manual Agent + Harness (GPT-5.4)
+
+Demonstrates the plain "tool + run_agent() + harness" mental model on top of Artana:
+- local deterministic tool registration with `@kernel.tool()`
+- a manual agent built from `kernel.step_tool(...)` + `KernelModelClient.step(...)`
+- a `BaseHarness` that runs deterministic must-include assertions over multiple cases
+- live `openai/gpt-5.4` calls through `LiteLLMAdapter`
+
+Run:
+
+```bash
+set -a; source .env; set +a
+uv run python examples/10_live_manual_agent_harness.py
 ```

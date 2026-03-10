@@ -6,3 +6,4 @@ __pycache__/
 *.py[cod]
 .env
 .tmp_doc_validation/
+.openai_docs/

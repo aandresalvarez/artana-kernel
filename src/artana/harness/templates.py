@@ -27,7 +27,7 @@ class DraftReviewVerifySupervisor(SupervisorHarness):
         reviewer: BaseHarness[object],
         verifier: BaseHarness[object],
         verify_passes: Callable[[object], bool] | None = None,
-        default_model: str = "gpt-4o-mini",
+        default_model: str = "gpt-5.4",
     ) -> None:
         super().__init__(kernel=kernel, tenant=tenant, default_model=default_model)
         self._drafter = drafter

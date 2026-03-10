@@ -377,6 +377,14 @@ Harnesses automatically:
 * Prevent multiple DONE transitions per session
 * Enforce clean state before sleep
 
+If your baseline mental model is a plain tool function, a `run_agent()` helper, and a `run_case()` harness, Artana maps that directly:
+
+* tool function -> `@kernel.tool()`
+* `run_agent()` -> Python orchestration plus `KernelModelClient.step(...)` and `kernel.step_tool(...)`
+* `run_case()` harness -> `BaseHarness.step(...)` or `IncrementalTaskHarness.work_on(...)`
+
+For a live `openai/gpt-5.4` version of that exact pattern, see `examples/10_live_manual_agent_harness.py`.
+
 ---
 
 # 🗂 Step 6 — Artifacts (Structured Continuity)
@@ -430,7 +438,7 @@ Snippet (in-context, not standalone):
 draft = await harness.run_draft_model(
     prompt="Brainstorm implementation options",
     output_schema=Decision,
-    model_options=ModelCallOptions(api_mode="auto", reasoning_effort="low"),
+    model_options=ModelCallOptions(api_mode="auto", reasoning_effort="none"),
 )
 
 verify = await harness.run_verify_model(

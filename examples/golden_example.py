@@ -90,7 +90,7 @@ def _latest_tool_completion_payload(
 
 async def main() -> None:
     require_openai_api_key(script_name="golden_example.py")
-    model_name = resolve_model(env_var="ARTANA_MODEL", default="gpt-4o-mini")
+    model_name = resolve_model(env_var="ARTANA_MODEL", default="gpt-5.4")
     print_example_header(
         title="Golden Example (Production-Leaning)",
         models={"primary": model_name},

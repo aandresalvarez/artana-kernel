@@ -18,7 +18,7 @@ class CompactionStrategy:
     max_history_messages: int = 40
     trigger_at_messages: int | None = None
     keep_recent_messages: int = 10
-    summarize_with_model: str = "gpt-4o-mini"
+    summarize_with_model: str = "gpt-5-mini"
     max_context_tokens: int | None = None
     context_utilization_ratio: float = 0.8
 

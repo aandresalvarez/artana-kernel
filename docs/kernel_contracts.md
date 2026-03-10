@@ -71,7 +71,7 @@ Postgres read retry semantics:
 Each `model_requested` event stores:
 
 - `api_mode` (`auto|responses|chat`)
-- `reasoning_effort` (optional)
+- `reasoning_effort` (optional; `none|low|medium|high|xhigh`)
 - `verbosity` (optional)
 - `previous_response_id` (optional)
 - `responses_input_items` (optional, canonicalized)

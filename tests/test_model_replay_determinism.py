@@ -194,7 +194,7 @@ async def test_model_replay_rejects_model_option_changes(tmp_path: Path) -> None
         await KernelModelClient(kernel=first_kernel).step(
             run_id="run_model_option_change",
             prompt="check options",
-            model="openai/gpt-5.3-codex",
+            model="openai/gpt-5.4",
             tenant=tenant,
             output_schema=Decision,
             step_key="options_step",
@@ -212,7 +212,7 @@ async def test_model_replay_rejects_model_option_changes(tmp_path: Path) -> None
             await KernelModelClient(kernel=second_kernel).step(
                 run_id="run_model_option_change",
                 prompt="check options",
-                model="openai/gpt-5.3-codex",
+                model="openai/gpt-5.4",
                 tenant=tenant,
                 output_schema=Decision,
                 step_key="options_step",
@@ -242,7 +242,7 @@ async def test_model_replay_rejects_legacy_missing_responses_input_items(tmp_pat
             tenant_id=tenant.tenant_id,
             event_type=EventType.MODEL_REQUESTED,
             payload=ModelRequestedPayload(
-                model="openai/gpt-5.3-codex",
+                model="openai/gpt-5.4",
                 prompt="check options",
                 messages=[ChatMessage(role="user", content="check options")],
                 api_mode="responses",
@@ -264,7 +264,7 @@ async def test_model_replay_rejects_legacy_missing_responses_input_items(tmp_pat
             event_type=EventType.MODEL_TERMINAL,
             payload=ModelTerminalPayload(
                 outcome="completed",
-                model="openai/gpt-5.3-codex",
+                model="openai/gpt-5.4",
                 model_cycle_id="legacy_cycle",
                 source_model_requested_event_id="legacy_request",
                 step_key="options_step",
@@ -282,7 +282,7 @@ async def test_model_replay_rejects_legacy_missing_responses_input_items(tmp_pat
             await KernelModelClient(kernel=kernel).step(
                 run_id=run_id,
                 prompt="check options",
-                model="openai/gpt-5.3-codex",
+                model="openai/gpt-5.4",
                 tenant=tenant,
                 output_schema=Decision,
                 step_key="options_step",

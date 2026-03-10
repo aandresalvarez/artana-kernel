@@ -20,6 +20,7 @@ from artana.ports.model import (
     ModelAPIModeUsed,
     ModelCallOptions,
     ModelPermanentError,
+    ModelRefusalError,
     ModelTimeoutError,
     ModelTransientError,
     ModelUsage,
@@ -262,6 +263,14 @@ def _model_terminal_exception(payload: ModelTerminalPayload) -> RuntimeError:
         return RuntimeError(message)
     if category in {"transient", "network", "provider_5xx"}:
         return ModelTransientError(message)
+    if category == "refusal":
+        refusal = payload.refusal or details
+        return ModelRefusalError(
+            refusal,
+            api_mode_used=payload.api_mode_used,
+            response_id=payload.response_id,
+            response_output_items=tuple(payload.responses_output_items),
+        )
     if category in {"permanent", "provider_4xx"}:
         return ModelPermanentError(message)
     return RuntimeError(message)

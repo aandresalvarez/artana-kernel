@@ -92,14 +92,14 @@ async def main() -> None:
         first = await client.step(
             run_id="example_run_1",
             prompt="Transfer 10 from acc_1. My email is user@example.com",
-            model="gpt-4o-mini",
+            model="gpt-5.4",
             tenant=tenant,
             output_schema=TransferDecision,
         )
         second = await client.step(
             run_id="example_run_1",
             prompt="Transfer 10 from acc_1. My email is user@example.com",
-            model="gpt-4o-mini",
+            model="gpt-5.4",
             tenant=tenant,
             output_schema=TransferDecision,
         )

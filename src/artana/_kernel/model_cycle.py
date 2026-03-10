@@ -37,6 +37,7 @@ from artana.ports.model import (
     ModelCallOptions,
     ModelPermanentError,
     ModelPort,
+    ModelRefusalError,
     ModelRequest,
     ModelResult,
     ModelTimeoutError,
@@ -247,6 +248,16 @@ async def get_or_execute_model_step(
         responses_output_items = (
             _canonicalize_items(result.response_output_items) if result is not None else []
         )
+        refusal = _extract_refusal(exc)
+        if result is None and isinstance(exc, ModelRefusalError):
+            if exc.usage is not None:
+                prompt_tokens = exc.usage.prompt_tokens
+                completion_tokens = exc.usage.completion_tokens
+                cost_usd = exc.usage.cost_usd
+            if exc.api_mode_used is not None:
+                api_mode_used = exc.api_mode_used
+            response_id = exc.response_id
+            responses_output_items = _canonicalize_items(exc.response_output_items)
         terminal_payload = ModelTerminalPayload(
             outcome=outcome,
             model=model,
@@ -265,6 +276,7 @@ async def get_or_execute_model_step(
                     "exception_module": type(exc).__module__,
                 }
             ),
+            refusal=refusal,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=cost_usd,
@@ -388,6 +400,8 @@ def _classify_failure(
             return "failed", "provider_4xx"
         if http_status >= 500:
             return "failed", "provider_5xx"
+    if isinstance(exc, ModelRefusalError):
+        return "failed", "refusal"
     if isinstance(exc, ModelTransientError):
         return "failed", "transient"
     if isinstance(exc, ModelPermanentError):
@@ -410,6 +424,13 @@ def _extract_provider_request_id(exc: BaseException) -> str | None:
         value = getattr(exc, attribute, None)
         if isinstance(value, str) and value != "":
             return value
+    return None
+
+
+def _extract_refusal(exc: BaseException) -> str | None:
+    refusal = getattr(exc, "refusal", None)
+    if isinstance(refusal, str) and refusal != "":
+        return refusal
     return None
 
 

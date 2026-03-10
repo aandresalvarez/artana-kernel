@@ -282,15 +282,15 @@ from artana.agent import AutonomousAgent, DraftVerifyLoopConfig
 agent = AutonomousAgent(
     kernel=kernel,
     loop=DraftVerifyLoopConfig(
-        draft_model="gpt-5.3-codex-spark",
-        verify_model="gpt-5.3-codex",
+        draft_model="gpt-5-mini",
+        verify_model="gpt-5.4",
     ),
 )
 
 result = await agent.run(
     run_id="repair_run",
     tenant=tenant,
-    model="openai/gpt-5.3-codex",
+    model="openai/gpt-5.4",
     prompt="Fix flaky tests and stop only when validated.",
     output_schema=FinalDecision,
     acceptance=AcceptanceSpec(

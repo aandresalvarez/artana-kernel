@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from artana.agent import AutonomousAgent, ContextBuilder
 from artana.events import ChatMessage
@@ -21,6 +21,7 @@ class CompanyReport(BaseModel):
     company_name: str
     current_ceo: str
     latest_news_summary: str
+    sources: list[str] = Field(default_factory=list)
 
 
 class ResearchModelPort:
@@ -36,6 +37,7 @@ class ResearchModelPort:
                     "company_name": "Acme Corp",
                     "current_ceo": "Acme leadership team",
                     "latest_news_summary": "In-progress.",
+                    "sources": [],
                 }
             )
             tool_calls = (
@@ -56,6 +58,7 @@ class ResearchModelPort:
                 "company_name": tool_result.get("company_name", "Acme Corp"),
                 "current_ceo": tool_result.get("current_ceo", "Unknown"),
                 "latest_news_summary": tool_result.get("latest_news_summary", "No update found."),
+                "sources": tool_result.get("sources", []),
             }
         )
         return ModelResult(
@@ -102,6 +105,10 @@ async def main() -> None:
                     "company_name": "Acme Corp",
                     "current_ceo": "Jane Doe",
                     "latest_news_summary": "Acme announced a new AI partnership in Q1.",
+                    "sources": [
+                        "search_web result: Acme Corp leadership profile",
+                        "search_web result: Acme Q1 AI partnership announcement",
+                    ],
                 }
             )
         return json.dumps(
@@ -109,6 +116,7 @@ async def main() -> None:
                 "company_name": "Acme Corp",
                 "current_ceo": "Unavailable",
                 "latest_news_summary": "No relevant facts found.",
+                "sources": [],
             }
         )
 
@@ -128,12 +136,37 @@ async def main() -> None:
             tenant=tenant,
             model="research-agent-demo",
             system_prompt=(
-                "You are a research agent. Use the search_web tool when needed and "
-                "then return the final structured report."
+                "You are a research agent.\n"
+                "<research_mode>\n"
+                "- Work in 3 passes:\n"
+                "  1) Plan the CEO lookup and the latest-news lookup.\n"
+                "  2) Retrieve evidence with search_web.\n"
+                "  3) Synthesize the final report using only retrieved evidence.\n"
+                "- Stop only when more searching is unlikely to change the conclusion.\n"
+                "</research_mode>\n"
+                "<tool_persistence_rules>\n"
+                "- Use search_web whenever it materially improves correctness or grounding.\n"
+                "- If results are empty or suspiciously narrow, "
+                "try one fallback search before finalizing.\n"
+                "</tool_persistence_rules>\n"
+                "<grounding_rules>\n"
+                "- Base claims only on search_web output.\n"
+                "- If evidence is missing, return an explicit unavailable value "
+                "instead of guessing.\n"
+                "</grounding_rules>\n"
+                "<structured_output_contract>\n"
+                "- Return only the CompanyReport fields.\n"
+                "- Populate sources with the retrieved evidence references used for the answer.\n"
+                "</structured_output_contract>"
             ),
             prompt=(
-                "Find the current CEO and latest news for Acme Corp using available tools "
-                "before you answer."
+                "Research Acme Corp and return a CompanyReport.\n"
+                "- Find the current CEO.\n"
+                "- Find one recent news item worth summarizing.\n"
+                "- Do not answer from memory; use available tools first.\n"
+                "- If evidence is missing, set current_ceo to 'Unavailable' and "
+                "latest_news_summary "
+                "to 'No relevant facts found.'"
             ),
             output_schema=CompanyReport,
             max_iterations=5,

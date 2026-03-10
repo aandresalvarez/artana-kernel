@@ -11,7 +11,7 @@ from artana.events import ChatMessage
 OutputT = TypeVar("OutputT", bound=BaseModel)
 ModelAPIMode = Literal["auto", "responses", "chat"]
 ModelAPIModeUsed = Literal["responses", "chat"]
-ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
+ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh"]
 VerbosityLevel = Literal["low", "medium", "high"]
 
 
@@ -86,6 +86,26 @@ class ModelTransientError(RuntimeError):
 
 class ModelPermanentError(RuntimeError):
     pass
+
+
+class ModelRefusalError(ModelPermanentError):
+    def __init__(
+        self,
+        refusal: str,
+        *,
+        usage: ModelUsage | None = None,
+        api_mode_used: ModelAPIModeUsed | None = None,
+        response_id: str | None = None,
+        response_output_items: tuple[dict[str, object], ...] = (),
+        raw_output: str = "",
+    ) -> None:
+        super().__init__(refusal)
+        self.refusal = refusal
+        self.usage = usage
+        self.api_mode_used = api_mode_used
+        self.response_id = response_id
+        self.response_output_items = response_output_items
+        self.raw_output = raw_output
 
 
 @runtime_checkable

@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from artana.ports.model_adapter_helpers import (
     extract_output_json,
     extract_output_json_from_responses,
+    extract_refusal,
+    extract_refusal_from_responses,
     extract_response_id,
     extract_responses_output_items,
     extract_tool_calls,
@@ -28,6 +30,7 @@ from artana.ports.model_types import (
     LiteLLMResponsesFn,
     ModelAPIModeUsed,
     ModelPermanentError,
+    ModelRefusalError,
     ModelRequest,
     ModelResult,
     ModelTimeoutError,
@@ -133,14 +136,32 @@ class LiteLLMAdapter:
 
         if api_mode_used == "responses":
             raw_output = extract_output_json_from_responses(response_dict)
+            refusal = extract_refusal_from_responses(response_dict)
             tool_calls = extract_tool_calls_from_responses(response_dict)
             response_id = extract_response_id(response_dict)
             response_output_items = extract_responses_output_items(response_dict)
         else:
             raw_output = extract_output_json(response_dict)
+            refusal = extract_refusal(response_dict)
             tool_calls = extract_tool_calls(response_dict)
             response_id = None
             response_output_items = ()
+
+        usage = extract_usage(response_dict)
+        if refusal is not None:
+            if self._fail_on_unknown_cost and has_tokens(usage) and usage.cost_usd <= 0.0:
+                raise ModelPermanentError(
+                    "LiteLLM response cost is unknown for a tokenized response. "
+                    "Configure model pricing or disable fail_on_unknown_cost."
+                )
+            raise ModelRefusalError(
+                refusal,
+                usage=usage,
+                api_mode_used=api_mode_used,
+                response_id=response_id,
+                response_output_items=response_output_items,
+                raw_output=raw_output or "",
+            )
 
         if raw_output is None:
             if not tool_calls:
@@ -150,7 +171,6 @@ class LiteLLMAdapter:
             raw_output = "{}"
 
         output = request.output_schema.model_validate_json(raw_output)
-        usage = extract_usage(response_dict)
         if self._fail_on_unknown_cost and has_tokens(usage) and usage.cost_usd <= 0.0:
             raise ModelPermanentError(
                 "LiteLLM response cost is unknown for a tokenized response. "

@@ -57,9 +57,9 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         kernel: ArtanaKernel,
         tenant: TenantContext | None = None,
         *,
-        default_model: str = "gpt-4o-mini",
-        draft_model: str = "gpt-5.3-codex-spark",
-        verify_model: str = "gpt-5.3-codex",
+        default_model: str = "gpt-5.4",
+        draft_model: str = "gpt-5-mini",
+        verify_model: str = "gpt-5.4",
         replay_policy: ReplayPolicy = "allow_prompt_drift",
         trace_level: TraceLevel = "stage",
     ) -> None:

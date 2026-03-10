@@ -109,19 +109,19 @@ async def test_agent_runtime_forwards_model_options(tmp_path: Path) -> None:
         await runtime.run_turn(
             run_id="run_agent_options",
             tenant=_tenant(),
-            model="openai/gpt-5.3-codex",
+            model="openai/gpt-5.4",
             output_schema=Decision,
             state=AgentRuntimeState(messages=(ChatMessage(role="user", content="start"),)),
             model_options=ModelCallOptions(
                 api_mode="responses",
-                reasoning_effort="high",
+                reasoning_effort="none",
                 verbosity="medium",
             ),
         )
         assert model_port.calls == 1
         assert len(model_port.model_options) == 1
         assert model_port.model_options[0].api_mode == "responses"
-        assert model_port.model_options[0].reasoning_effort == "high"
+        assert model_port.model_options[0].reasoning_effort == "none"
         assert model_port.model_options[0].verbosity == "medium"
     finally:
         await kernel.close()
