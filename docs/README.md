@@ -23,7 +23,8 @@ If you want end-to-end runnable scripts, use [examples/README.md](../examples/RE
 | API / Capability | Primary Doc Location(s) |
 | --- | --- |
 | Minimal local-first onboarding (`MockModelPort`) | Chapter 1, `examples/README.md` |
-| Minimal manual agent + harness pattern (`tool -> run_agent() -> run_case()`) | Chapter 1, `examples/README.md` |
+| Strong-model harness v1 (`StrongModelAgentHarness`, `WorkspaceState`, `HarnessOutcome`) | Chapter 1, Chapter 6, `examples/README.md` |
+| Generic vs domain harness comparison | `docs/strong_model_harnesses.md` |
 | Optional deterministic keys (`StepKey`) + auto-step-key wrapper behavior | Chapter 1, `docs/kernel_contracts.md` |
 | Constructor ergonomics (positional `kernel` supported in high-level wrappers) | Chapter 1, Chapters 3–4 |
 | Capability visibility helpers (`describe_capabilities`, `list_tools_for_tenant`) | Chapter 2, Chapter 6, `docs/kernel_contracts.md` |
@@ -37,5 +38,6 @@ If you want end-to-end runnable scripts, use [examples/README.md](../examples/RE
 ## Core Reference Docs
 
 - [Kernel contracts](./kernel_contracts.md)
+- [Strong-model harnesses](./strong_model_harnesses.md)
 - [Deep traceability](./deep_traceability.md)
 - [Behavior index (generated)](./kernel_behavior_index.json)

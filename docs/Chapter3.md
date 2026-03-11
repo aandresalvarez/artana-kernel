@@ -172,7 +172,7 @@ Production guidance:
 
 ---
 
-# Step 3 — Long-Running Recovery with Incremental Harness
+# Step 3 — Long-Running Recovery with Durable Harnesses
 
 Production systems must survive crashes mid-run.
 
@@ -455,7 +455,7 @@ Only the persistence backend changes.
 | ----------------------- | -------------------------- |
 | Idempotent side effects | step_tool + reconcile_tool |
 | Crash safety            | WorkflowContext            |
-| Long-running discipline | IncrementalTaskHarness     |
+| Long-running discipline | StrongModelHarness / IncrementalTaskHarness |
 | Drift control           | ReplayPolicy               |
 | Policy enforcement      | KernelPolicy.enforced_v2   |
 | Audit ledger            | verify_run_chain           |
@@ -468,7 +468,7 @@ Only the persistence backend changes.
 
 Production Artana systems should:
 
-* Use Harness for long-running tasks
+* Use `StrongModelHarness` or `StrongModelAgentHarness` for long-running tasks
 * Use Workflow for deterministic orchestration
 * Use enforced middleware (`enforced_v2` for OS-grade safety)
 * Use replay policies intentionally

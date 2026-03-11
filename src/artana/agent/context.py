@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from abc import ABC
 from collections.abc import Mapping
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from artana.agent.experience import ExperienceRule, ExperienceStore
 from artana.agent.memory import MemoryStore
 from artana.events import ChatMessage
+from artana.kernel import ArtanaKernel
 from artana.models import TenantContext
 
 
@@ -133,4 +135,132 @@ class ContextBuilder(ABC):
         return "\n".join(lines)
 
 
-__all__ = ["ContextBuilder"]
+class WorkspaceSnapshotContextBuilder(ContextBuilder):
+    VERSION = "context_builder.workspace_snapshot.v1"
+
+    def __init__(
+        self,
+        *,
+        kernel: ArtanaKernel,
+        base: ContextBuilder | None = None,
+        workspace_summary_type: str = "harness_workspace_state",
+    ) -> None:
+        self._kernel = kernel
+        self._base = base or ContextBuilder()
+        self._workspace_summary_type = workspace_summary_type
+        super().__init__(
+            identity=self._base.identity,
+            memory_store=self._base.memory_store,
+            experience_store=self._base.experience_store,
+            task_category=self._base.task_category,
+            progressive_skills=self._base.progressive_skills,
+            workspace_context_path=self._base.workspace_context_path,
+        )
+
+    @property
+    def version(self) -> str:
+        return f"{self._base.version}+workspace_snapshot.v1"
+
+    async def build_messages(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        short_term_messages: tuple[ChatMessage, ...],
+        system_prompt: str,
+        active_skills: frozenset[str],
+        available_skill_summaries: Mapping[str, str] | None,
+        memory_text: str | None,
+    ) -> tuple[ChatMessage, ...]:
+        messages = await self._base.build_messages(
+            run_id=run_id,
+            tenant=tenant,
+            short_term_messages=short_term_messages,
+            system_prompt=system_prompt,
+            active_skills=active_skills,
+            available_skill_summaries=available_skill_summaries,
+            memory_text=memory_text,
+        )
+        workspace_panel = await self._load_workspace_panel(run_id=run_id, tenant=tenant)
+        if workspace_panel is None:
+            return messages
+        if not messages:
+            return (ChatMessage(role="system", content=workspace_panel),)
+        first = messages[0]
+        if first.role != "system":
+            return (ChatMessage(role="system", content=workspace_panel),) + messages
+        return (
+            ChatMessage(role="system", content=f"{first.content}\n\n{workspace_panel}"),
+        ) + messages[1:]
+
+    async def _load_workspace_panel(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+    ) -> str | None:
+        summary = await self._kernel.get_latest_run_summary(
+            run_id=run_id,
+            tenant=tenant,
+            summary_type=self._workspace_summary_type,
+        )
+        if summary is None:
+            return None
+        try:
+            payload_obj = json.loads(summary.summary_json)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload_obj, dict):
+            return None
+        payload = payload_obj
+        return self._format_workspace_snapshot(payload=payload)
+
+    def _format_workspace_snapshot(self, *, payload: Mapping[str, object]) -> str:
+        lines = ["[WORKSPACE STATE SNAPSHOT]"]
+        domain = payload.get("domain")
+        if isinstance(domain, str) and domain:
+            lines.append(f"Domain: {domain}")
+        question = payload.get("question")
+        if isinstance(question, str) and question:
+            lines.append(f"Question: {question}")
+        active_plan = payload.get("active_plan")
+        if isinstance(active_plan, str) and active_plan:
+            lines.append(f"Active Plan: {active_plan}")
+        graph_summary = payload.get("graph_summary")
+        if isinstance(graph_summary, str) and graph_summary:
+            lines.append(f"Graph Summary: {graph_summary}")
+        evidence_count = payload.get("evidence_count")
+        if isinstance(evidence_count, int):
+            lines.append(f"Evidence Count: {evidence_count}")
+        artifacts = payload.get("artifacts")
+        if isinstance(artifacts, Mapping):
+            artifact_names = ", ".join(sorted(str(key) for key in artifacts))
+            if artifact_names:
+                lines.append(f"Artifacts: {artifact_names}")
+        self._append_list(lines, label="Constraints", value=payload.get("constraints"))
+        self._append_list(lines, label="Open Tasks", value=payload.get("open_tasks"))
+        self._append_list(
+            lines,
+            label="Unresolved Contradictions",
+            value=payload.get("unresolved_contradictions"),
+        )
+        self._append_list(lines, label="Allowed Tools", value=payload.get("allowed_tools"))
+        return "\n".join(lines)
+
+    def _append_list(
+        self,
+        lines: list[str],
+        *,
+        label: str,
+        value: object,
+    ) -> None:
+        if not isinstance(value, list):
+            return
+        rendered = [str(item).strip() for item in value if str(item).strip()]
+        if not rendered:
+            return
+        lines.append(f"{label}:")
+        lines.extend(f"- {item}" for item in rendered)
+
+
+__all__ = ["ContextBuilder", "WorkspaceSnapshotContextBuilder"]

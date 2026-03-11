@@ -8,7 +8,7 @@ Use explicit `StepKey(...)` in that scaffold when you want deterministic workflo
 ## Runtime Profiles
 
 - Local-first (no external API key): `01_durable_chat_replay.py`, `04_autonomous_agent_research.py`, `05_hard_triplets_workflow.py`, `07_adaptive_agent_learning.py`, `09_harness_engineering_dx.py`
-- Live model required (`OPENAI_API_KEY`): `02_real_litellm_chat.py`, `03_fact_extraction_triplets.py`, `06_triplets_swarm.py`, `08_responses_mode.py`, `10_live_manual_agent_harness.py`, `golden_example.py`
+- Live model required (`OPENAI_API_KEY`): `02_real_litellm_chat.py`, `03_fact_extraction_triplets.py`, `06_triplets_swarm.py`, `08_responses_mode.py`, `10_live_manual_agent_harness.py`, `11_durable_release_harness.py`, `12_research_strong_model_harness.py`, `13_support_strong_model_harness.py`, `14_data_diagnostic_harness.py`, `golden_example.py`
 
 All live examples fail fast with a troubleshooting message if `OPENAI_API_KEY` is not loaded.
 
@@ -16,6 +16,11 @@ All live examples fail fast with a troubleshooting message if `OPENAI_API_KEY` i
 
 - `ARTANA_MODEL`: override model for `02`, `03`, and `golden_example`.
 - `ARTANA_RESPONSES_MODEL`: override model for `08_responses_mode.py`.
+- `ARTANA_CODING_HARNESS_MODEL`: override model for `10_live_manual_agent_harness.py`.
+- `ARTANA_DURABLE_HARNESS_MODEL`: override model for `11_durable_release_harness.py`.
+- `ARTANA_RESEARCH_HARNESS_MODEL`: override model for `12_research_strong_model_harness.py`.
+- `ARTANA_SUPPORT_HARNESS_MODEL`: override model for `13_support_strong_model_harness.py`.
+- `ARTANA_DATA_HARNESS_MODEL`: override model for `14_data_diagnostic_harness.py`.
 - `ARTANA_MODEL_LEAD`: override lead model in `06_triplets_swarm.py`.
 - `ARTANA_MODEL_EXTRACTOR`: override extractor sub-agent model in `06_triplets_swarm.py`.
 - `ARTANA_MODEL_ADJUDICATOR`: override adjudicator sub-agent model in `06_triplets_swarm.py`.
@@ -27,11 +32,11 @@ Use this mapping to follow the Chapter 1 → 6 learning path with runnable scrip
 | Chapter | Primary examples |
 | --- | --- |
 | Chapter 1 (first success + primitives) | `01_durable_chat_replay.py` (local), `03_fact_extraction_triplets.py` (live), `05_hard_triplets_workflow.py` (local) |
-| Chapter 2 (harness discipline + supervision) | `09_harness_engineering_dx.py`, `10_live_manual_agent_harness.py` |
+| Chapter 2 (harness discipline + supervision) | `09_harness_engineering_dx.py`, `10_live_manual_agent_harness.py`, `11_durable_release_harness.py`, `12_research_strong_model_harness.py`, `13_support_strong_model_harness.py`, `14_data_diagnostic_harness.py` |
 | Chapter 3 (failure/replay/recovery) | `golden_example.py`, `05_hard_triplets_workflow.py` |
-| Chapter 4 (advanced orchestration) | `06_triplets_swarm.py`, `09_harness_engineering_dx.py` |
+| Chapter 4 (advanced orchestration) | `06_triplets_swarm.py`, `09_harness_engineering_dx.py`, `14_data_diagnostic_harness.py` |
 | Chapter 5 (operations/distributed posture) | `02_real_litellm_chat.py`, `08_responses_mode.py` |
-| Chapter 6 (safety and governance) | `golden_example.py`, `09_harness_engineering_dx.py` |
+| Chapter 6 (safety and governance) | `golden_example.py`, `09_harness_engineering_dx.py`, `11_durable_release_harness.py`, `12_research_strong_model_harness.py`, `13_support_strong_model_harness.py` |
 
 ## 01 - Durable Chat Replay
 
@@ -173,17 +178,78 @@ Run:
 uv run python examples/09_harness_engineering_dx.py
 ```
 
-## 10 - Manual Agent + Harness (GPT-5.4)
+## 10 - Coding Harness (GPT-5.4)
 
-Demonstrates the plain "tool + run_agent() + harness" mental model on top of Artana:
-- local deterministic tool registration with `@kernel.tool()`
-- a manual agent built from `kernel.step_tool(...)` + `KernelModelClient.step(...)`
-- a `BaseHarness` that runs deterministic must-include assertions over multiple cases
-- live `openai/gpt-5.4` calls through `LiteLLMAdapter`
+Demonstrates the coding-shaped strong-model pattern:
+- `CodingHarness` + `StrongModelAgentHarness` as the canonical coding operating mode
+- `AutonomousAgent` with `ContextBuilder`, draft/verify routing, and `AcceptanceSpec`
+- pre-work `WorkspaceState` injection into model context and persisted `HarnessOutcome`
+- deterministic `StepKey` artifact writes for the final patch plan
 
 Run:
 
 ```bash
 set -a; source .env; set +a
 uv run python examples/10_live_manual_agent_harness.py
+```
+
+## 11 - Durable Release Harness (GPT-5.4)
+
+Demonstrates the governed review pattern:
+- `ReviewHarness` on top of the strong-model harness substrate
+- persisted `WorkspaceState` + `HarnessOutcome` on every session
+- prompt blocks loaded directly from `openai_docs/prompts.md`
+- `ArtanaKernel` primitives for artifact reads and `record_intent_plan(...)`
+- side-effect-safe publishing with `ToolExecutionContext.idempotency_key`
+
+Run:
+
+```bash
+set -a; source .env; set +a
+uv run python examples/11_durable_release_harness.py
+```
+
+## 12 - Research Strong-Model Harness (GPT-5.4)
+
+Demonstrates the research-shaped strong-model pattern:
+- `ResearchHarness` + `StrongModelAgentHarness`
+- explicit research `WorkspaceState` with question, graph summary, evidence count, and contradictions
+- durable multi-session evidence gathering before report generation
+- grounded research brief artifacts with resumable state snapshots
+
+Run:
+
+```bash
+set -a; source .env; set +a
+uv run python examples/12_research_strong_model_harness.py
+```
+
+## 13 - Support Strong-Model Harness (GPT-5.4)
+
+Demonstrates the support-shaped strong-model pattern:
+- `SupportHarness` + `StrongModelAgentHarness`
+- explicit workspace state with customer profile, ticket history, and policy snapshot
+- acceptance gating via refund-policy verification
+- grounded customer resolution artifacts with escalation metadata
+
+Run:
+
+```bash
+set -a; source .env; set +a
+uv run python examples/13_support_strong_model_harness.py
+```
+
+## 14 - Data Diagnostic Harness (GPT-5.4)
+
+Demonstrates the data-shaped strong-model pattern:
+- `DataHarness` + `StrongModelAgentHarness`
+- explicit workspace state with schema snapshot, logs, and quality rules
+- grounded diagnosis of an ETL failure
+- resumable diagnostic artifacts for later operators or follow-up runs
+
+Run:
+
+```bash
+set -a; source .env; set +a
+uv run python examples/14_data_diagnostic_harness.py
 ```

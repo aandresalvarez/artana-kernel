@@ -5,7 +5,7 @@ from artana.agent.client import (
     SingleStepModelClient,
 )
 from artana.agent.compaction import CompactionStrategy, estimate_tokens
-from artana.agent.context import ContextBuilder
+from artana.agent.context import ContextBuilder, WorkspaceSnapshotContextBuilder
 from artana.agent.experience import (
     ExperienceRule,
     ExperienceStore,
@@ -35,6 +35,7 @@ __all__ = [
     "SQLiteExperienceStore",
     "SQLiteMemoryStore",
     "SubAgentFactory",
+    "WorkspaceSnapshotContextBuilder",
     "MaxIterationsExceeded",
     "estimate_tokens",
 ]

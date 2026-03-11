@@ -22,6 +22,10 @@ LIVE_MODEL_EXAMPLES = frozenset(
         "06_triplets_swarm.py",
         "08_responses_mode.py",
         "10_live_manual_agent_harness.py",
+        "11_durable_release_harness.py",
+        "12_research_strong_model_harness.py",
+        "13_support_strong_model_harness.py",
+        "14_data_diagnostic_harness.py",
         "golden_example.py",
     }
 )

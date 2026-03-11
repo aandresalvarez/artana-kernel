@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
-from dataclasses import dataclass
+import shutil
 from pathlib import Path
 
 from _live_example_utils import (
@@ -15,268 +14,263 @@ from _live_example_utils import (
 )
 from pydantic import BaseModel
 
-from artana import ArtanaKernel, KernelModelClient, ModelCallOptions, TenantContext
-from artana.harness import BaseHarness, HarnessContext
+from artana import (
+    AcceptanceSpec,
+    ArtanaKernel,
+    ContextBuilder,
+    StepKey,
+    TenantContext,
+    ToolGate,
+)
+from artana.harness import CodingHarness, HarnessOutcome, TaskUnit, WorkspaceState
 from artana.ports.model import LiteLLMAdapter
 from artana.store import SQLiteStore
 
-GENE_DB: dict[str, str] = {
-    "MED13": "MED13 is a Mediator complex subunit involved in transcription regulation.",
-    "TP53": "TP53 is a tumor suppressor gene involved in genome integrity.",
-    "BRCA1": "BRCA1 is associated with DNA repair.",
-}
+
+class PatchPlan(BaseModel):
+    summary: str
+    changed_files: list[str]
+    verification_notes: list[str]
 
 
-class LookupGeneArgs(BaseModel):
-    gene_name: str
-
-
-class ConciseAnswer(BaseModel):
-    answer: str
-
-
-class HarnessCaseResult(BaseModel):
-    name: str
-    passed: bool
-    output: str
-    missing_terms: list[str]
-
-
-@dataclass(frozen=True, slots=True)
-class TestCase:
-    name: str
-    user_input: str
-    must_include: tuple[str, ...]
-
-
-def _detect_gene(text: str) -> str | None:
-    for token in re.findall(r"[A-Za-z0-9]+", text.upper()):
-        if token in GENE_DB:
-            return token
-    return None
-
-
-def _missing_tool_context() -> dict[str, object]:
-    return {
-        "gene_name": None,
-        "found": False,
-        "summary": "Missing curated gene lookup context.",
-    }
-
-
-def _answer_prompt(*, user_input: str, tool_context: dict[str, object]) -> str:
-    return (
-        "Return only JSON for schema {answer:string}.\n"
-        "You are a concise biomedical assistant.\n"
-        "Use the provided tool context when it is relevant.\n"
-        "When tool_context.found is false, the answer must contain the word 'missing'.\n"
-        "When tool_context.found is true, reuse tool_context.gene_name exactly.\n\n"
-        f"User question: {user_input}\n"
-        f"Tool context: {json.dumps(tool_context, sort_keys=True)}"
-    )
-
-
-async def _ensure_run_exists(
-    *,
-    kernel: ArtanaKernel,
-    run_id: str,
-    tenant: TenantContext,
-) -> None:
-    try:
-        await kernel.load_run(run_id=run_id, tenant=tenant)
-    except ValueError:
-        await kernel.start_run(tenant=tenant, run_id=run_id)
-
-
-async def run_manual_agent(
-    *,
-    kernel: ArtanaKernel,
-    tenant: TenantContext,
-    run_id: str,
-    model: str,
-    user_input: str,
-) -> ConciseAnswer:
-    await _ensure_run_exists(kernel=kernel, run_id=run_id, tenant=tenant)
-
-    tool_context = _missing_tool_context()
-    gene_name = _detect_gene(user_input)
-    if gene_name is not None:
-        tool_result = await kernel.step_tool(
-            run_id=run_id,
-            tenant=tenant,
-            tool_name="lookup_gene",
-            arguments=LookupGeneArgs(gene_name=gene_name),
-            step_key=f"manual_lookup_{gene_name.lower()}",
-        )
-        tool_context = json.loads(tool_result.result_json)
-
-    model_result = await KernelModelClient(kernel).step(
-        run_id=run_id,
-        tenant=tenant,
-        model=model,
-        prompt=_answer_prompt(user_input=user_input, tool_context=tool_context),
-        output_schema=ConciseAnswer,
-        step_key="manual_agent_answer",
-        model_options=ModelCallOptions(api_mode="auto"),
-    )
-    return model_result.output
-
-
-class GeneLookupHarness(BaseHarness[list[HarnessCaseResult]]):
+class CheckoutCodingHarness(CodingHarness):
     def __init__(
         self,
-        kernel: ArtanaKernel,
         *,
-        cases: tuple[TestCase, ...],
+        kernel: ArtanaKernel,
         tenant: TenantContext,
-        default_model: str,
+        model_name: str,
     ) -> None:
         super().__init__(
             kernel=kernel,
             tenant=tenant,
-            default_model=default_model,
+            default_model=model_name,
+            draft_model=model_name,
+            verify_model=model_name,
             replay_policy="strict",
+            context_builder=ContextBuilder(
+                progressive_skills=False,
+                task_category="coding",
+            ),
+            acceptance=AcceptanceSpec(
+                gates=(ToolGate(tool="run_tests", must_pass=True),),
+            ),
+            agent_system_prompt=(
+                "You are a coding harness agent. Gather grounded repo context, "
+                "produce a concise patch plan, and finish only after the verification tool passes."
+            ),
+            max_iterations=6,
         )
-        self._cases = cases
 
-    async def step(self, *, context: HarnessContext) -> list[HarnessCaseResult]:
-        results: list[HarnessCaseResult] = []
+    async def define_tasks(self) -> list[TaskUnit]:
+        return [
+            TaskUnit(
+                id="plan_fix",
+                description="Produce a patch plan for the checkout retry regression",
+            )
+        ]
 
-        for index, case in enumerate(self._cases, start=1):
-            step_prefix = f"case_{index}"
-            tool_context = _missing_tool_context()
-            gene_name = _detect_gene(case.user_input)
+    async def work_on(self, task: TaskUnit) -> None:
+        step = StepKey(namespace=f"{self._resolve_run_id(run_id=None)}_coding")
+        prompt = (
+            "Review the checkout retry regression and produce a coding plan.\n"
+            "Use the available tools to gather the bug report, repo notes, "
+            "and verification status.\n"
+            "Return only JSON matching PatchPlan.\n"
+            "Changed files must be concrete paths from the repo map.\n"
+            "verification_notes must explain why the change is safe to land.\n"
+        )
+        result = await self.run_agent(
+            prompt=prompt,
+            output_schema=PatchPlan,
+        )
+        await self.set_artifact(
+            key="patch_plan",
+            value=result.model_dump(mode="json"),
+            step_key=step.next("artifact_patch_plan"),
+        )
 
-            if gene_name is not None:
-                tool_result = await self.run_tool(
-                    tool_name="lookup_gene",
-                    arguments=LookupGeneArgs(gene_name=gene_name),
-                    step_key=f"{step_prefix}_lookup",
-                )
-                tool_context = json.loads(tool_result.result_json)
+    async def coding_goal(self) -> str:
+        return "Fix the checkout retry regression without regressing the auth flow."
 
-            answer_result = await self.run_model(
-                prompt=_answer_prompt(
-                    user_input=case.user_input,
-                    tool_context=tool_context,
+    async def coding_artifact_keys(self) -> tuple[str, ...]:
+        return ("patch_plan",)
+
+    async def coding_constraints(self) -> tuple[str, ...]:
+        return (
+            "changed_files must come from the repo map",
+            "verification must pass before completion",
+            "keep the plan concise and implementation-oriented",
+        )
+
+    async def coding_allowed_tool_names(self) -> tuple[str, ...]:
+        return (
+            "read_bug_report",
+            "read_repo_map",
+            "read_repo_notes",
+            "run_tests",
+        )
+
+    async def build_workspace_state(
+        self,
+        *,
+        context,
+        task_progress: tuple[TaskUnit, ...],
+    ) -> WorkspaceState:
+        state = await super().build_workspace_state(
+            context=context,
+            task_progress=task_progress,
+        )
+        return state.model_copy(
+            update={
+                "active_plan": (
+                    "Gather bug context, produce a patch plan, and require a "
+                    "verification pass before marking the task complete."
                 ),
-                output_schema=ConciseAnswer,
-                step_key=f"{step_prefix}_answer",
-                model_options=ModelCallOptions(api_mode="auto"),
-            )
-            answer = answer_result.output.answer
-            missing_terms = [
-                term for term in case.must_include if term.lower() not in answer.lower()
-            ]
-            results.append(
-                HarnessCaseResult(
-                    name=case.name,
-                    passed=len(missing_terms) == 0,
-                    output=answer,
-                    missing_terms=missing_terms,
-                )
-            )
+                "memory_summary": "Coding harness for a checkout retry regression.",
+            }
+        )
 
-        return results
+    async def build_outcome(
+        self,
+        *,
+        context,
+        task_progress: tuple[TaskUnit, ...],
+        workspace_state: WorkspaceState,
+    ) -> HarnessOutcome:
+        outcome = await super().build_outcome(
+            context=context,
+            task_progress=task_progress,
+            workspace_state=workspace_state,
+        )
+        patch_plan = await self.get_artifact(
+            run_id=context.run_id,
+            tenant=context.tenant,
+            key="patch_plan",
+        )
+        if isinstance(patch_plan, dict):
+            return outcome.model_copy(
+                update={
+                    "artifacts_produced": sorted(workspace_state.artifacts),
+                    "details": {
+                        "run_id": context.run_id,
+                        "changed_files": patch_plan.get("changed_files", []),
+                    },
+                }
+            )
+        return outcome
+
+
+def _tenant() -> TenantContext:
+    return TenantContext(
+        tenant_id="org_coding_harness",
+        capabilities=frozenset(),
+        budget_usd_limit=5.0,
+    )
 
 
 async def main() -> None:
     require_openai_api_key(script_name="10_live_manual_agent_harness.py")
     model_name = resolve_model(
-        env_var="ARTANA_HARNESS_MODEL",
+        env_var="ARTANA_CODING_HARNESS_MODEL",
         default="openai/gpt-5.4",
     )
     print_example_header(
-        title="10 - Manual Agent + Harness (GPT-5.4)",
-        models={"manual_agent": model_name, "harness": model_name},
+        title="10 - Coding Harness (GPT-5.4)",
+        models={"coding_harness": model_name},
     )
 
-    database_path = Path("examples/.state_live_manual_agent_harness.db")
+    database_path = Path("examples/.state_live_coding_harness.db")
+    scratch_root = Path("examples/.tmp_live_coding_harness")
     if database_path.exists():
         database_path.unlink()
+    if scratch_root.exists():
+        shutil.rmtree(scratch_root)
+    scratch_root.mkdir(parents=True, exist_ok=True)
 
-    store = SQLiteStore(str(database_path))
     kernel = ArtanaKernel(
-        store=store,
+        store=SQLiteStore(str(database_path)),
         model_port=LiteLLMAdapter(timeout_seconds=30.0, max_retries=1),
         middleware=ArtanaKernel.default_middleware_stack(),
     )
 
     @kernel.tool()
-    async def lookup_gene(gene_name: str) -> str:
-        canonical = gene_name.upper()
-        summary = GENE_DB.get(canonical)
-        if summary is None:
-            return json.dumps(
-                {
-                    "gene_name": canonical,
-                    "found": False,
-                    "summary": f"Missing curated lookup for {canonical}.",
-                }
-            )
+    async def read_bug_report() -> str:
         return json.dumps(
             {
-                "gene_name": canonical,
-                "found": True,
-                "summary": summary,
+                "service": "checkout-service",
+                "issue": "Retry path can double-submit after a timeout race",
+                "severity": "high",
+                "goal": "Make retries idempotent and keep auth unchanged",
             }
         )
 
-    tenant = TenantContext(
-        tenant_id="org_gene_harness",
-        capabilities=frozenset(),
-        budget_usd_limit=5.0,
-    )
-    cases = (
-        TestCase(
-            name="MED13 lookup",
-            user_input="What is MED13?",
-            must_include=("MED13",),
-        ),
-        TestCase(
-            name="TP53 lookup",
-            user_input="Tell me about TP53 in one sentence.",
-            must_include=("TP53",),
-        ),
-        TestCase(
-            name="Unknown concept",
-            user_input="What is ABCXYZ123?",
-            must_include=("missing",),
-        ),
-    )
+    @kernel.tool()
+    async def read_repo_map() -> str:
+        return json.dumps(
+            {
+                "candidate_files": [
+                    "src/checkout/retry.py",
+                    "src/checkout/idempotency.py",
+                    "tests/test_checkout_retry.py",
+                ]
+            }
+        )
+
+    @kernel.tool()
+    async def read_repo_notes() -> str:
+        return json.dumps(
+            {
+                "notes": [
+                    "The retry flow already writes an idempotency token.",
+                    "Auth middleware should not change.",
+                    "Regression coverage belongs in tests/test_checkout_retry.py.",
+                ]
+            }
+        )
+
+    @kernel.tool()
+    async def run_tests() -> str:
+        return json.dumps(
+            {
+                "passed": True,
+                "suite": "checkout_retry",
+                "status": "passed",
+            }
+        )
+
+    tenant = _tenant()
+    run_id = "coding_harness_run"
 
     try:
-        manual_agent_output = await run_manual_agent(
+        harness = CheckoutCodingHarness(
             kernel=kernel,
             tenant=tenant,
-            run_id="manual_agent_run",
-            model=model_name,
-            user_input="What is MED13?",
+            model_name=model_name,
         )
-
-        harness = GeneLookupHarness(
-            kernel=kernel,
-            cases=cases,
-            tenant=tenant,
-            default_model=model_name,
-        )
-        harness_results = await harness.run(run_id="gene_harness_run")
-        passed = sum(1 for result in harness_results if result.passed)
+        outcome = await harness.run(run_id=run_id)
+        patch_plan = await harness.get_artifact(run_id=run_id, tenant=tenant, key="patch_plan")
+        workspace_state = await harness.get_workspace_state(run_id=run_id, tenant=tenant)
 
         print_summary(
             payload={
+                "run_id": run_id,
                 "model": model_name,
-                "manual_agent": manual_agent_output.model_dump(),
-                "harness_score": f"{passed}/{len(harness_results)}",
-                "harness_results": [
-                    result.model_dump(mode="json") for result in harness_results
-                ],
+                "outcome": outcome.model_dump(mode="json"),
+                "workspace_state": (
+                    workspace_state.model_dump(mode="json")
+                    if workspace_state is not None
+                    else None
+                ),
+                "patch_plan": patch_plan,
             }
         )
     finally:
         await kernel.close()
         if database_path.exists():
             database_path.unlink()
+        if scratch_root.exists():
+            shutil.rmtree(scratch_root)
 
 
 if __name__ == "__main__":

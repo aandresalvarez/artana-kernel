@@ -311,11 +311,18 @@ Use AutonomousAgent for short-running or exploratory reasoning.
 
 ---
 
-# 🏗 Step 5 — Harnesses (Long-Running Structured Agents)
+# 🏗 Step 5 — Harnesses (Strong-Model Default + Durable Substrate)
 
-Harnesses are for **long-running structured work**.
+For 2026-style model-driven work, prefer the strong-model harness path:
 
-They enforce:
+* `StrongModelAgentHarness` when you want `AutonomousAgent` + `ContextBuilder` + optional draft/verify + acceptance gates
+* domain templates (`ResearchHarness`, `CodingHarness`, `ReviewHarness`, `CurationHarness`) when you want an operating mode instead of a blank subclass
+* `StrongModelHarness` when you want a thinner durable wrapper without the agent loop
+
+`IncrementalTaskHarness` remains the lower-level durable substrate underneath that posture.
+It still matters, but it should not be the first mental model.
+
+That substrate enforces:
 
 * Incremental progress
 * One task completion per session
@@ -371,19 +378,17 @@ async def main():
 asyncio.run(main())
 ```
 
-Harnesses automatically:
+The substrate automatically:
 
 * Persist task progress
 * Prevent multiple DONE transitions per session
 * Enforce clean state before sleep
 
-If your baseline mental model is a plain tool function, a `run_agent()` helper, and a `run_case()` harness, Artana maps that directly:
+If you want the recommended opinionated paths, see:
 
-* tool function -> `@kernel.tool()`
-* `run_agent()` -> Python orchestration plus `KernelModelClient.step(...)` and `kernel.step_tool(...)`
-* `run_case()` harness -> `BaseHarness.step(...)` or `IncrementalTaskHarness.work_on(...)`
-
-For a live `openai/gpt-5.4` version of that exact pattern, see `examples/10_live_manual_agent_harness.py`.
+* `examples/10_live_manual_agent_harness.py` for the coding-shaped strong-model harness
+* `examples/11_durable_release_harness.py` for the governed review + side-effect pattern
+* `examples/12_research_strong_model_harness.py` for the research-shaped strong-model harness
 
 ---
 

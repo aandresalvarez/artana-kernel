@@ -10,7 +10,11 @@ from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel
 
+from artana.acceptance import AcceptanceSpec
 from artana.agent.autonomous import AutonomousAgent
+from artana.agent.context import ContextBuilder, WorkspaceSnapshotContextBuilder
+from artana.agent.loop import DraftVerifyLoopConfig
+from artana.agent.memory import MemoryStore
 from artana.agent.model_steps import execute_model_step
 from artana.events import (
     ChatMessage,
@@ -22,6 +26,7 @@ from artana.events import (
     HarnessStagePayload,
     HarnessWakePayload,
 )
+from artana.harness.state import HarnessOutcome, WorkspaceState
 from artana.kernel import (
     ArtanaKernel,
     ContextVersion,
@@ -37,6 +42,8 @@ from artana.ports.model import ModelCallOptions, ToolDefinition
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 HarnessResultT = TypeVar("HarnessResultT")
+HARNESS_OUTCOME_SUMMARY_TYPE = "harness_outcome"
+WORKSPACE_STATE_SUMMARY_TYPE = "harness_workspace_state"
 
 
 @dataclass(frozen=True, slots=True)
@@ -722,6 +729,128 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
             return value
         return payload
 
+    async def set_workspace_state(
+        self,
+        *,
+        workspace_state: WorkspaceState,
+        step_key: str | None = None,
+        run_id: str | None = None,
+        tenant: TenantContext | None = None,
+    ) -> int:
+        return await self.emit_summary(
+            run_id=self._resolve_run_id(run_id=run_id),
+            tenant=self._resolve_tenant(tenant=tenant),
+            summary_type=WORKSPACE_STATE_SUMMARY_TYPE,
+            payload=workspace_state.model_dump(mode="json"),
+            step_key=(
+                self.require_step_key(step_key)
+                if step_key is not None
+                else self._next_step_key(prefix="workspace_state")
+            ),
+            parent_step_key=self._active_trace_step_key,
+        )
+
+    async def get_workspace_state(
+        self,
+        *,
+        run_id: str | None = None,
+        tenant: TenantContext | None = None,
+    ) -> WorkspaceState | None:
+        payload = await self.summary_payload(
+            run_id=self._resolve_run_id(run_id=run_id),
+            summary_type=WORKSPACE_STATE_SUMMARY_TYPE,
+            tenant=tenant,
+        )
+        if payload is None:
+            return None
+        return WorkspaceState.model_validate(payload)
+
+    async def set_harness_outcome(
+        self,
+        *,
+        outcome: HarnessOutcome,
+        step_key: str | None = None,
+        run_id: str | None = None,
+        tenant: TenantContext | None = None,
+    ) -> int:
+        return await self.emit_summary(
+            run_id=self._resolve_run_id(run_id=run_id),
+            tenant=self._resolve_tenant(tenant=tenant),
+            summary_type=HARNESS_OUTCOME_SUMMARY_TYPE,
+            payload=outcome.model_dump(mode="json"),
+            step_key=(
+                self.require_step_key(step_key)
+                if step_key is not None
+                else self._next_step_key(prefix="harness_outcome")
+            ),
+            parent_step_key=self._active_trace_step_key,
+        )
+
+    async def get_harness_outcome(
+        self,
+        *,
+        run_id: str | None = None,
+        tenant: TenantContext | None = None,
+    ) -> HarnessOutcome | None:
+        payload = await self.summary_payload(
+            run_id=self._resolve_run_id(run_id=run_id),
+            summary_type=HARNESS_OUTCOME_SUMMARY_TYPE,
+            tenant=tenant,
+        )
+        if payload is None:
+            return None
+        return HarnessOutcome.model_validate(payload)
+
+    async def snapshot_workspace_state(
+        self,
+        *,
+        domain: str | None = None,
+        question: str | None = None,
+        memory_summary: str | None = None,
+        active_plan: str | None = None,
+        graph_summary: str | None = None,
+        evidence_count: int | None = None,
+        artifact_keys: Sequence[str] = (),
+        constraints: Sequence[str] = (),
+        open_tasks: Sequence[str] = (),
+        unresolved_contradictions: Sequence[str] = (),
+        allowed_tool_names: Sequence[str] | None = None,
+        notes: Mapping[str, object] | None = None,
+        run_id: str | None = None,
+        tenant: TenantContext | None = None,
+    ) -> WorkspaceState:
+        resolved_tenant = self._resolve_tenant(tenant=tenant)
+        artifacts: dict[str, object] = {}
+        for key in artifact_keys:
+            value = await self.get_artifact(run_id=run_id, tenant=resolved_tenant, key=key)
+            if value is not None:
+                artifacts[key] = value
+
+        visible_tool_names = (
+            None if allowed_tool_names is None else set(allowed_tool_names)
+        )
+        allowed_tools = [
+            tool.name
+            for tool in self.list_tools(
+                visible_tool_names=visible_tool_names,
+                tenant=resolved_tenant,
+            )
+        ]
+        return WorkspaceState(
+            domain=domain,
+            question=question,
+            memory_summary=memory_summary,
+            active_plan=active_plan,
+            graph_summary=graph_summary,
+            evidence_count=evidence_count,
+            artifacts=artifacts,
+            constraints=list(constraints),
+            open_tasks=list(open_tasks),
+            unresolved_contradictions=list(unresolved_contradictions),
+            allowed_tools=allowed_tools,
+            notes=dict(notes or {}),
+        )
+
     async def model_step(
         self,
         *,
@@ -931,9 +1060,27 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
         system_prompt: str = "You are a helpful autonomous agent.",
         max_iterations: int = 15,
         replay_policy: ReplayPolicy | None = None,
+        context_builder: ContextBuilder | None = None,
+        loop: DraftVerifyLoopConfig | None = None,
+        memory_store: MemoryStore | None = None,
+        acceptance: AcceptanceSpec | None = None,
+        auto_reflect: bool = False,
+        reflection_model: str = "gpt-5-mini",
+        workspace_aware: bool = True,
     ) -> OutputT:
+        resolved_context_builder = context_builder
+        if workspace_aware:
+            resolved_context_builder = _workspace_aware_context_builder(
+                kernel=self._kernel,
+                context_builder=context_builder,
+            )
         agent = AutonomousAgent(
             kernel=self._kernel,
+            context_builder=resolved_context_builder,
+            loop=loop,
+            memory_store=memory_store,
+            auto_reflect=auto_reflect,
+            reflection_model=reflection_model,
             replay_policy=self._replay_policy if replay_policy is None else replay_policy,
         )
         return await agent.run(
@@ -944,6 +1091,7 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
             output_schema=output_schema,
             system_prompt=system_prompt,
             max_iterations=max_iterations,
+            acceptance=acceptance,
         )
 
     async def validate_clean_state(self, *, run_id: str) -> None:
@@ -1007,9 +1155,27 @@ class BaseHarness(ABC, Generic[HarnessResultT]):
             run_id=context.run_id,
             summary_type="harness_sleep",
         )
+        workspace_state = await self.get_workspace_state(
+            run_id=context.run_id,
+            tenant=context.tenant,
+        )
+        outcome = await self.get_harness_outcome(
+            run_id=context.run_id,
+            tenant=context.tenant,
+        )
         return {
             "run_created": context.run_created,
             "latest_harness_sleep": previous_sleep,
+            "workspace_state": (
+                workspace_state.model_dump(mode="json")
+                if workspace_state is not None
+                else None
+            ),
+            "harness_outcome": (
+                outcome.model_dump(mode="json")
+                if outcome is not None
+                else None
+            ),
         }
 
     def _resolve_tenant(self, tenant: TenantContext | None) -> TenantContext:
@@ -1091,4 +1257,22 @@ def _resolve_model_input(
     raise ValueError("run_model requires one of: input, prompt, or messages.")
 
 
-__all__ = ["BaseHarness", "HarnessContext", "HarnessStateError"]
+def _workspace_aware_context_builder(
+    *,
+    kernel: ArtanaKernel,
+    context_builder: ContextBuilder | None,
+) -> ContextBuilder:
+    if isinstance(context_builder, WorkspaceSnapshotContextBuilder):
+        return context_builder
+    if context_builder is None:
+        return WorkspaceSnapshotContextBuilder(kernel=kernel)
+    return WorkspaceSnapshotContextBuilder(kernel=kernel, base=context_builder)
+
+
+__all__ = [
+    "BaseHarness",
+    "HARNESS_OUTCOME_SUMMARY_TYPE",
+    "HarnessContext",
+    "HarnessStateError",
+    "WORKSPACE_STATE_SUMMARY_TYPE",
+]

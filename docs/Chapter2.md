@@ -4,7 +4,7 @@
 This chapter focuses on production patterns:
 
 * Multi-agent orchestration
-* Long-running incremental harnesses
+* Strong-model harnesses and their durable task substrate
 * Structured artifacts
 * Replay modes
 * Middleware enforcement
@@ -25,6 +25,14 @@ Code block contract for this chapter:
 ---
 
 # Step 1 — Structured Multi-Agent Supervision (Harness-Based Swarms)
+
+In the current product direction, the recommended app-facing API is:
+
+* `StrongModelAgentHarness` for the default `AutonomousAgent` path
+* domain templates (`ResearchHarness`, `CodingHarness`, `ReviewHarness`, `CurationHarness`)
+* `SupervisorHarness` for composition
+
+This chapter still shows `IncrementalTaskHarness` because it is the durable substrate those patterns build on.
 
 Instead of directly spawning subagents from tools, modern Artana prefers **SupervisorHarness**.
 
@@ -96,7 +104,8 @@ asyncio.run(main())
 
 # Step 2 — Long-Running Incremental Harness Discipline
 
-This replaces ad-hoc autonomous loops with structured continuity.
+This is the lower-level durability layer beneath the newer strong-model harness API.
+Use it when you need explicit staged task progression rather than the higher-level agentic templates.
 
 ```python
 import asyncio

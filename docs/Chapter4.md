@@ -276,7 +276,9 @@ This enables:
 
 # Step 4 — Harness + Supervisor (Platform-Level Orchestration)
 
-Production systems should coordinate harnesses, not raw agents.
+Production systems should coordinate domain-shaped harnesses, not raw agents.
+The modern default is `StrongModelAgentHarness` + `SupervisorHarness`; this section uses
+`IncrementalTaskHarness` to show the deterministic substrate explicitly.
 
 ```python
 import asyncio

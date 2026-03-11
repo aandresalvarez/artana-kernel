@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypeVar
 
 import pytest
+from pydantic import BaseModel
 
-from artana.agent.context import ContextBuilder
+from artana import ArtanaKernel
+from artana.agent.context import ContextBuilder, WorkspaceSnapshotContextBuilder
 from artana.events import ChatMessage
+from artana.harness import BaseHarness, HarnessContext, WorkspaceState
 from artana.models import TenantContext
+from artana.ports.model import ModelRequest, ModelResult
+from artana.store import SQLiteStore
+
+OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
 
 def _tenant() -> TenantContext:
@@ -38,3 +46,69 @@ async def test_context_builder_ignores_non_utf8_workspace_context(tmp_path: Path
 
     assert messages[0].role == "system"
     assert "Workspace Context / Active Plan:" not in messages[0].content
+
+
+class UnusedModelPort:
+    async def complete(
+        self,
+        request: ModelRequest[OutputModelT],
+    ) -> ModelResult[OutputModelT]:
+        raise AssertionError("Model should not be called in context builder tests.")
+
+
+class DummyOutput(BaseModel):
+    ok: bool
+
+
+class WorkspaceHarness(BaseHarness[WorkspaceState]):
+    async def step(self, *, context: HarnessContext) -> WorkspaceState:
+        raise AssertionError("WorkspaceHarness.step() should not be called in this test.")
+
+
+@pytest.mark.asyncio
+async def test_workspace_snapshot_context_builder_injects_workspace_state(tmp_path: Path) -> None:
+    kernel = ArtanaKernel(
+        store=SQLiteStore(str(tmp_path / "state.db")),
+        model_port=UnusedModelPort(),
+    )
+    tenant = _tenant()
+    run_id = "run_workspace_snapshot_context"
+    harness = WorkspaceHarness(kernel=kernel, tenant=tenant)
+    try:
+        await kernel.start_run(tenant=tenant, run_id=run_id)
+        await harness.set_workspace_state(
+            run_id=run_id,
+            tenant=tenant,
+            workspace_state=WorkspaceState(
+                domain="research",
+                question="What evidence links MED13 to transcription control?",
+                open_tasks=["Compare contradictory papers"],
+                allowed_tools=["search_literature", "score_evidence"],
+            ),
+            step_key="workspace_state_seed",
+        )
+
+        context_builder = WorkspaceSnapshotContextBuilder(
+            kernel=kernel,
+            base=ContextBuilder(progressive_skills=False),
+        )
+        messages = await context_builder.build_messages(
+            run_id=run_id,
+            tenant=tenant,
+            short_term_messages=(ChatMessage(role="user", content="continue"),),
+            system_prompt="You are the agent.",
+            active_skills=frozenset(),
+            available_skill_summaries=None,
+            memory_text=None,
+        )
+
+        assert messages[0].role == "system"
+        assert "[WORKSPACE STATE SNAPSHOT]" in messages[0].content
+        assert (
+            "Question: What evidence links MED13 to transcription control?"
+            in messages[0].content
+        )
+        assert "Allowed Tools:" in messages[0].content
+        assert "- search_literature" in messages[0].content
+    finally:
+        await kernel.close()

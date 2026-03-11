@@ -69,6 +69,9 @@ class IncrementalTaskHarness(BaseHarness[tuple[TaskUnit, ...]]):
         )
 
     async def step(self, *, context: HarnessContext) -> tuple[TaskUnit, ...]:
+        return await self.advance_tasks(context=context)
+
+    async def advance_tasks(self, *, context: HarnessContext) -> tuple[TaskUnit, ...]:
         if not self._uses_structured_flow:
             existing = await self.get_task_progress(run_id=context.run_id)
             if existing is None:

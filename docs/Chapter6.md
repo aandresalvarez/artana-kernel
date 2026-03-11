@@ -222,10 +222,13 @@ Artana now has an explicit harness substrate:
 
 * `HarnessContext` and `BaseHarness`
 * `IncrementalTaskHarness` with typed `TaskUnit`
+* `StrongModelHarness` for persisted `WorkspaceState` + `HarnessOutcome`
+* `StrongModelAgentHarness` for `AutonomousAgent` + `ContextBuilder` + optional `AcceptanceSpec`
+* domain templates: `ResearchHarness`, `CurationHarness`, `CodingHarness`, `SupportHarness`, `DataHarness`, `ActionHarness`, `ReviewHarness`
 * `SupervisorHarness` for composition
 * `TestDrivenHarness` for verify-before-done task progression
 * `run_draft_model(...)` and `run_verify_model(...)` wrappers on `BaseHarness`
-* built-in artifact helpers (`set_artifact`, `get_artifact`)
+* built-in artifact/workspace/outcome helpers (`set_artifact`, `get_artifact`, `set_workspace_state`, `set_harness_outcome`)
 * `DraftVerifyLoopConfig` and `AcceptanceSpec` for deterministic autonomous completion
 
 Example artifact usage:
@@ -248,7 +251,7 @@ class MyTDDHarness(TestDrivenHarness):
         # update files first...
         await self.verify_and_commit(
             task_id=task.id,
-            test_command="pytest -q",
+            test_command="uv run pytest -q",
         )
 ```
 

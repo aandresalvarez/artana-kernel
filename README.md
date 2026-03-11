@@ -83,6 +83,9 @@ Initial implementation aligned with the Artana Kernel PRD:
   - `run_workflow` — Durable workflow with `WorkflowContext`, deterministic Python logic execution (`ctx.step`), and `ctx.pause`.
 - **The Harness SDK:**
   - `BaseHarness.run_draft_model(...)` and `BaseHarness.run_verify_model(...)` for two-model draft/verify loops.
+  - `StrongModelHarness` for the canonical strong-model pattern with persisted `WorkspaceState` and `HarnessOutcome`.
+  - `StrongModelAgentHarness` for the recommended `AutonomousAgent` + `ContextBuilder` + optional draft/verify + acceptance-gates path.
+  - Domain templates: `ResearchHarness`, `CurationHarness`, `CodingHarness`, `SupportHarness`, `DataHarness`, `ActionHarness`, `ReviewHarness`.
   - `TestDrivenHarness.verify_and_commit(...)` for verification-gated `TaskUnit -> done` transitions.
   - `DraftReviewVerifySupervisor` template for drafter/reviewer/verifier orchestration.
   - `StepKey` utility for deterministic namespaced `step_key` generation.
@@ -190,7 +193,7 @@ uv run pre-commit run --all-files
 Pre-commit mirrors CI quality gates and best-practices contracts:
 - `ruff check .`
 - `mypy --strict src tests`
-- `pytest`
+- `uv run pytest`
 - `python scripts/generate_kernel_behavior_index.py --check`
 
 Best-practices invariants are also enforced in tests (`tests/test_best_practices_contract.py`) to prevent regressions in architecture boundaries, middleware ordering, typing hygiene, and side-effect safety patterns.
@@ -358,6 +361,74 @@ What the SDK handles automatically:
 - replay-safe model/tool execution helpers (`run_model`, `run_draft_model`, `run_verify_model`, `run_tool`)
 - clean-state validation before sleep
 
+Canonical strong-model harness:
+
+```python
+from artana import (
+    AcceptanceSpec,
+    CodingHarness,
+    ContextBuilder,
+    DraftVerifyLoopConfig,
+    HarnessOutcome,
+    TaskUnit,
+    ToolGate,
+    WorkspaceState,
+)
+
+class CheckoutHarness(CodingHarness):
+    async def define_tasks(self) -> list[TaskUnit]:
+        return [
+            TaskUnit(id="plan_fix", description="Produce a patch plan"),
+        ]
+
+    async def work_on(self, task: TaskUnit) -> None:
+        plan = await self.run_agent(
+            prompt="Use tools to produce a grounded patch plan.",
+            output_schema=PatchPlan,
+        )
+        await self.set_artifact(key="patch_plan", value=plan.model_dump(mode="json"))
+
+    async def coding_goal(self) -> str:
+        return "Fix the checkout retry regression."
+
+harness = CheckoutHarness(
+    kernel=kernel,
+    tenant=tenant,
+    context_builder=ContextBuilder(progressive_skills=False, task_category="coding"),
+    loop=DraftVerifyLoopConfig(draft_model="gpt-5-mini", verify_model="gpt-5.4"),
+    acceptance=AcceptanceSpec(gates=(ToolGate(tool="run_tests", must_pass=True),)),
+)
+outcome: HarnessOutcome = await harness.run(run_id="checkout_fix_01")
+print(outcome.status, outcome.workspace_state.allowed_tools)
+```
+
+What the strong-model stack gives you:
+- `WorkspaceState`: persisted artifacts, open tasks, constraints, contradictions, allowed tools
+- `HarnessOutcome`: status, confidence, gates passed, produced artifacts, next action
+- `WorkspaceSnapshotContextBuilder`: injects the latest structured workspace snapshot into `AutonomousAgent` context
+- domain-shaped templates so examples start from `ResearchHarness`, `CodingHarness`, `ReviewHarness`, or `CurationHarness`
+
+If you want a thinner non-agentic durable path, use `StrongModelHarness` directly:
+
+```python
+class ReviewHarness(StrongModelHarness):
+    async def define_tasks(self) -> list[TaskUnit]:
+        return [TaskUnit(id="verify", description="Verify the recommendation")]
+
+    async def work_on(self, task: TaskUnit) -> None:
+        ...
+
+    async def build_workspace_state(self, *, context, task_progress) -> WorkspaceState:
+        return await self.snapshot_workspace_state(
+            domain="review",
+            question="Is this ready to ship?",
+            artifact_keys=("brief", "verification"),
+            open_tasks=[unit.description for unit in task_progress if unit.state != "done"],
+            run_id=context.run_id,
+            tenant=context.tenant,
+        )
+```
+
 Verification-gated completion with `TestDrivenHarness`:
 
 ```python
@@ -366,16 +437,15 @@ from artana.harness import TestDrivenHarness
 class PatchHarness(TestDrivenHarness):
     async def work_on(self, task: TaskUnit) -> None:
         # edit code first, then verify
-        await self.verify_and_commit(task_id=task.id, test_command="pytest -q")
+        await self.verify_and_commit(task_id=task.id, test_command="uv run pytest -q")
 ```
 
-Minimal manual agent + harness mapping:
-
-- local tool: `@kernel.tool()`
-- manual agent: Python control flow plus `KernelModelClient.step(...)` and `kernel.step_tool(...)`
-- simple harness: `BaseHarness.step(...)` calling `run_tool(...)` and `run_model(...)`
-
-If your baseline is a plain LiteLLM script with `lookup_gene()`, `run_agent()`, and `run_case()`, see `examples/10_live_manual_agent_harness.py` for the same shape implemented on Artana with `openai/gpt-5.4`.
+Examples of the opinionated paths:
+- coding: `examples/10_live_manual_agent_harness.py`
+- governed review + side effects: `examples/11_durable_release_harness.py`
+- research: `examples/12_research_strong_model_harness.py`
+- support: `examples/13_support_strong_model_harness.py`
+- data: `examples/14_data_diagnostic_harness.py`
 
 ### 4. Harness Engineering DX
 Use these defaults for production-safe coding loops:
@@ -838,7 +908,11 @@ Run examples from the repository root:
 - **`07_adaptive_agent_learning.py`**: Demonstrates inter-run experience learning where Run 1 discovers a durable rule and Run 2 succeeds immediately using injected past learnings.
 - **`08_responses_mode.py`**: Demonstrates explicit Responses controls (`api_mode="responses"`, `reasoning_effort`, `verbosity`) and chaining with `previous_response_id`.
 - **`09_harness_engineering_dx.py`**: Demonstrates `StepKey`, draft/verify harness calls, acceptance gates, side-effect-safe tool registration, and coding tool bundle usage.
-- **`10_live_manual_agent_harness.py`**: Demonstrates a local tool, a manual agent built from kernel primitives, and a simple harness using `openai/gpt-5.4`.
+- **`10_live_manual_agent_harness.py`**: Demonstrates the coding-shaped strong-model harness with `AutonomousAgent`, `ContextBuilder`, acceptance gates, and a persisted patch-plan workspace.
+- **`11_durable_release_harness.py`**: Demonstrates the governed review harness with persisted `WorkspaceState`/`HarnessOutcome`, prompt blocks loaded from `openai_docs/prompts.md`, and a side-effect-safe publish step.
+- **`12_research_strong_model_harness.py`**: Demonstrates the research-shaped strong-model harness with grounded evidence collection, contradiction tracking, and resumable report generation.
+- **`13_support_strong_model_harness.py`**: Demonstrates the support-shaped strong-model harness with customer context, policy checks, and grounded ticket resolution.
+- **`14_data_diagnostic_harness.py`**: Demonstrates the data-shaped strong-model harness with schema/log snapshots and grounded ETL diagnosis.
 - **`golden_example.py`**: Canonical production-leaning example testing unknown tool outcomes and reconciliation.
 
 ## Growth Path

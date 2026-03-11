@@ -271,9 +271,13 @@ Artana exposes first-class harness APIs:
 - `HarnessContext`
 - `BaseHarness`
 - `IncrementalTaskHarness`
+- `StrongModelHarness`
+- `StrongModelAgentHarness`
 - `TestDrivenHarness`
 - `TaskUnit`
 - `SupervisorHarness`
+- `WorkspaceState`
+- `HarnessOutcome`
 
 Model helper wrappers in `BaseHarness`:
 
@@ -281,11 +285,18 @@ Model helper wrappers in `BaseHarness`:
 - `run_draft_model(...)`
 - `run_verify_model(...)`
 - `run_tool(...)`
+- `run_autonomous_agent(...)`
 
 `TestDrivenHarness.verify_and_commit(...)` enforces verification before `TaskUnit -> done`.
 
 Artifacts in harnesses are persisted as run summaries with `summary_type=artifact::<key>`.
 `set_artifact(...)` writes `{"value": ...}` payloads and `get_artifact(...)` resolves the latest value.
+
+Structured workspace and outcome snapshots are also first-class:
+
+- `set_workspace_state(...)` / `get_workspace_state(...)`
+- `set_harness_outcome(...)` / `get_harness_outcome(...)`
+- `WorkspaceSnapshotContextBuilder` for injecting the latest workspace snapshot into `AutonomousAgent`
 
 ## Event Streaming and Leases
 

@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Mapping
 from typing import cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from artana.ports.model_adapter_helpers import (
     extract_output_json,
@@ -169,8 +169,16 @@ class LiteLLMAdapter:
                     "Could not extract structured output from LiteLLM response."
                 )
             raw_output = "{}"
-
-        output = request.output_schema.model_validate_json(raw_output)
+            output = request.output_schema.model_construct()
+        else:
+            try:
+                output = request.output_schema.model_validate_json(raw_output)
+            except ValidationError:
+                if not tool_calls:
+                    raise
+                # Tool-calling turns often omit the final structured answer until
+                # the follow-up turn after tool execution.
+                output = request.output_schema.model_construct()
         if self._fail_on_unknown_cost and has_tokens(usage) and usage.cost_usd <= 0.0:
             raise ModelPermanentError(
                 "LiteLLM response cost is unknown for a tokenized response. "

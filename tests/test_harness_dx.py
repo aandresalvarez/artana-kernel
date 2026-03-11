@@ -9,7 +9,18 @@ from pydantic import BaseModel
 
 from artana import ArtanaKernel
 from artana.events import EventType, ModelRequestedPayload, RunSummaryPayload
-from artana.harness import BaseHarness, HarnessContext, IncrementalTaskHarness, TaskUnit
+from artana.harness import (
+    ActionHarness,
+    BaseHarness,
+    DataHarness,
+    HarnessContext,
+    IncrementalTaskHarness,
+    StrongModelAgentHarness,
+    StrongModelHarness,
+    SupportHarness,
+    TaskUnit,
+    WorkspaceState,
+)
 from artana.models import TenantContext
 from artana.ports.model import ModelCallOptions, ModelRequest, ModelResult, ModelUsage
 from artana.store import SQLiteStore
@@ -37,6 +48,28 @@ class StaticDecisionModelPort:
         return ModelResult(
             output=output,
             usage=ModelUsage(prompt_tokens=2, completion_tokens=1, cost_usd=0.01),
+        )
+
+
+class WorkspaceAwareAgentResult(BaseModel):
+    summary: str
+
+
+class WorkspaceCaptureModelPort:
+    def __init__(self) -> None:
+        self.system_messages: list[str] = []
+
+    async def complete(
+        self,
+        request: ModelRequest[OutputModelT],
+    ) -> ModelResult[OutputModelT]:
+        self.system_messages.append(request.messages[0].content)
+        output = request.output_schema.model_validate(
+            {"summary": "workspace snapshot observed"}
+        )
+        return ModelResult(
+            output=output,
+            usage=ModelUsage(prompt_tokens=3, completion_tokens=2, cost_usd=0.01),
         )
 
 
@@ -112,6 +145,156 @@ class DraftVerifyHarness(BaseHarness[tuple[str, str]]):
             step_key="verify_step",
         )
         return (draft.output.reason, verify.output.reason)
+
+
+class WorkspaceAwareHarness(StrongModelHarness):
+    def __init__(
+        self,
+        *,
+        kernel: ArtanaKernel,
+        tenant: TenantContext | None = None,
+    ) -> None:
+        super().__init__(kernel=kernel, tenant=tenant)
+        self.completed: list[str] = []
+
+    async def define_tasks(self) -> list[TaskUnit]:
+        return [
+            TaskUnit(id="collect", description="Collect evidence"),
+            TaskUnit(id="review", description="Review evidence"),
+        ]
+
+    async def work_on(self, task: TaskUnit) -> None:
+        self.completed.append(task.id)
+        await self.set_artifact(
+            key=f"note_{task.id}",
+            value={"done": task.id},
+        )
+
+    async def build_workspace_state(
+        self,
+        *,
+        context: HarnessContext,
+        task_progress: tuple[TaskUnit, ...],
+    ) -> WorkspaceState:
+        completed_artifacts = tuple(
+            f"note_{unit.id}" for unit in task_progress if unit.state == "done"
+        )
+        return await self.snapshot_workspace_state(
+            domain="review",
+            question="Is the evidence package ready for publish?",
+            artifact_keys=completed_artifacts,
+            constraints=("review before publish",),
+            open_tasks=[
+                unit.description for unit in task_progress if unit.state != "done"
+            ],
+            notes={"completed_ids": list(self.completed)},
+            run_id=context.run_id,
+            tenant=context.tenant,
+        )
+
+
+class AgentWorkspaceHarness(StrongModelAgentHarness):
+    async def define_tasks(self) -> list[TaskUnit]:
+        return [TaskUnit(id="analyze", description="Analyze workspace state")]
+
+    async def work_on(self, task: TaskUnit) -> None:
+        result = await self.run_agent(
+            prompt="Summarize the current workspace state.",
+            output_schema=WorkspaceAwareAgentResult,
+            max_iterations=1,
+        )
+        await self.set_artifact(key="agent_summary", value=result.model_dump(mode="json"))
+
+    async def build_workspace_state(
+        self,
+        *,
+        context: HarnessContext,
+        task_progress: tuple[TaskUnit, ...],
+    ) -> WorkspaceState:
+        return await self.snapshot_workspace_state(
+            domain="research",
+            question="What should the agent notice before acting?",
+            artifact_keys=("seed_note", "agent_summary"),
+            open_tasks=[
+                unit.description for unit in task_progress if unit.state != "done"
+            ],
+            allowed_tool_names=(),
+            notes={"task_progress": [unit.id for unit in task_progress]},
+            run_id=context.run_id,
+            tenant=context.tenant,
+        )
+
+
+class MultiSessionAgentHarness(StrongModelAgentHarness):
+    async def define_tasks(self) -> list[TaskUnit]:
+        return [
+            TaskUnit(id="collect", description="Collect evidence"),
+            TaskUnit(id="summarize", description="Write summary"),
+        ]
+
+    async def work_on(self, task: TaskUnit) -> None:
+        result = await self.run_agent(
+            run_id=f"{self._resolve_run_id(run_id=None)}::{task.id}",
+            prompt=f"Complete the {task.id} task.",
+            output_schema=WorkspaceAwareAgentResult,
+            max_iterations=1,
+            workspace_aware=False,
+        )
+        await self.set_artifact(
+            key=f"agent_{task.id}",
+            value=result.model_dump(mode="json"),
+        )
+
+
+class SupportWorkspaceHarness(SupportHarness):
+    async def define_tasks(self) -> list[TaskUnit]:
+        return [TaskUnit(id="respond", description="Respond to customer")]
+
+    async def work_on(self, task: TaskUnit) -> None:
+        await self.set_artifact(key="support_note", value={"ok": True})
+
+    async def support_task(self) -> str:
+        return "Resolve the customer complaint."
+
+    async def support_customer_summary(self) -> str | None:
+        return "tier=gold"
+
+    async def support_ticket_history(self) -> str | None:
+        return "two prior interactions"
+
+
+class DataWorkspaceHarness(DataHarness):
+    async def define_tasks(self) -> list[TaskUnit]:
+        return [TaskUnit(id="diagnose", description="Diagnose ETL")]
+
+    async def work_on(self, task: TaskUnit) -> None:
+        await self.set_artifact(key="data_note", value={"ok": True})
+
+    async def data_problem(self) -> str:
+        return "Find the ETL failure."
+
+    async def data_schema_summary(self) -> str | None:
+        return "schema changed"
+
+    async def data_logs_summary(self) -> str | None:
+        return "logs show null keys"
+
+
+class ActionWorkspaceHarness(ActionHarness):
+    async def define_tasks(self) -> list[TaskUnit]:
+        return [TaskUnit(id="execute", description="Execute action")]
+
+    async def work_on(self, task: TaskUnit) -> None:
+        await self.set_artifact(key="action_note", value={"ok": True})
+
+    async def action_goal(self) -> str:
+        return "Send the invoice."
+
+    async def action_subject_summary(self) -> str | None:
+        return "account=acct_1"
+
+    async def action_limits_summary(self) -> str | None:
+        return "daily_limit=1"
 
 
 @pytest.mark.asyncio
@@ -217,6 +400,43 @@ async def test_incremental_task_harness_default_flow_runs_one_task_per_session(
 
 
 @pytest.mark.asyncio
+async def test_domain_templates_produce_domain_specific_workspace_shapes(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(store=store, model_port=StaticDecisionModelPort())
+    tenant = _tenant()
+
+    try:
+        support = await SupportWorkspaceHarness(kernel=kernel, tenant=tenant).run(
+            run_id="run_support_template"
+        )
+        data = await DataWorkspaceHarness(kernel=kernel, tenant=tenant).run(
+            run_id="run_data_template"
+        )
+        action = await ActionWorkspaceHarness(kernel=kernel, tenant=tenant).run(
+            run_id="run_action_template"
+        )
+
+        assert support.workspace_state is not None
+        assert support.workspace_state.domain == "support"
+        assert support.workspace_state.memory_summary == "tier=gold"
+        assert support.workspace_state.graph_summary == "two prior interactions"
+
+        assert data.workspace_state is not None
+        assert data.workspace_state.domain == "data"
+        assert data.workspace_state.active_plan == "schema changed"
+        assert data.workspace_state.graph_summary == "logs show null keys"
+
+        assert action.workspace_state is not None
+        assert action.workspace_state.domain == "action"
+        assert action.workspace_state.memory_summary == "account=acct_1"
+        assert action.workspace_state.graph_summary == "daily_limit=1"
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
 async def test_base_harness_draft_and_verify_wrappers_use_dedicated_models(
     tmp_path: Path,
 ) -> None:
@@ -248,5 +468,127 @@ async def test_base_harness_draft_and_verify_wrappers_use_dedicated_models(
         assert model_requested[0].reasoning_effort == "none"
         assert model_requested[0].verbosity == "low"
         assert model_requested[1].api_mode == "chat"
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_strong_model_harness_persists_workspace_state_and_outcome(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    kernel = ArtanaKernel(store=store, model_port=StaticDecisionModelPort())
+    tenant = _tenant()
+    harness = WorkspaceAwareHarness(kernel=kernel, tenant=tenant)
+    run_id = "run_strong_model_harness"
+
+    try:
+        first = await harness.run(run_id=run_id)
+        assert first.status == "in_progress"
+        assert first.workspace_state is not None
+        assert first.workspace_state.question == "Is the evidence package ready for publish?"
+        assert first.workspace_state.artifacts == {"note_collect": {"done": "collect"}}
+        stored_workspace = await harness.get_workspace_state(run_id=run_id, tenant=tenant)
+        assert stored_workspace == first.workspace_state
+        stored_outcome = await harness.get_harness_outcome(run_id=run_id, tenant=tenant)
+        assert stored_outcome == first
+
+        second = await harness.run(run_id=run_id)
+        assert second.status == "completed"
+        assert second.gates_passed == ["all_tasks_completed"]
+        assert second.workspace_state is not None
+        assert second.workspace_state.open_tasks == []
+        assert second.workspace_state.artifacts == {
+            "note_collect": {"done": "collect"},
+            "note_review": {"done": "review"},
+        }
+
+        events = await store.get_events_for_run(run_id)
+        wake_summaries = [
+            json.loads(event.payload.summary_json)
+            for event in events
+            if event.event_type == EventType.RUN_SUMMARY
+            and isinstance(event.payload, RunSummaryPayload)
+            and event.payload.summary_type == "wake_reorientation"
+        ]
+        assert any(
+            summary["workspace_state"]["question"]
+            == "Is the evidence package ready for publish?"
+            and summary["harness_outcome"]["status"] == "in_progress"
+            for summary in wake_summaries
+            if summary["workspace_state"] is not None
+            and summary["harness_outcome"] is not None
+        )
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_strong_model_agent_harness_injects_workspace_state_into_agent_context(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = WorkspaceCaptureModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    tenant = _tenant()
+    harness = AgentWorkspaceHarness(kernel=kernel, tenant=tenant)
+    run_id = "run_agent_workspace_harness"
+
+    try:
+        await kernel.start_run(tenant=tenant, run_id=run_id)
+        await harness.set_artifact(
+            run_id=run_id,
+            tenant=tenant,
+            key="seed_note",
+            value={"status": "ready"},
+            step_key="artifact_seed_note",
+        )
+        outcome = await harness.run(run_id=run_id)
+        assert outcome.status == "completed"
+        assert model_port.system_messages
+        assert "[WORKSPACE STATE SNAPSHOT]" in model_port.system_messages[0]
+        assert (
+            "Question: What should the agent notice before acting?"
+            in model_port.system_messages[0]
+        )
+        assert "Artifacts: seed_note" in model_port.system_messages[0]
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_strong_model_agent_harness_allows_distinct_agent_run_ids_per_task(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = WorkspaceCaptureModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    tenant = _tenant()
+    harness = MultiSessionAgentHarness(kernel=kernel, tenant=tenant)
+    run_id = "run_multi_session_agent_harness"
+
+    try:
+        first = await harness.run(run_id=run_id)
+        assert first.status == "in_progress"
+        assert await harness.get_artifact(run_id=run_id, key="agent_collect") == {
+            "summary": "workspace snapshot observed"
+        }
+
+        second = await harness.run(run_id=run_id)
+        assert second.status == "completed"
+        assert await harness.get_artifact(run_id=run_id, key="agent_summarize") == {
+            "summary": "workspace snapshot observed"
+        }
+
+        child_collect_events = await store.get_events_for_run(f"{run_id}::collect")
+        child_summarize_events = await store.get_events_for_run(f"{run_id}::summarize")
+        assert any(
+            event.event_type == EventType.MODEL_REQUESTED
+            for event in child_collect_events
+        )
+        assert any(
+            event.event_type == EventType.MODEL_REQUESTED
+            for event in child_summarize_events
+        )
     finally:
         await kernel.close()
