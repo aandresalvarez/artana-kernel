@@ -6,7 +6,7 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
-from artana import ArtanaKernel
+from artana import ArtanaKernel, FilesystemSkillRegistry
 from artana.agent.context import ContextBuilder, WorkspaceSnapshotContextBuilder
 from artana.events import ChatMessage
 from artana.harness import BaseHarness, HarnessContext, WorkspaceState
@@ -23,6 +23,31 @@ def _tenant() -> TenantContext:
         capabilities=frozenset(),
         budget_usd_limit=1.0,
     )
+
+
+def _write_skill_file(
+    root: Path,
+    *,
+    slug: str,
+    name: str,
+    summary: str,
+) -> Path:
+    path = root / slug / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                f"name: {name}",
+                "version: 1.0.0",
+                f"summary: {summary}",
+                "---",
+                "Skill instructions.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 @pytest.mark.asyncio
@@ -46,6 +71,37 @@ async def test_context_builder_ignores_non_utf8_workspace_context(tmp_path: Path
 
     assert messages[0].role == "system"
     assert "Workspace Context / Active Plan:" not in messages[0].content
+
+
+def test_context_builder_rejects_skill_names_without_registry() -> None:
+    with pytest.raises(ValueError, match="allowed_skill_names requires skill_registry"):
+        ContextBuilder(allowed_skill_names=("alpha",))
+
+    with pytest.raises(ValueError, match="preload_skill_names requires skill_registry"):
+        ContextBuilder(preload_skill_names=("alpha",))
+
+
+def test_context_builder_validates_allowed_and_preloaded_skill_names(tmp_path: Path) -> None:
+    skills_root = tmp_path / "skills"
+    _write_skill_file(skills_root, slug="alpha", name="alpha", summary="Alpha skill")
+    _write_skill_file(skills_root, slug="beta", name="beta", summary="Beta skill")
+    registry = FilesystemSkillRegistry(skills_root)
+
+    with pytest.raises(ValueError, match="Unknown allowed_skill_names: missing"):
+        ContextBuilder(skill_registry=registry, allowed_skill_names=("missing",))
+
+    with pytest.raises(ValueError, match="Unknown preload_skill_names: missing"):
+        ContextBuilder(skill_registry=registry, preload_skill_names=("missing",))
+
+    with pytest.raises(
+        ValueError,
+        match="preload_skill_names must be a subset of allowed_skill_names: beta",
+    ):
+        ContextBuilder(
+            skill_registry=registry,
+            allowed_skill_names=("alpha",),
+            preload_skill_names=("beta",),
+        )
 
 
 class UnusedModelPort:

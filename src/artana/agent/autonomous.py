@@ -13,7 +13,7 @@ from artana.agent.experience import ExperienceRule, ReflectionResult
 from artana.agent.loop import DraftVerifyLoopConfig
 from artana.agent.memory import InMemoryMemoryStore, MemoryStore
 from artana.agent.model_steps import execute_model_step
-from artana.agent.runtime_tools import RuntimeToolManager, extract_loaded_skill_name
+from artana.agent.runtime_tools import RuntimeToolManager, extract_loaded_skill
 from artana.agent.tool_args import model_from_tool_arguments_json
 from artana.canonicalization import canonical_json_dumps
 from artana.events import ChatMessage, ToolCallMessage, ToolFunctionCall
@@ -21,6 +21,7 @@ from artana.kernel import ArtanaKernel, ContextVersion, ReplayPolicy
 from artana.middleware import BudgetExceededError
 from artana.models import TenantContext
 from artana.ports.model import ToolCall
+from artana.skills import SkillDefinition
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 
@@ -57,6 +58,7 @@ class AutonomousAgent:
     QUERY_EVENT_HISTORY = "query_event_history"
     RECORD_INTENT_PLAN = "record_intent_plan"
     COMPACTION_ARTIFACT_SUMMARY_TYPE = "artifact::agent_compaction"
+    ACTIVE_SKILLS_SUMMARY_TYPE = "agent_active_skills"
 
     def __init__(
         self,
@@ -105,6 +107,8 @@ class AutonomousAgent:
             core_memory_search=self.CORE_MEMORY_SEARCH,
             query_event_history=self.QUERY_EVENT_HISTORY,
             record_intent_plan=self.RECORD_INTENT_PLAN,
+            skill_registry=context_builder.skill_registry,
+            allowed_skill_names=context_builder.allowed_skill_names,
         )
         self._runtime_tools.ensure_registered()
 
@@ -126,7 +130,19 @@ class AutonomousAgent:
 
         active_run_id = run_id
         short_term_messages: list[ChatMessage] = [ChatMessage(role="user", content=prompt)]
-        loaded_skills: set[str] = set()
+        loaded_tool_skills: set[str] = set()
+        active_registry_skill_names = self._runtime_tools.resolve_preloaded_registry_skills(
+            preload_skill_names=self._context_builder.preload_skill_names,
+            tenant_capabilities=tenant.capabilities,
+        )
+        if active_registry_skill_names:
+            await self._emit_active_skill_state(
+                run_id=active_run_id,
+                tenant=tenant,
+                step_key="skills_preloaded",
+                loaded_tool_skills=loaded_tool_skills,
+                active_registry_skill_names=active_registry_skill_names,
+            )
 
         for iteration in range(1, max_iterations + 1):
             try:
@@ -148,9 +164,15 @@ class AutonomousAgent:
                     ),
                 ) from exc
             try:
-                visible_tool_names = self._runtime_tools.visible_tool_names(
-                    loaded_skills=loaded_skills,
+                active_registry_skill_defs = self._runtime_tools.active_registry_skill_definitions(
+                    active_skill_names=active_registry_skill_names,
                     tenant_capabilities=tenant.capabilities,
+                )
+                active_registry_names = {skill.name for skill in active_registry_skill_defs}
+                visible_tool_names = self._runtime_tools.visible_tool_names(
+                    loaded_skills=loaded_tool_skills,
+                    tenant_capabilities=tenant.capabilities,
+                    active_registry_skills=active_registry_names,
                 )
                 memory_text = await self._memory_store.load(run_id=active_run_id)
                 available_skill_summaries = self._runtime_tools.available_skill_summaries(
@@ -162,9 +184,13 @@ class AutonomousAgent:
                     tenant=tenant,
                     short_term_messages=tuple(short_term_messages),
                     system_prompt=system_prompt,
-                    active_skills=frozenset(loaded_skills),
+                    active_skills=frozenset(loaded_tool_skills | active_registry_names),
                     available_skill_summaries=available_skill_summaries,
                     memory_text=memory_text,
+                )
+                context_messages = self._inject_active_skill_instructions(
+                    messages=context_messages,
+                    active_skills=active_registry_skill_defs,
                 )
                 active_turn_model = self._loop.draft_model if self._loop is not None else model
                 model_step_key = (
@@ -304,9 +330,26 @@ class AutonomousAgent:
                     )
                 )
                 if tool_call.tool_name == self.LOAD_SKILL_NAME:
-                    maybe_skill = extract_loaded_skill_name(tool_result.result_json)
-                    if maybe_skill is not None:
-                        loaded_skills.add(maybe_skill)
+                    previous_tool_skills = set(loaded_tool_skills)
+                    previous_registry_skills = set(active_registry_skill_names)
+                    loaded_skill = extract_loaded_skill(tool_result.result_json)
+                    if loaded_skill is not None:
+                        skill_name, skill_kind = loaded_skill
+                        if skill_kind == "registry_skill":
+                            active_registry_skill_names.add(skill_name)
+                        else:
+                            loaded_tool_skills.add(skill_name)
+                    if (
+                        previous_tool_skills != loaded_tool_skills
+                        or previous_registry_skills != active_registry_skill_names
+                    ):
+                        await self._emit_active_skill_state(
+                            run_id=active_run_id,
+                            tenant=tenant,
+                            step_key=f"turn_{iteration}_tool_{index}_active_skills",
+                            loaded_tool_skills=loaded_tool_skills,
+                            active_registry_skill_names=active_registry_skill_names,
+                        )
 
         raise MaxIterationsExceeded(
             f"Agent exceeded max iterations ({max_iterations}) without reaching an answer."
@@ -612,6 +655,90 @@ class AutonomousAgent:
         raise RuntimeError(
             f"Tool {tool_name!r} is not currently loaded. "
             "Call load_skill(skill_name=...) first."
+        )
+
+    def _inject_active_skill_instructions(
+        self,
+        *,
+        messages: tuple[ChatMessage, ...],
+        active_skills: tuple[SkillDefinition, ...],
+    ) -> tuple[ChatMessage, ...]:
+        if not active_skills:
+            return messages
+        skill_message = ChatMessage(
+            role="system",
+            content=self._render_active_skill_instructions(active_skills=active_skills),
+        )
+        if not messages:
+            return (skill_message,)
+        if messages[0].role == "system":
+            return (messages[0], skill_message, *messages[1:])
+        return (skill_message, *messages)
+
+    def _render_active_skill_instructions(
+        self,
+        *,
+        active_skills: tuple[SkillDefinition, ...],
+    ) -> str:
+        sections = [
+            "[ACTIVE SKILL INSTRUCTIONS]",
+            "The following filesystem-backed runtime skills are active for this run.",
+        ]
+        for skill in active_skills:
+            tool_names = ", ".join(skill.tools) or "(none)"
+            sections.append(
+                f"Skill: {skill.name}\nBundled tools: {tool_names}\n{skill.instructions_markdown}"
+            )
+        return "\n\n".join(sections).strip()
+
+    async def _emit_active_skill_state(
+        self,
+        *,
+        run_id: str,
+        tenant: TenantContext,
+        step_key: str,
+        loaded_tool_skills: set[str],
+        active_registry_skill_names: set[str],
+    ) -> None:
+        active_registry_skill_defs = self._runtime_tools.active_registry_skill_definitions(
+            active_skill_names=active_registry_skill_names,
+            tenant_capabilities=tenant.capabilities,
+        )
+        content_payload = {
+            "loaded_tool_skills": sorted(loaded_tool_skills),
+            "registry_skills": [
+                {
+                    "name": skill.name,
+                    "tool_names": list(skill.tools),
+                    "instructions_markdown": skill.instructions_markdown,
+                }
+                for skill in active_registry_skill_defs
+            ],
+        }
+        content_hash = hashlib.sha256(
+            canonical_json_dumps(content_payload).encode("utf-8")
+        ).hexdigest()
+        await self._emit_run_summary(
+            run_id=run_id,
+            tenant=tenant,
+            summary_type=self.ACTIVE_SKILLS_SUMMARY_TYPE,
+            step_key=step_key,
+            payload={
+                "active_skill_names": sorted(
+                    set(loaded_tool_skills)
+                    | {skill.name for skill in active_registry_skill_defs}
+                ),
+                "loaded_tool_skills": sorted(loaded_tool_skills),
+                "registry_skill_names": [skill.name for skill in active_registry_skill_defs],
+                "registry_tool_names": sorted(
+                    {
+                        tool_name
+                        for skill in active_registry_skill_defs
+                        for tool_name in skill.tools
+                    }
+                ),
+                "content_hash": content_hash,
+            },
         )
 
     def _reflection_messages(

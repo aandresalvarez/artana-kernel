@@ -384,16 +384,22 @@ Progressive skills allow dynamic tool exposure.
 Snippet (in-context, not standalone):
 
 ```pycon
-from artana.agent import AutonomousAgent
+from artana import AutonomousAgent, ContextBuilder, FilesystemSkillRegistry
 
-agent = AutonomousAgent(kernel=kernel)
+skill_registry = FilesystemSkillRegistry(["./skills"])
+agent = AutonomousAgent(
+    kernel=kernel,
+    context_builder=ContextBuilder(skill_registry=skill_registry),
+)
 
-# load_skill() must be called before using certain tools
+# load_skill("skill_name") activates a filesystem-backed SKILL.md skill
+# Bundled tools become visible only after the skill is active.
 ```
 
 Production tip:
 
 * Combine progressive skills with capability guard
+* Package reusable runtime guidance in `SKILL.md` files instead of embedding large instruction blocks in every prompt
 * Require explicit capability for high-risk tools
 
 ---

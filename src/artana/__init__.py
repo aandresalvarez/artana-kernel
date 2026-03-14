@@ -87,6 +87,7 @@ from artana.safety import (
     ToolLimitPolicy,
     ToolSafetyPolicy,
 )
+from artana.skills import FilesystemSkillRegistry, SkillDefinition, SkillRegistry
 from artana.store import PostgresStore, SQLiteStore, StoreSchemaInfo
 from artana.testing import MockModelPort
 from artana.tools import CodingHarnessTools, ObservabilityTools
@@ -176,6 +177,9 @@ __all__ = [
     "IntentRequirement",
     "IntentPlanRecord",
     "SemanticIdempotencyRequirement",
+    "SkillDefinition",
+    "SkillRegistry",
+    "FilesystemSkillRegistry",
     "ToolLimitPolicy",
     "ObservabilityTools",
     "ApprovalGatePolicy",

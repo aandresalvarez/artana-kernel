@@ -34,10 +34,14 @@ If you want end-to-end runnable scripts, use [examples/README.md](../examples/RE
 | Traceability and run summaries | Chapter 5, `docs/deep_traceability.md` |
 | CLI operations (`list`, `tail`, `verify-ledger`, `status`, `summaries`, `artifacts`, `--json`) | Chapter 5, `docs/kernel_contracts.md` |
 | CLI starter scaffolding (`artana init`, `--profile enforced|dev`) | Chapter 1, Chapter 5, `docs/kernel_contracts.md` |
+| Filesystem-backed runtime skills (`SKILL.md`, `FilesystemSkillRegistry`, `load_skill`) | Chapter 3, `docs/runtime_skills.md`, `examples/README.md` |
+| Runtime skills upgrade/change note | `docs/runtime_skills_upgrade.md`, `CHANGELOG.md` |
 
 ## Core Reference Docs
 
 - [Kernel contracts](./kernel_contracts.md)
+- [Runtime skills](./runtime_skills.md)
+- [Runtime skills upgrade notes](./runtime_skills_upgrade.md)
 - [Strong-model harnesses](./strong_model_harnesses.md)
 - [Deep traceability](./deep_traceability.md)
 - [Behavior index (generated)](./kernel_behavior_index.json)

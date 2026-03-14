@@ -76,7 +76,7 @@ Initial implementation aligned with the Artana Kernel PRD:
   - `ContextBuilder` — pluggable prompt assembly pipeline (identity + workspace context file + long-term memory + inter-run experience learnings + progressive skills + short-term history).
   - `SQLiteExperienceStore` — tenant/task-scoped inter-run learning store for reusable `WIN_PATTERN`, `ANTI_PATTERN`, and `FACT` rules.
   - Optional post-run reflection (`auto_reflect=True`) to extract and persist reusable rules with deterministic replay-safe step keys.
-  - Progressive skill disclosure via built-in `load_skill(...)` meta-tool, capability-scoped so tenants only see/load authorized skills.
+  - Progressive skill disclosure via built-in `load_skill(...)` for filesystem-backed `SKILL.md` skills and legacy hidden tools, capability-scoped so tenants only see/load authorized skills.
   - Built-in long-term memory tools: `core_memory_append`, `core_memory_replace`, `core_memory_search`.
   - `SubAgentFactory` — sub-agent delegation with run lineage (`parent::sub_agent::idempotency_key`) and parent tenant inheritance (capabilities + budget).
 - **The Workflow Runtime:**
@@ -266,18 +266,22 @@ from artana import (
     AutonomousAgent,
     CompactionStrategy,
     ContextBuilder,
+    FilesystemSkillRegistry,
     SQLiteExperienceStore,
     SQLiteMemoryStore,
 )
 
 memory_store = SQLiteMemoryStore("agent_memory.db")
 experience_store = SQLiteExperienceStore("tenant_experience.db")
+skill_registry = FilesystemSkillRegistry(["skills"])
 context_builder = ContextBuilder(
     identity="You are a senior data analyst.",
     memory_store=memory_store,
     experience_store=experience_store,
     task_category="Financial_Reporting",
     progressive_skills=True,
+    skill_registry=skill_registry,
+    preload_skill_names=("reporting_basics",),
     workspace_context_path="docs/ACTIVE_PLAN.md",
 )
 agent = AutonomousAgent(
@@ -725,8 +729,13 @@ Experience models are strict and reusable in both autonomous and workflow code:
 
 When `progressive_skills=True`:
 - The initial prompt includes a lightweight capability-filtered skills panel.
-- `load_skill(skill_name=...)` returns full schema/instructions only for authorized tools.
-- Unauthorized skill loads return a deterministic error payload (`"error": "forbidden_skill"`).
+- Registry-backed skills are discovered from `SKILL.md` files through `FilesystemSkillRegistry(...)`.
+- `load_skill(skill_name=...)` returns active instructions plus bundled tool names for registry skills, and the legacy full schema payload for hidden tool-only progressive mode.
+- Preloaded registry skills expose their instructions and bundled tools on the first turn.
+- Active registry skill instructions are re-injected on every turn so compaction does not erase them.
+- Unauthorized skill loads return a deterministic error payload (`"error": "forbidden_skill"`); broken bundled-tool references return `{"error":"invalid_skill"}`.
+- Best-practice guide: [docs/runtime_skills.md](./docs/runtime_skills.md)
+- Upgrade/change note for existing users: [docs/runtime_skills_upgrade.md](./docs/runtime_skills_upgrade.md)
 
 When `experience_store` and `task_category` are configured:
 - The system prompt includes:

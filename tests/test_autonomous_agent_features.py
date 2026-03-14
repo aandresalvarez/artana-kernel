@@ -24,6 +24,7 @@ from artana.kernel import ArtanaKernel
 from artana.middleware import QuotaMiddleware
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage, ToolCall
+from artana.skills import FilesystemSkillRegistry
 from artana.store import SQLiteStore
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
@@ -42,6 +43,48 @@ def _tenant() -> TenantContext:
         tenant_id="org_agent_features",
         capabilities=frozenset(),
         budget_usd_limit=3.0,
+    )
+
+
+def _write_skill_file(
+    root: Path,
+    *,
+    slug: str,
+    name: str,
+    version: str = "1.0.0",
+    summary: str,
+    instructions: str,
+    tools: tuple[str, ...] = (),
+    requires_capabilities: tuple[str, ...] = (),
+    tags: tuple[str, ...] = (),
+) -> Path:
+    path = root / slug / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "---",
+        f"name: {name}",
+        f"version: {version}",
+        f"summary: {summary}",
+    ]
+    if tools:
+        lines.append("tools:")
+        lines.extend(f"  - {tool}" for tool in tools)
+    if requires_capabilities:
+        lines.append("requires_capabilities:")
+        lines.extend(f"  - {capability}" for capability in requires_capabilities)
+    if tags:
+        lines.append("tags:")
+        lines.extend(f"  - {tag}" for tag in tags)
+    lines.extend(("---", instructions))
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def _tool_call(*, tool_name: str, arguments: dict[str, object], tool_call_id: str) -> ToolCall:
+    return ToolCall(
+        tool_name=tool_name,
+        arguments_json=json.dumps(arguments),
+        tool_call_id=tool_call_id,
     )
 
 
@@ -100,6 +143,43 @@ class ProgressiveSkillsModelPort:
         return ModelResult(
             output=output,
             usage=ModelUsage(prompt_tokens=12, completion_tokens=6, cost_usd=0.01),
+            tool_calls=tool_calls,
+        )
+
+
+class SequenceModelPort:
+    def __init__(self, tool_call_sequences: list[tuple[ToolCall, ...]]) -> None:
+        self._tool_call_sequences = tool_call_sequences
+        self.calls = 0
+        self._script_index = 0
+        self.allowed_tool_batches: list[list[str]] = []
+        self.system_message_batches: list[list[str]] = []
+
+    async def complete(
+        self, request: ModelRequest[OutputModelT]
+    ) -> ModelResult[OutputModelT]:
+        self.calls += 1
+        self.allowed_tool_batches.append([tool.name for tool in request.allowed_tools])
+        self.system_message_batches.append(
+            [message.content for message in request.messages if message.role == "system"]
+        )
+
+        if "summary" in request.output_schema.model_fields:
+            return ModelResult(
+                output=request.output_schema.model_validate({"summary": "condensed history"}),
+                usage=ModelUsage(prompt_tokens=8, completion_tokens=4, cost_usd=0.01),
+            )
+
+        tool_calls: tuple[ToolCall, ...] = ()
+        done = True
+        if self._script_index < len(self._tool_call_sequences):
+            tool_calls = self._tool_call_sequences[self._script_index]
+            self._script_index += 1
+            done = False
+
+        return ModelResult(
+            output=request.output_schema.model_validate({"done": done}),
+            usage=ModelUsage(prompt_tokens=8, completion_tokens=4, cost_usd=0.01),
             tool_calls=tool_calls,
         )
 
@@ -587,6 +667,402 @@ async def test_autonomous_agent_progressive_skill_loading(tmp_path: Path) -> Non
         assert "secret_tool" not in model_port.allowed_tool_batches[0]
         assert "load_skill" in model_port.allowed_tool_batches[0]
         assert any("secret_tool" in batch for batch in model_port.allowed_tool_batches[1:])
+
+        events = await store.get_events_for_run("run_progressive_skills")
+        load_skill_payloads: list[dict[str, object]] = []
+        for event in events:
+            if event.event_type != EventType.TOOL_COMPLETED:
+                continue
+            payload = event.payload
+            if payload.kind != "tool_completed" or payload.tool_name != "load_skill":
+                continue
+            parsed = json.loads(payload.result_json)
+            if isinstance(parsed, dict):
+                load_skill_payloads.append(parsed)
+        assert load_skill_payloads
+        assert load_skill_payloads[0].get("loaded") is True
+        assert load_skill_payloads[0].get("kind") != "registry_skill"
+        assert "arguments_schema" in load_skill_payloads[0]
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_autonomous_agent_loads_registry_backed_skill_and_reveals_bundled_tools(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = SequenceModelPort(
+        [
+            (
+                _tool_call(
+                    tool_name="load_skill",
+                    arguments={"skill_name": "reader_skill"},
+                    tool_call_id="call_load_registry_1",
+                ),
+            ),
+            (
+                _tool_call(
+                    tool_name="skill_echo_tool",
+                    arguments={"value": "x"},
+                    tool_call_id="call_skill_echo_2",
+                ),
+            ),
+        ]
+    )
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    tool_calls = 0
+
+    @kernel.tool()
+    async def skill_echo_tool(value: str) -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        return json.dumps({"echo": value})
+
+    skills_root = tmp_path / "skills"
+    _write_skill_file(
+        skills_root,
+        slug="reader_skill",
+        name="reader_skill",
+        summary="Read hidden demo data.",
+        instructions="Use skill_echo_tool once the reader skill is active.",
+        tools=("skill_echo_tool",),
+    )
+    registry = FilesystemSkillRegistry(skills_root)
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(skill_registry=registry),
+    )
+
+    try:
+        result = await agent.run(
+            run_id="run_registry_progressive_skills",
+            tenant=_tenant(),
+            model="gpt-4o-mini",
+            prompt="use the registry-backed skill",
+            output_schema=AgentResult,
+            max_iterations=4,
+        )
+        assert result.done is True
+        assert tool_calls == 1
+        assert "reader_skill" in model_port.system_message_batches[0][0]
+        assert "skill_echo_tool" not in model_port.allowed_tool_batches[0]
+        assert "skill_echo_tool" in model_port.allowed_tool_batches[1]
+        assert any(
+            "Use skill_echo_tool once the reader skill is active." in message
+            for message in model_port.system_message_batches[1]
+        )
+
+        summary = await kernel.get_latest_run_summary(
+            run_id="run_registry_progressive_skills",
+            tenant=_tenant(),
+            summary_type=AutonomousAgent.ACTIVE_SKILLS_SUMMARY_TYPE,
+        )
+        assert summary is not None
+        payload = json.loads(summary.summary_json)
+        assert payload["active_skill_names"] == ["reader_skill"]
+        assert payload["registry_tool_names"] == ["skill_echo_tool"]
+        assert len(payload["content_hash"]) == 64
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_autonomous_agent_preloads_registry_skill_tools_and_instructions(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = SequenceModelPort(
+        [
+            (
+                _tool_call(
+                    tool_name="preloaded_echo_tool",
+                    arguments={"value": "warm"},
+                    tool_call_id="call_preloaded_tool_1",
+                ),
+            ),
+        ]
+    )
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    tool_calls = 0
+
+    @kernel.tool()
+    async def preloaded_echo_tool(value: str) -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        return json.dumps({"echo": value})
+
+    skills_root = tmp_path / "skills"
+    _write_skill_file(
+        skills_root,
+        slug="preloaded_reader",
+        name="preloaded_reader",
+        summary="Load the preloaded demo tool.",
+        instructions="Start with preloaded_echo_tool when the run begins.",
+        tools=("preloaded_echo_tool",),
+    )
+    registry = FilesystemSkillRegistry(skills_root)
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(
+            skill_registry=registry,
+            preload_skill_names=("preloaded_reader",),
+        ),
+    )
+
+    try:
+        result = await agent.run(
+            run_id="run_preloaded_registry_skill",
+            tenant=_tenant(),
+            model="gpt-4o-mini",
+            prompt="start with the preloaded skill",
+            output_schema=AgentResult,
+            max_iterations=3,
+        )
+        assert result.done is True
+        assert tool_calls == 1
+        assert "preloaded_echo_tool" in model_port.allowed_tool_batches[0]
+        assert any(
+            "Start with preloaded_echo_tool when the run begins." in message
+            for message in model_port.system_message_batches[0]
+        )
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_registry_skill_instructions_survive_compaction_turns(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = SequenceModelPort(
+        [
+            (
+                _tool_call(
+                    tool_name="load_skill",
+                    arguments={"skill_name": "compact_skill"},
+                    tool_call_id="call_load_compact_skill_1",
+                ),
+            ),
+        ]
+    )
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    skills_root = tmp_path / "skills"
+    _write_skill_file(
+        skills_root,
+        slug="compact_skill",
+        name="compact_skill",
+        summary="Stay active after compaction.",
+        instructions="This instruction must survive compaction.",
+    )
+    registry = FilesystemSkillRegistry(skills_root)
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(skill_registry=registry),
+        compaction=CompactionStrategy(
+            trigger_at_messages=1,
+            keep_recent_messages=0,
+            summarize_with_model="gpt-4o-mini",
+        ),
+    )
+
+    try:
+        result = await agent.run(
+            run_id="run_registry_compaction_skill",
+            tenant=_tenant(),
+            model="gpt-4o-mini",
+            prompt="load a skill and continue",
+            output_schema=AgentResult,
+            max_iterations=2,
+        )
+        assert result.done is True
+        assert len(model_port.system_message_batches) >= 2
+        assert any(
+            "This instruction must survive compaction." in message
+            for batch in model_port.system_message_batches[1:]
+            for message in batch
+        )
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_registry_skills_hide_forbidden_bundled_tools_and_return_forbidden_skill(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = SequenceModelPort(
+        [
+            (
+                _tool_call(
+                    tool_name="load_skill",
+                    arguments={"skill_name": "admin_bundle"},
+                    tool_call_id="call_load_admin_bundle_1",
+                ),
+            ),
+        ]
+    )
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+
+    @kernel.tool(requires_capability="admin:tool")
+    async def admin_skill_tool() -> str:
+        return json.dumps({"ok": True})
+
+    skills_root = tmp_path / "skills"
+    _write_skill_file(
+        skills_root,
+        slug="admin_bundle",
+        name="admin_bundle",
+        summary="Admin-only registry skill.",
+        instructions="Use admin_skill_tool for admin work.",
+        tools=("admin_skill_tool",),
+    )
+    registry = FilesystemSkillRegistry(skills_root)
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(skill_registry=registry),
+    )
+
+    try:
+        result = await agent.run(
+            run_id="run_forbidden_registry_skill",
+            tenant=_tenant(),
+            model="gpt-4o-mini",
+            prompt="try loading the admin registry skill",
+            output_schema=AgentResult,
+            max_iterations=3,
+        )
+        assert result.done is True
+        assert "admin_bundle" not in model_port.system_message_batches[0][0]
+        assert all(
+            "admin_skill_tool" not in batch for batch in model_port.allowed_tool_batches
+        )
+
+        events = await store.get_events_for_run("run_forbidden_registry_skill")
+        load_skill_payloads: list[dict[str, object]] = []
+        for event in events:
+            if event.event_type != EventType.TOOL_COMPLETED:
+                continue
+            payload = event.payload
+            if payload.kind != "tool_completed" or payload.tool_name != "load_skill":
+                continue
+            parsed = json.loads(payload.result_json)
+            if isinstance(parsed, dict):
+                load_skill_payloads.append(parsed)
+        assert load_skill_payloads
+        assert load_skill_payloads[0]["kind"] == "registry_skill"
+        assert load_skill_payloads[0]["error"] == "forbidden_skill"
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_registry_skills_return_invalid_skill_when_bundled_tool_is_missing(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = SequenceModelPort(
+        [
+            (
+                _tool_call(
+                    tool_name="load_skill",
+                    arguments={"skill_name": "broken_bundle"},
+                    tool_call_id="call_load_broken_bundle_1",
+                ),
+            ),
+        ]
+    )
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    skills_root = tmp_path / "skills"
+    _write_skill_file(
+        skills_root,
+        slug="broken_bundle",
+        name="broken_bundle",
+        summary="Broken registry skill.",
+        instructions="This skill references a missing tool.",
+        tools=("missing_tool",),
+    )
+    registry = FilesystemSkillRegistry(skills_root)
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(skill_registry=registry),
+    )
+
+    try:
+        result = await agent.run(
+            run_id="run_invalid_registry_skill",
+            tenant=_tenant(),
+            model="gpt-4o-mini",
+            prompt="try loading the broken registry skill",
+            output_schema=AgentResult,
+            max_iterations=3,
+        )
+        assert result.done is True
+
+        events = await store.get_events_for_run("run_invalid_registry_skill")
+        load_skill_payloads: list[dict[str, object]] = []
+        for event in events:
+            if event.event_type != EventType.TOOL_COMPLETED:
+                continue
+            payload = event.payload
+            if payload.kind != "tool_completed" or payload.tool_name != "load_skill":
+                continue
+            parsed = json.loads(payload.result_json)
+            if isinstance(parsed, dict):
+                load_skill_payloads.append(parsed)
+        assert load_skill_payloads
+        assert load_skill_payloads[0]["kind"] == "registry_skill"
+        assert load_skill_payloads[0]["error"] == "invalid_skill"
+        assert load_skill_payloads[0]["missing_tools"] == ["missing_tool"]
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_instruction_only_registry_skills_load_without_revealing_tools(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = SequenceModelPort(
+        [
+            (
+                _tool_call(
+                    tool_name="load_skill",
+                    arguments={"skill_name": "style_skill"},
+                    tool_call_id="call_load_style_skill_1",
+                ),
+            ),
+        ]
+    )
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    skills_root = tmp_path / "skills"
+    _write_skill_file(
+        skills_root,
+        slug="style_skill",
+        name="style_skill",
+        summary="Style-only registry skill.",
+        instructions="Always answer in a concise style.",
+    )
+    registry = FilesystemSkillRegistry(skills_root)
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=ContextBuilder(skill_registry=registry),
+    )
+
+    try:
+        result = await agent.run(
+            run_id="run_instruction_only_registry_skill",
+            tenant=_tenant(),
+            model="gpt-4o-mini",
+            prompt="load the style skill",
+            output_schema=AgentResult,
+            max_iterations=3,
+        )
+        assert result.done is True
+        assert len(model_port.allowed_tool_batches) >= 2
+        assert model_port.allowed_tool_batches[1] == model_port.allowed_tool_batches[0]
+        assert any(
+            "Always answer in a concise style." in message
+            for message in model_port.system_message_batches[1]
+        )
     finally:
         await kernel.close()
 
@@ -1208,5 +1684,49 @@ async def test_context_builder_override_is_used_by_autonomous_agent(tmp_path: Pa
         )
         assert result.done is True
         assert model_port.first_system_content == "CUSTOM CONTEXT"
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_context_builder_override_keeps_custom_system_message_and_injects_active_skills(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state.db"))
+    model_port = SequenceModelPort([])
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    skills_root = tmp_path / "skills"
+    _write_skill_file(
+        skills_root,
+        slug="preloaded_style",
+        name="preloaded_style",
+        summary="Preloaded style guidance.",
+        instructions="Use the preloaded style guidance on every turn.",
+    )
+    registry = FilesystemSkillRegistry(skills_root)
+    agent = AutonomousAgent(
+        kernel=kernel,
+        context_builder=CustomContextBuilder(
+            skill_registry=registry,
+            preload_skill_names=("preloaded_style",),
+        ),
+    )
+
+    try:
+        result = await agent.run(
+            run_id="run_custom_context_preloaded_skill",
+            tenant=_tenant(),
+            model="gpt-4o-mini",
+            prompt="hello",
+            output_schema=AgentResult,
+            max_iterations=1,
+        )
+        assert result.done is True
+        assert model_port.system_message_batches
+        assert model_port.system_message_batches[0][0] == "CUSTOM CONTEXT"
+        assert any(
+            "Use the preloaded style guidance on every turn." in message
+            for message in model_port.system_message_batches[0][1:]
+        )
     finally:
         await kernel.close()

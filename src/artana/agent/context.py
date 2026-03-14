@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from artana.agent.experience import ExperienceRule, ExperienceStore
@@ -10,10 +10,11 @@ from artana.agent.memory import MemoryStore
 from artana.events import ChatMessage
 from artana.kernel import ArtanaKernel
 from artana.models import TenantContext
+from artana.skills import SkillRegistry
 
 
 class ContextBuilder(ABC):
-    VERSION = "context_builder.v1"
+    VERSION = "context_builder.v2"
 
     def __init__(
         self,
@@ -24,6 +25,9 @@ class ContextBuilder(ABC):
         task_category: str | None = None,
         progressive_skills: bool = True,
         workspace_context_path: str | None = None,
+        skill_registry: SkillRegistry | None = None,
+        allowed_skill_names: Iterable[str] | None = None,
+        preload_skill_names: Iterable[str] | None = None,
     ) -> None:
         self.identity = identity
         self.memory_store = memory_store
@@ -31,6 +35,10 @@ class ContextBuilder(ABC):
         self.task_category = task_category
         self.progressive_skills = progressive_skills
         self.workspace_context_path = workspace_context_path
+        self.skill_registry = skill_registry
+        self.allowed_skill_names = self._normalize_optional_skill_names(allowed_skill_names)
+        self.preload_skill_names = self._normalize_skill_names(preload_skill_names)
+        self._validate_skill_configuration()
 
     @property
     def version(self) -> str:
@@ -93,7 +101,7 @@ class ContextBuilder(ABC):
             if available_skill_summaries
             else ""
         )
-        available_block = f"Available tools: [{available_names}]"
+        available_block = f"Available skills/tools: [{available_names}]"
         if available_skill_summaries:
             summaries = ", ".join(
                 f"{name}: {summary}"
@@ -103,10 +111,10 @@ class ContextBuilder(ABC):
             summaries = "(none)"
         return (
             f"{available_block}\n"
-            f"Tool summaries: {summaries}\n"
+            f"Skill summaries: {summaries}\n"
             f"Loaded Skills: {loaded}\n"
             "Call load_skill(skill_name=\"<name>\") when you need full "
-            "tool arguments and constraints."
+            "skill instructions or hidden tool arguments and constraints."
         )
 
     async def _load_experience_rules(
@@ -134,6 +142,56 @@ class ContextBuilder(ABC):
             lines.append(f"{rule.rule_type.value.upper()}: {rule.content}")
         return "\n".join(lines)
 
+    def _normalize_optional_skill_names(
+        self,
+        skill_names: Iterable[str] | None,
+    ) -> frozenset[str] | None:
+        if skill_names is None:
+            return None
+        return self._normalize_skill_names(skill_names)
+
+    def _normalize_skill_names(self, skill_names: Iterable[str] | None) -> frozenset[str]:
+        if skill_names is None:
+            return frozenset()
+        normalized: set[str] = set()
+        for skill_name in skill_names:
+            if not isinstance(skill_name, str):
+                raise ValueError("Skill names must be strings.")
+            stripped = skill_name.strip()
+            if stripped == "":
+                raise ValueError("Skill names must not be empty.")
+            normalized.add(stripped)
+        return frozenset(normalized)
+
+    def _validate_skill_configuration(self) -> None:
+        if self.skill_registry is None:
+            if self.allowed_skill_names is not None:
+                raise ValueError("allowed_skill_names requires skill_registry to be configured.")
+            if self.preload_skill_names:
+                raise ValueError("preload_skill_names requires skill_registry to be configured.")
+            return
+
+        known_skill_names = self.skill_registry.skill_names()
+        if self.allowed_skill_names is not None:
+            unknown_allowed = self.allowed_skill_names - known_skill_names
+            if unknown_allowed:
+                unknown = ", ".join(sorted(unknown_allowed))
+                raise ValueError(f"Unknown allowed_skill_names: {unknown}")
+
+        unknown_preloads = self.preload_skill_names - known_skill_names
+        if unknown_preloads:
+            unknown = ", ".join(sorted(unknown_preloads))
+            raise ValueError(f"Unknown preload_skill_names: {unknown}")
+
+        if self.allowed_skill_names is not None:
+            disallowed_preloads = self.preload_skill_names - self.allowed_skill_names
+            if disallowed_preloads:
+                invalid = ", ".join(sorted(disallowed_preloads))
+                raise ValueError(
+                    "preload_skill_names must be a subset of allowed_skill_names: "
+                    f"{invalid}"
+                )
+
 
 class WorkspaceSnapshotContextBuilder(ContextBuilder):
     VERSION = "context_builder.workspace_snapshot.v1"
@@ -155,6 +213,9 @@ class WorkspaceSnapshotContextBuilder(ContextBuilder):
             task_category=self._base.task_category,
             progressive_skills=self._base.progressive_skills,
             workspace_context_path=self._base.workspace_context_path,
+            skill_registry=self._base.skill_registry,
+            allowed_skill_names=self._base.allowed_skill_names,
+            preload_skill_names=self._base.preload_skill_names,
         )
 
     @property

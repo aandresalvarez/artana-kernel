@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
+import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TypeVar
@@ -11,7 +11,6 @@ from pydantic import BaseModel
 
 import artana.cli as cli_module
 from artana import ArtanaKernel
-from artana.cli import main as cli_main
 from artana.events import KernelEvent
 from artana.models import TenantContext
 from artana.ports.model import ModelRequest, ModelResult, ModelUsage
@@ -69,14 +68,36 @@ async def _seed_runs(db_path: Path) -> None:
         await kernel.close()
 
 
-def test_cli_run_list_and_tail_and_verify(
+async def _read_first_event(db_path: Path, run_id: str) -> KernelEvent:
+    store = SQLiteStore(str(db_path))
+    try:
+        return (await store.get_events_for_run(run_id))[0]
+    finally:
+        await store.close()
+
+
+async def _invoke_cli(argv: list[str]) -> int:
+    parser = cli_module._build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 1
+    try:
+        return await cli_module._run_command(args)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+@pytest.mark.asyncio
+async def test_cli_run_list_and_tail_and_verify(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     db_path = tmp_path / "state.db"
-    asyncio.run(_seed_runs(db_path))
+    await _seed_runs(db_path)
 
-    code_list = cli_main(
+    code_list = await _invoke_cli(
         ["run", "list", "--db", str(db_path), "--tenant", _tenant().tenant_id]
     )
     output_list = capsys.readouterr().out
@@ -85,19 +106,19 @@ def test_cli_run_list_and_tail_and_verify(
     assert "run_cli_two" in output_list
     assert "run_cli_other" not in output_list
 
-    missing_tenant_code = cli_main(["run", "list", "--db", str(db_path)])
+    missing_tenant_code = await _invoke_cli(["run", "list", "--db", str(db_path)])
     missing_tenant = capsys.readouterr()
     assert missing_tenant_code == 2
     assert "required: --tenant" in missing_tenant.err
 
-    code_tail = cli_main(
+    code_tail = await _invoke_cli(
         ["run", "tail", "run_cli_one", "--db", str(db_path), "--tenant", _tenant().tenant_id]
     )
     output_tail = capsys.readouterr().out
     assert code_tail == 0
     assert "run_started" in output_tail
 
-    code_verify = cli_main(
+    code_verify = await _invoke_cli(
         [
             "run",
             "verify-ledger",
@@ -113,14 +134,15 @@ def test_cli_run_list_and_tail_and_verify(
     assert output_verify == "valid"
 
 
-def test_cli_json_status_summaries_and_artifacts(
+@pytest.mark.asyncio
+async def test_cli_json_status_summaries_and_artifacts(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     db_path = tmp_path / "state.db"
-    asyncio.run(_seed_runs(db_path))
+    await _seed_runs(db_path)
 
-    code_status = cli_main(
+    code_status = await _invoke_cli(
         [
             "run",
             "status",
@@ -137,7 +159,7 @@ def test_cli_json_status_summaries_and_artifacts(
     assert payload_status["run_id"] == "run_cli_one"
     assert payload_status["status"] in {"active", "paused", "failed", "completed"}
 
-    code_summaries = cli_main(
+    code_summaries = await _invoke_cli(
         [
             "run",
             "summaries",
@@ -157,7 +179,7 @@ def test_cli_json_status_summaries_and_artifacts(
         for item in payload_summaries["summaries"]
     )
 
-    code_artifacts = cli_main(
+    code_artifacts = await _invoke_cli(
         [
             "run",
             "artifacts",
@@ -174,7 +196,7 @@ def test_cli_json_status_summaries_and_artifacts(
     assert payload_artifacts["run_id"] == "run_cli_one"
     assert payload_artifacts["artifacts"]["report"]["status"] == "ok"
 
-    code_verify = cli_main(
+    code_verify = await _invoke_cli(
         [
             "run",
             "verify-ledger",
@@ -191,16 +213,17 @@ def test_cli_json_status_summaries_and_artifacts(
     assert payload_verify["valid"] is True
 
 
-def test_cli_tail_follow_uses_streaming_access_check(
+@pytest.mark.asyncio
+async def test_cli_tail_follow_uses_streaming_access_check(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     db_path = tmp_path / "state.db"
-    asyncio.run(_seed_runs(db_path))
+    await _seed_runs(db_path)
 
     store = SQLiteStore(str(db_path))
-    first_event = asyncio.run(store.get_events_for_run("run_cli_one"))[0]
+    first_event = await _read_first_event(db_path, "run_cli_one")
     observed = {"history_reads": 0, "stream_calls": 0}
 
     async def fail_get_events_for_run(run_id: str) -> list[object]:
@@ -225,7 +248,7 @@ def test_cli_tail_follow_uses_streaming_access_check(
     monkeypatch.setattr(store, "stream_events", stream_events)
     monkeypatch.setattr(cli_module, "_open_store", lambda *, db, dsn: store)
 
-    code = cli_main(
+    code = await _invoke_cli(
         [
             "run",
             "tail",
@@ -245,21 +268,22 @@ def test_cli_tail_follow_uses_streaming_access_check(
     assert "run_started" in output
 
 
-def test_cli_init_scaffold_profiles(
+@pytest.mark.asyncio
+async def test_cli_init_scaffold_profiles(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     enforced_path = tmp_path / "starter_enforced"
     dev_path = tmp_path / "starter_dev"
 
-    code_enforced = cli_main(["init", str(enforced_path)])
+    code_enforced = await _invoke_cli(["init", str(enforced_path)])
     out_enforced = capsys.readouterr().out
     assert code_enforced == 0
     assert "Initialized Artana project" in out_enforced
     enforced_app = (enforced_path / "app.py").read_text(encoding="utf-8")
     assert "KernelPolicy.enforced()" in enforced_app
 
-    code_dev = cli_main(["init", str(dev_path), "--profile", "dev"])
+    code_dev = await _invoke_cli(["init", str(dev_path), "--profile", "dev"])
     out_dev = capsys.readouterr().out
     assert code_dev == 0
     assert "Initialized Artana project" in out_dev

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -356,7 +357,7 @@ async def test_tool_policy_columns_and_aggregates_are_queryable(tmp_path: Path) 
         assert latest_after_second.outcome == "unknown_outcome"
         assert latest_after_second.request_step_key == "invoice_2"
 
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             columns = {
                 str(row[1])
                 for row in connection.execute("PRAGMA table_info(kernel_events)")
@@ -460,7 +461,7 @@ async def test_run_state_snapshots_are_queryable(tmp_path: Path) -> None:
         )
         assert {item.run_id for item in recent} == {"run_snapshot_main", "run_snapshot_done"}
 
-        with sqlite3.connect(database_path) as connection:
+        with closing(sqlite3.connect(database_path)) as connection:
             columns = {
                 str(row[1])
                 for row in connection.execute("PRAGMA table_info(run_state_snapshots)")

@@ -34,6 +34,12 @@ All notable changes to `artana-kernel` are documented in this file.
   - `error_category`
   - `diagnostics_json`
   - failure transitions on non-completed model terminal outcomes.
+- Filesystem-backed runtime skills:
+  - `SkillDefinition`
+  - `SkillRegistry`
+  - `FilesystemSkillRegistry`
+  - optional `ContextBuilder(...)` skill configuration (`skill_registry`, `allowed_skill_names`, `preload_skill_names`)
+  - registry-backed `load_skill(...)` flow with bundled-tool activation and compaction-safe skill instruction reinjection
 
 ### Docs
 
@@ -42,6 +48,7 @@ All notable changes to `artana-kernel` are documented in this file.
 - Documented event-loop ownership expectations and FastAPI lifespan usage for long-lived kernel/store instances.
 - Documented Postgres transient read retry semantics in contracts/compatibility docs.
 - Updated contracts/traceability docs for `model_terminal`, failed-cycle replay behavior, and stale-run cleanup semantics.
+- Added runtime skills usage and upgrade/change documentation.
 
 ## [0.1.0] - 2026-02-26
 

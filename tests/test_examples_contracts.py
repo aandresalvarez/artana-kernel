@@ -13,6 +13,7 @@ LOCAL_FIRST_EXAMPLES = frozenset(
         "05_hard_triplets_workflow.py",
         "07_adaptive_agent_learning.py",
         "09_harness_engineering_dx.py",
+        "15_file_backed_skills.py",
     }
 )
 LIVE_MODEL_EXAMPLES = frozenset(

@@ -7,7 +7,7 @@ Use explicit `StepKey(...)` in that scaffold when you want deterministic workflo
 
 ## Runtime Profiles
 
-- Local-first (no external API key): `01_durable_chat_replay.py`, `04_autonomous_agent_research.py`, `05_hard_triplets_workflow.py`, `07_adaptive_agent_learning.py`, `09_harness_engineering_dx.py`
+- Local-first (no external API key): `01_durable_chat_replay.py`, `04_autonomous_agent_research.py`, `05_hard_triplets_workflow.py`, `07_adaptive_agent_learning.py`, `09_harness_engineering_dx.py`, `15_file_backed_skills.py`
 - Live model required (`OPENAI_API_KEY`): `02_real_litellm_chat.py`, `03_fact_extraction_triplets.py`, `06_triplets_swarm.py`, `08_responses_mode.py`, `10_live_manual_agent_harness.py`, `11_durable_release_harness.py`, `12_research_strong_model_harness.py`, `13_support_strong_model_harness.py`, `14_data_diagnostic_harness.py`, `golden_example.py`
 
 All live examples fail fast with a troubleshooting message if `OPENAI_API_KEY` is not loaded.
@@ -252,4 +252,18 @@ Run:
 ```bash
 set -a; source .env; set +a
 uv run python examples/14_data_diagnostic_harness.py
+```
+
+## 15 - File-Backed Runtime Skills
+
+Demonstrates filesystem-backed progressive skills without a live model:
+- `FilesystemSkillRegistry` discovering `SKILL.md` files from disk
+- one instruction-only skill and one bundled-tool skill
+- progressive activation through `load_skill(...)`
+- bundled tool visibility only after the corresponding skill is active
+
+Run:
+
+```bash
+uv run python examples/15_file_backed_skills.py
 ```

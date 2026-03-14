@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -81,7 +82,7 @@ async def test_event_hash_chain_detects_tampering(tmp_path: Path) -> None:
     finally:
         await store.close()
 
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.execute(
             """
             UPDATE kernel_events
@@ -182,7 +183,7 @@ async def test_event_hash_chain_verifies_legacy_tool_requested_hash(tmp_path: Pa
         parent_step_key=second_event.parent_step_key,
         payload_json=legacy_payload_json,
     )
-    with sqlite3.connect(database_path) as connection:
+    with closing(sqlite3.connect(database_path)) as connection:
         connection.execute(
             """
             UPDATE kernel_events
