@@ -50,6 +50,13 @@ All notable changes to `artana-kernel` are documented in this file.
 - Updated contracts/traceability docs for `model_terminal`, failed-cycle replay behavior, and stale-run cleanup semantics.
 - Added runtime skills usage and upgrade/change documentation.
 
+## [0.1.1] - 2026-04-02
+
+### Changed
+
+- Tagged a patch release to distinguish current code from the original `0.1.0` release.
+- Bumped package metadata and editable lockfile version to `0.1.1` so installs and repo state report the same release version.
+
 ## [0.1.0] - 2026-02-26
 
 ### Added

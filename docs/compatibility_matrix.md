@@ -6,7 +6,8 @@ This matrix defines runtime API and store schema compatibility for `0.x` release
 
 | Package version | Runtime API contract | Notes |
 | --- | --- | --- |
-| `0.1.0` | Baseline kernel lifecycle APIs (`get_run_status`, `list_active_runs`, `resume_point`) | Initial public contract for run lifecycle and replay policy behavior. |
+| `0.1.1` | Current patch release for the baseline kernel lifecycle APIs (`get_run_status`, `list_active_runs`, `resume_point`) | Use this tagged release to distinguish post-`0.1.0` code from the original `0.1.0` artifact. |
+| `0.1.0` | Original baseline kernel lifecycle APIs (`get_run_status`, `list_active_runs`, `resume_point`) | Initial public contract for run lifecycle and replay policy behavior. |
 | `0.1.x` (future patches) | Backward-compatible with `0.1.0` public APIs | No breaking runtime API changes in patch releases. |
 
 ## Client compatibility behavior

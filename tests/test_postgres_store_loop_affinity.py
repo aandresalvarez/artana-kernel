@@ -44,7 +44,7 @@ def test_postgres_store_rejects_cross_loop_close() -> None:
 
 def test_postgres_store_rejects_cross_loop_reads() -> None:
     store = PostgresStore("postgresql://example.invalid:5432/artana")
-    store._pool = _FakePool()  # type: ignore[assignment]
+    store._pool = _FakePool()
 
     assert asyncio.run(store.get_events_for_run("run_loop_affinity")) == []
 
