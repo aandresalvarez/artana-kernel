@@ -11,7 +11,8 @@ requires-python = ">=3.12"
 dependencies = [
   "aiosqlite>=0.20.0",
   "asyncpg>=0.30.0",
-  "litellm>=1.82.1",
+  # Pin to a reviewed-safe release; upgrade deliberately after security review.
+  "litellm==1.83.0",
   "pydantic>=2.10.6",
   "pyyaml>=6.0.3",
 ]
