@@ -38,6 +38,32 @@ POSTGRES_STORE_SCHEMA_VERSION = "2"
 _ReadResultT = TypeVar("_ReadResultT")
 
 
+class LoopAffinityError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        resource: str,
+        operation: str,
+        bound_loop: asyncio.AbstractEventLoop,
+        current_loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        message = (
+            f"{resource} is bound to event loop {_describe_loop(bound_loop)} and "
+            f"cannot be used from event loop {_describe_loop(current_loop)} during "
+            f"{operation}. Create a new {resource} for the new loop or bridge the "
+            "call back to the owning loop."
+        )
+        super().__init__(message)
+        self.resource = resource
+        self.operation = operation
+        self.bound_loop = bound_loop
+        self.current_loop = current_loop
+
+
+def _describe_loop(loop: asyncio.AbstractEventLoop) -> str:
+    return f"{loop.__class__.__name__}(id={id(loop)})"
+
+
 class PostgresStore(EventStore):
     def __init__(
         self,
@@ -73,6 +99,7 @@ class PostgresStore(EventStore):
 
         self._pool: asyncpg.Pool | None = None
         self._pool_lock = asyncio.Lock()
+        self._bound_loop: asyncio.AbstractEventLoop | None = None
 
     async def get_schema_info(self) -> StoreSchemaInfo:
         return StoreSchemaInfo(
@@ -617,6 +644,7 @@ class PostgresStore(EventStore):
         return True
 
     async def close(self) -> None:
+        self._assert_loop_affinity(operation="close()")
         pool_to_close: asyncpg.Pool | None = None
         async with self._pool_lock:
             if self._pool is None:
@@ -628,6 +656,7 @@ class PostgresStore(EventStore):
         await pool_to_close.close()
 
     async def _ensure_pool(self) -> asyncpg.Pool:
+        self._assert_loop_affinity(operation="database access")
         if self._pool is not None:
             return self._pool
 
@@ -649,6 +678,20 @@ class PostgresStore(EventStore):
         if self._pool is None:
             raise RuntimeError("Failed to initialize Postgres connection pool.")
         return self._pool
+
+    def _assert_loop_affinity(self, *, operation: str) -> None:
+        current_loop = asyncio.get_running_loop()
+        if self._bound_loop is None:
+            self._bound_loop = current_loop
+            return
+        if self._bound_loop is current_loop:
+            return
+        raise LoopAffinityError(
+            resource="PostgresStore",
+            operation=operation,
+            bound_loop=self._bound_loop,
+            current_loop=current_loop,
+        )
 
     async def _initialize_pool(self, pool: asyncpg.Pool) -> None:
         async with pool.acquire() as connection:

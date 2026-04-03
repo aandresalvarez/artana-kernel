@@ -586,6 +586,30 @@ kernel = ArtanaKernel(
 - Call `await kernel.close()` once during application shutdown after in-flight
   work is drained.
 
+If a `PostgresStore` is first used on one loop and later reused from another,
+Artana now raises `LoopAffinityError` before the lower-level asyncpg
+`Future attached to a different loop` failure leaks through.
+
+### Store Ownership
+`ArtanaKernel` closes its injected store by default. That is the right default
+when the kernel owns a dedicated `SQLiteStore` or `PostgresStore`.
+
+If you inject a borrowed process-level store into a short-lived kernel or
+adapter, make ownership explicit:
+
+```python
+shared_store = PostgresStore("postgresql://user:pass@localhost:5432/artana")
+
+kernel = ArtanaKernel(
+    store=shared_store,
+    owns_store=False,
+    model_port=LiteLLMAdapter(),
+)
+```
+
+You can also override shutdown behavior per call with
+`await kernel.close(close_store=False)` or `await kernel.close(close_store=True)`.
+
 FastAPI lifespan pattern:
 ```python
 from contextlib import asynccontextmanager

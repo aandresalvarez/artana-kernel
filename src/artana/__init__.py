@@ -88,7 +88,7 @@ from artana.safety import (
     ToolSafetyPolicy,
 )
 from artana.skills import FilesystemSkillRegistry, SkillDefinition, SkillRegistry
-from artana.store import PostgresStore, SQLiteStore, StoreSchemaInfo
+from artana.store import LoopAffinityError, PostgresStore, SQLiteStore, StoreSchemaInfo
 from artana.testing import MockModelPort
 from artana.tools import CodingHarnessTools, ObservabilityTools
 from artana.util import StepKey
@@ -133,6 +133,7 @@ __all__ = [
     "SupportHarness",
     "SupervisorHarness",
     "KernelPolicy",
+    "LoopAffinityError",
     "MemoryStore",
     "ReflectionResult",
     "SubAgentFactory",

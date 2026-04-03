@@ -7,7 +7,14 @@ import pytest
 from pydantic import BaseModel
 
 from artana import KernelModelClient
-from artana.events import EventType, ModelRequestedPayload, ModelTerminalPayload
+from artana.events import (
+    EventPayload,
+    EventType,
+    KernelEvent,
+    ModelRequestedPayload,
+    ModelTerminalPayload,
+    RunSummaryPayload,
+)
 from artana.kernel import ArtanaKernel
 from artana.middleware import CapabilityGuardMiddleware
 from artana.models import TenantContext
@@ -20,6 +27,7 @@ from artana.ports.model import (
     ToolCall,
 )
 from artana.store import SQLiteStore
+from artana.store.base import EventStore
 
 OutputModelT = TypeVar("OutputModelT", bound=BaseModel)
 
@@ -113,6 +121,38 @@ class FakeRefusalModelPort:
                 },
             ),
         )
+
+
+class CloseTrackingStore(EventStore):
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def append_event(
+        self,
+        *,
+        run_id: str,
+        tenant_id: str,
+        event_type: EventType,
+        payload: EventPayload,
+        parent_step_key: str | None = None,
+    ) -> KernelEvent:
+        raise AssertionError("append_event should not be called in close ownership tests")
+
+    async def get_events_for_run(self, run_id: str) -> list[KernelEvent]:
+        return []
+
+    async def get_latest_run_summary(
+        self,
+        run_id: str,
+        summary_type: str,
+    ) -> RunSummaryPayload | None:
+        return None
+
+    async def verify_run_chain(self, run_id: str) -> bool:
+        return True
+
+    async def close(self) -> None:
+        self.close_calls += 1
 
 
 @pytest.mark.asyncio
@@ -369,3 +409,29 @@ async def test_model_refusal_is_persisted_and_replayed(tmp_path: Path) -> None:
         assert len(payload.responses_output_items) == 1
     finally:
         await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_kernel_close_closes_owned_store_by_default() -> None:
+    store = CloseTrackingStore()
+    kernel = ArtanaKernel(store=store, model_port=FakeModelPort())
+
+    await kernel.close()
+
+    assert store.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_kernel_close_preserves_borrowed_store_unless_overridden() -> None:
+    store = CloseTrackingStore()
+    kernel = ArtanaKernel(
+        store=store,
+        owns_store=False,
+        model_port=FakeModelPort(),
+    )
+
+    await kernel.close()
+    assert store.close_calls == 0
+
+    await kernel.close(close_store=True)
+    assert store.close_calls == 1

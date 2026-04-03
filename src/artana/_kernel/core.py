@@ -104,12 +104,14 @@ class ArtanaKernel:
         self,
         *,
         store: EventStore,
+        owns_store: bool = True,
         model_port: ModelPort,
         tool_port: ToolPort | None = None,
         middleware: Sequence[KernelMiddleware] | None = None,
         policy: KernelPolicy | None = None,
     ) -> None:
         self._store = store
+        self._owns_store = owns_store
         self._model_port = model_port
         self._tool_port = tool_port if tool_port is not None else LocalToolRegistry()
         self._policy = policy if policy is not None else KernelPolicy()
@@ -1563,8 +1565,10 @@ class ArtanaKernel:
             payload=payload,
         )
 
-    async def close(self) -> None:
-        await self._store.close()
+    async def close(self, *, close_store: bool | None = None) -> None:
+        should_close_store = self._owns_store if close_store is None else close_store
+        if should_close_store:
+            await self._store.close()
 
     async def run_workflow(
         self,
