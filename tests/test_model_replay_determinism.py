@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from artana import KernelModelClient
+from artana._kernel.replay import _model_terminal_exception
 from artana.events import (
     ChatMessage,
     EventType,
@@ -49,6 +50,27 @@ def _tenant() -> TenantContext:
         capabilities=frozenset(),
         budget_usd_limit=1.0,
     )
+
+
+def test_invalid_output_replay_rejects_incomplete_provider_metadata() -> None:
+    payload = ModelTerminalPayload(
+        outcome="failed",
+        model="openai/gpt-5.4",
+        model_cycle_id="cycle-invalid",
+        source_model_requested_event_id="event-requested",
+        failure_reason="structured_output_invalid",
+        error_category="structured_output_invalid",
+        error_class="ModelOutputValidationError",
+        elapsed_ms=5,
+        output_json='{"approved":"maybe"}',
+        response_id="resp_invalid_incomplete",
+    )
+
+    with pytest.raises(
+        ReplayConsistencyError,
+        match="missing provider metadata",
+    ):
+        _model_terminal_exception(payload=payload, run_id="run-invalid", seq=3)
 
 
 @pytest.mark.asyncio

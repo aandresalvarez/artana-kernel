@@ -29,6 +29,7 @@ from artana.ports.model_types import (
     LiteLLMCompletionFn,
     LiteLLMResponsesFn,
     ModelAPIModeUsed,
+    ModelOutputValidationError,
     ModelPermanentError,
     ModelRefusalError,
     ModelRequest,
@@ -173,9 +174,15 @@ class LiteLLMAdapter:
         else:
             try:
                 output = request.output_schema.model_validate_json(raw_output)
-            except ValidationError:
+            except ValidationError as exc:
                 if not tool_calls:
-                    raise
+                    raise ModelOutputValidationError(
+                        raw_output=raw_output,
+                        usage=usage,
+                        api_mode_used=api_mode_used,
+                        response_id=response_id,
+                        response_output_items=response_output_items,
+                    ) from exc
                 # Tool-calling turns often omit the final structured answer until
                 # the follow-up turn after tool execution.
                 output = request.output_schema.model_construct()
