@@ -98,6 +98,23 @@ async def test_start_run_rejects_existing_run_id(tmp_path: Path) -> None:
         await kernel.close()
 
 
+@pytest.mark.asyncio
+async def test_start_run_rejects_empty_run_id_before_persistence(tmp_path: Path) -> None:
+    store = SQLiteStore(str(tmp_path / "state_empty_run_id.db"))
+    kernel = ArtanaKernel(
+        store=store,
+        model_port=CountingModelPort(),
+    )
+
+    try:
+        with pytest.raises(ValueError, match="run_id must be nonempty"):
+            await kernel.start_run(tenant=_tenant(), run_id="")
+
+        assert await store.get_events_for_run("") == []
+    finally:
+        await kernel.close()
+
+
 def test_enforced_policy_requires_guard_middleware(tmp_path: Path) -> None:
     store = SQLiteStore(str(tmp_path / "state.db"))
     model_port = CountingModelPort()

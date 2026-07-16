@@ -502,6 +502,35 @@ async def test_invalid_structured_output_is_provider_bound_and_replayed(
 
 
 @pytest.mark.asyncio
+async def test_empty_run_id_is_rejected_before_invalid_provider_output(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state_empty_run_id.db"))
+    model_port = FakeInvalidOutputModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    tenant = TenantContext(
+        tenant_id="org_empty_run_id",
+        capabilities=frozenset(),
+        budget_usd_limit=1.0,
+    )
+
+    try:
+        with pytest.raises(ValueError, match="run_id must be nonempty"):
+            await KernelModelClient(kernel=kernel).step(
+                run_id="",
+                prompt="Respond in schema",
+                model="openai/gpt-5.4",
+                tenant=tenant,
+                output_schema=Decision,
+            )
+
+        assert model_port.calls == 0
+        assert await store.get_events_for_run("") == []
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
 async def test_kernel_close_closes_owned_store_by_default() -> None:
     store = CloseTrackingStore()
     kernel = ArtanaKernel(store=store, model_port=FakeModelPort())

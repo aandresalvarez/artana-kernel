@@ -201,6 +201,8 @@ class ArtanaKernel:
     ) -> RunRef:
         run_id_value = run_id
         if run_id_value is not None:
+            if run_id_value == "":
+                raise ValueError("run_id must be nonempty")
             existing = await self._store.get_events_for_run(run_id_value)
             if existing:
                 raise ValueError(
