@@ -20,6 +20,7 @@ from artana.middleware import CapabilityGuardMiddleware
 from artana.models import TenantContext
 from artana.ports.model import (
     ModelCallOptions,
+    ModelOutputValidationError,
     ModelRefusalError,
     ModelRequest,
     ModelResult,
@@ -116,6 +117,33 @@ class FakeRefusalModelPort:
                         {
                             "type": "refusal",
                             "refusal": "I can't help with that.",
+                        }
+                    ],
+                },
+            ),
+        )
+
+
+class FakeInvalidOutputModelPort:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(
+        self, request: ModelRequest[OutputModelT]
+    ) -> ModelResult[OutputModelT]:
+        self.calls += 1
+        raise ModelOutputValidationError(
+            raw_output='{"approved":"maybe","reason":42}',
+            usage=ModelUsage(prompt_tokens=9, completion_tokens=6, cost_usd=0.03),
+            api_mode_used="responses",
+            response_id="resp_invalid_kernel_1",
+            response_output_items=(
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": '{"approved":"maybe","reason":42}',
                         }
                     ],
                 },
@@ -406,6 +434,68 @@ async def test_model_refusal_is_persisted_and_replayed(tmp_path: Path) -> None:
         assert payload.error_category == "refusal"
         assert payload.refusal == "I can't help with that."
         assert payload.response_id == "resp_refusal_kernel_1"
+        assert len(payload.responses_output_items) == 1
+    finally:
+        await kernel.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_structured_output_is_provider_bound_and_replayed(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteStore(str(tmp_path / "state_invalid_output.db"))
+    model_port = FakeInvalidOutputModelPort()
+    kernel = ArtanaKernel(store=store, model_port=model_port)
+    tenant = TenantContext(
+        tenant_id="org_invalid_output",
+        capabilities=frozenset(),
+        budget_usd_limit=1.0,
+    )
+
+    try:
+        with pytest.raises(ModelOutputValidationError) as first_exc_info:
+            await KernelModelClient(kernel=kernel).step(
+                run_id="run_invalid_output",
+                prompt="Respond in schema",
+                model="openai/gpt-5.4",
+                tenant=tenant,
+                output_schema=Decision,
+            )
+
+        first_error = first_exc_info.value
+        assert first_error.run_id == "run_invalid_output"
+        assert first_error.seq is not None
+        assert first_error.replayed is False
+        assert first_error.response_id == "resp_invalid_kernel_1"
+        assert first_error.output == {"approved": "maybe", "reason": 42}
+
+        with pytest.raises(ModelOutputValidationError) as replay_exc_info:
+            await KernelModelClient(kernel=kernel).step(
+                run_id="run_invalid_output",
+                prompt="Respond in schema",
+                model="openai/gpt-5.4",
+                tenant=tenant,
+                output_schema=Decision,
+            )
+
+        replay_error = replay_exc_info.value
+        assert replay_error.run_id == "run_invalid_output"
+        assert replay_error.seq == first_error.seq
+        assert replay_error.replayed is True
+        assert replay_error.response_id == "resp_invalid_kernel_1"
+        assert replay_error.output == {"approved": "maybe", "reason": 42}
+        assert model_port.calls == 1
+
+        events = await store.get_events_for_run("run_invalid_output")
+        terminal_event = next(
+            event for event in events if event.event_type == EventType.MODEL_TERMINAL
+        )
+        payload = terminal_event.payload
+        assert isinstance(payload, ModelTerminalPayload)
+        assert payload.outcome == "failed"
+        assert payload.error_category == "structured_output_invalid"
+        assert payload.response_id == "resp_invalid_kernel_1"
+        assert payload.output_json == '{"approved":"maybe","reason":42}'
         assert len(payload.responses_output_items) == 1
     finally:
         await kernel.close()

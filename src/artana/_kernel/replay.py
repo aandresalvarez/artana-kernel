@@ -19,6 +19,7 @@ from artana.models import TenantContext
 from artana.ports.model import (
     ModelAPIModeUsed,
     ModelCallOptions,
+    ModelOutputValidationError,
     ModelPermanentError,
     ModelRefusalError,
     ModelTimeoutError,
@@ -71,7 +72,11 @@ def deserialize_model_terminal(
             f"Expected model terminal payload at seq={event.seq}, got {type(payload)!r}."
         )
     if payload.outcome != "completed":
-        raise _model_terminal_exception(payload=payload)
+        raise _model_terminal_exception(
+            payload=payload,
+            run_id=event.run_id,
+            seq=event.seq,
+        )
     if (
         payload.output_json is None
         or payload.prompt_tokens is None
@@ -243,7 +248,12 @@ def find_model_terminal_after(
     return None
 
 
-def _model_terminal_exception(payload: ModelTerminalPayload) -> RuntimeError:
+def _model_terminal_exception(
+    *,
+    payload: ModelTerminalPayload,
+    run_id: str,
+    seq: int,
+) -> RuntimeError:
     details = (
         payload.failure_reason
         or payload.error_class
@@ -271,6 +281,30 @@ def _model_terminal_exception(payload: ModelTerminalPayload) -> RuntimeError:
             response_id=payload.response_id,
             response_output_items=tuple(payload.responses_output_items),
         )
+    if category == "structured_output_invalid":
+        if (
+            payload.output_json is None
+            or payload.prompt_tokens is None
+            or payload.completion_tokens is None
+            or payload.cost_usd is None
+            or payload.api_mode_used is None
+        ):
+            raise ReplayConsistencyError(
+                "structured_output_invalid terminal is missing provider metadata"
+            )
+        error = ModelOutputValidationError(
+            raw_output=payload.output_json,
+            usage=ModelUsage(
+                prompt_tokens=payload.prompt_tokens,
+                completion_tokens=payload.completion_tokens,
+                cost_usd=payload.cost_usd,
+            ),
+            api_mode_used=payload.api_mode_used,
+            response_id=payload.response_id,
+            response_output_items=tuple(payload.responses_output_items),
+        )
+        error.bind_kernel_terminal(run_id=run_id, seq=seq, replayed=True)
+        return error
     if category in {"permanent", "provider_4xx"}:
         return ModelPermanentError(message)
     return RuntimeError(message)

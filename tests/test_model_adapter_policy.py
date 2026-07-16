@@ -10,6 +10,7 @@ from artana.events import ChatMessage, ToolCallMessage, ToolFunctionCall
 from artana.ports.model import (
     LiteLLMAdapter,
     ModelCallOptions,
+    ModelOutputValidationError,
     ModelPermanentError,
     ModelRefusalError,
     ModelRequest,
@@ -525,6 +526,83 @@ async def test_litellm_adapter_auto_uses_responses_for_supported_prefix() -> Non
     assert captured[0]["previous_response_id"] == "resp_prev"
     assert captured[0]["reasoning"] == {"effort": "none"}
     assert captured[0]["text"] == {"verbosity": "low"}
+
+
+@pytest.mark.asyncio
+async def test_litellm_adapter_preserves_provider_custody_for_invalid_output() -> None:
+    async def completion_fn(
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        response_format: type[BaseModel],
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        raise AssertionError("chat completion should not run for this test")
+
+    async def responses_fn(
+        *,
+        input: str | list[dict[str, object]],
+        model: str,
+        previous_response_id: str | None = None,
+        reasoning: dict[str, object] | None = None,
+        text: dict[str, object] | None = None,
+        text_format: type[BaseModel] | dict[str, object] | None = None,
+        tools: list[dict[str, object]] | None = None,
+    ) -> object:
+        return {
+            "id": "resp_invalid_schema_1",
+            "output_text": '{"approved": "not-a-boolean", "reason": 42}',
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": '{"approved": "not-a-boolean", "reason": 42}',
+                        }
+                    ],
+                }
+            ],
+            "usage": {"input_tokens": 7, "output_tokens": 5},
+            "_response_cost": 0.003,
+        }
+
+    adapter = LiteLLMAdapter(
+        completion_fn=completion_fn,
+        responses_fn=responses_fn,
+        timeout_seconds=1.0,
+        max_retries=0,
+    )
+    request = ModelRequest(
+        run_id="run_model_invalid_schema",
+        model="openai/gpt-5.4",
+        prompt="hello",
+        messages=(ChatMessage(role="user", content="hello"),),
+        output_schema=Decision,
+        allowed_tools=(),
+        model_options=ModelCallOptions(api_mode="responses"),
+    )
+
+    with pytest.raises(ModelOutputValidationError) as exc_info:
+        await adapter.complete(request)
+
+    error = exc_info.value
+    assert error.output == {"approved": "not-a-boolean", "reason": 42}
+    assert error.raw_output == '{"approved": "not-a-boolean", "reason": 42}'
+    assert error.response_id == "resp_invalid_schema_1"
+    assert len(error.response_output_items) == 1
+    assert error.usage.prompt_tokens == 7
+    assert error.usage.completion_tokens == 5
+    assert error.run_id is None
+    assert error.seq is None
+    assert error.replayed is None
+    mutable_output = error.output
+    assert isinstance(mutable_output, dict)
+    mutable_output["reason"] = "changed"
+    assert error.output == {"approved": "not-a-boolean", "reason": 42}
+    error.bind_kernel_terminal(run_id="run_model_invalid_schema", seq=4, replayed=False)
+    with pytest.raises(RuntimeError, match="already bound"):
+        error.bind_kernel_terminal(run_id="other", seq=5, replayed=True)
 
 
 @pytest.mark.asyncio

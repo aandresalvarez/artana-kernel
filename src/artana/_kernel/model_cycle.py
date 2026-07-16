@@ -35,6 +35,7 @@ from artana.middleware.base import KernelMiddleware
 from artana.models import TenantContext
 from artana.ports.model import (
     ModelCallOptions,
+    ModelOutputValidationError,
     ModelPermanentError,
     ModelPort,
     ModelRefusalError,
@@ -249,7 +250,10 @@ async def get_or_execute_model_step(
             _canonicalize_items(result.response_output_items) if result is not None else []
         )
         refusal = _extract_refusal(exc)
-        if result is None and isinstance(exc, ModelRefusalError):
+        if result is None and isinstance(
+            exc,
+            (ModelOutputValidationError, ModelRefusalError),
+        ):
             if exc.usage is not None:
                 prompt_tokens = exc.usage.prompt_tokens
                 completion_tokens = exc.usage.completion_tokens
@@ -276,6 +280,9 @@ async def get_or_execute_model_step(
                     "exception_module": type(exc).__module__,
                 }
             ),
+            output_json=(
+                exc.raw_output if isinstance(exc, ModelOutputValidationError) else None
+            ),
             refusal=refusal,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
@@ -295,6 +302,16 @@ async def get_or_execute_model_step(
                 payload=terminal_payload,
             )
 
+    if (
+        pending_exception is not None
+        and terminal_event_written is not None
+        and isinstance(pending_exception, ModelOutputValidationError)
+    ):
+        pending_exception.bind_kernel_terminal(
+            run_id=run_id,
+            seq=terminal_event_written.seq,
+            replayed=False,
+        )
     if pending_exception is not None:
         raise pending_exception
     if terminal_event_written is None or result is None:
@@ -402,6 +419,8 @@ def _classify_failure(
             return "failed", "provider_5xx"
     if isinstance(exc, ModelRefusalError):
         return "failed", "refusal"
+    if isinstance(exc, ModelOutputValidationError):
+        return "failed", "structured_output_invalid"
     if isinstance(exc, ModelTransientError):
         return "failed", "transient"
     if isinstance(exc, ModelPermanentError):
